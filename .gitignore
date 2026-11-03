@@ -1,0 +1,32 @@
+# 运行时数据
+data/
+knowledge/
+
+# 前端
+node_modules/
+frontend/dist/
+backend/aitp/static/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.mypy_cache/
+
+# 环境与密钥
+.env
+*.key
+
+# 日志与导出
+*.log
+logs/
+playwright-mcp/
+.playwright-mcp/
+
+# 编辑器
+.idea/
+.vscode/
+*.swp
+.DS_Store

@@ -1,0 +1,836 @@
+<template>
+  <div class="page">
+    <div class="page-header">
+      <h2 class="page-title">
+        {{ spec?.label ?? capability }}
+        <el-tag v-if="spec" size="small" effect="plain" class="cap-tag">{{ spec.goal }}</el-tag>
+      </h2>
+      <div class="toolbar" style="margin: 0">
+        <el-button :icon="Back" @click="router.push('/lab')">返回实验室</el-button>
+      </div>
+    </div>
+
+    <div class="cap-layout">
+      <div class="panel panel-pad cap-input">
+        <el-form label-width="96px" label-position="right">
+          <el-form-item label="功能点">
+            <el-select v-model="moduleId" clearable filterable placeholder="选择功能点（可选）">
+              <el-option
+                v-for="item in moduleOptions"
+                :key="item.id"
+                :label="item.path"
+                :value="item.id"
+              />
+            </el-select>
+          </el-form-item>
+
+          <el-form-item v-for="field in fields" :key="field.name" :label="field.label">
+            <el-input
+              v-if="field.type === 'textarea'"
+              v-model="values[field.name]"
+              type="textarea"
+              :rows="field.rows ?? 6"
+              :placeholder="field.placeholder"
+            />
+            <el-input
+              v-else-if="field.type === 'number'"
+              v-model="values[field.name]"
+              type="number"
+              :placeholder="field.placeholder"
+            />
+            <el-input v-else v-model="values[field.name]" :placeholder="field.placeholder" />
+          </el-form-item>
+
+          <el-form-item v-if="capability === 'xmind_to_case'" label="XMind 文件">
+            <el-upload
+              :show-file-list="false"
+              :http-request="uploadXmind"
+              accept=".xmind"
+            >
+              <el-button :icon="Upload" :loading="parsing">上传 .xmind</el-button>
+            </el-upload>
+            <el-button link type="primary" :loading="parsing" @click="parseOutlineText">
+              解析粘贴的大纲
+            </el-button>
+          </el-form-item>
+
+          <PromptOptimizer
+            v-model="values[primaryField]"
+            :capability="capability"
+          />
+
+          <el-form-item>
+            <el-button
+              type="primary"
+              :icon="Promotion"
+              :loading="running"
+              @click="run"
+            >
+              执行
+            </el-button>
+            <el-button :icon="CopyDocument" @click="copyOutput">复制</el-button>
+            <el-button :icon="Download" @click="download">下载</el-button>
+            <el-button :icon="Collection" :disabled="!finished || !output" @click="saveToKnowledge">
+              加入知识库
+            </el-button>
+            <el-button
+              v-if="spec?.adoptable"
+              type="success"
+              :icon="Select"
+              :disabled="!finished || !output"
+              @click="openAdopt"
+            >
+              采纳为用例
+            </el-button>
+            <el-button
+              v-if="capability === 'report_generation'"
+              type="success"
+              :icon="Select"
+              :disabled="!finished || !output"
+              @click="openAdoptReport"
+            >
+              采纳为报告
+            </el-button>
+          </el-form-item>
+        </el-form>
+
+        <el-alert
+          v-if="egressWarning"
+          type="warning"
+          :closable="false"
+          show-icon
+          :title="egressWarning"
+          class="egress-alert"
+        />
+        <el-alert
+          v-if="reviewRequired"
+          type="warning"
+          :closable="false"
+          show-icon
+          title="【需人工复核】结论含 P0/P1 或提示词测试结果，采纳前请人工确认"
+          class="egress-alert"
+        />
+      </div>
+
+      <div class="panel panel-pad cap-output">
+        <div class="cap-output__head">
+          <span class="cap-output__title">产出</span>
+          <span v-if="model" class="muted">模型：{{ model }}</span>
+          <span v-if="latencyMs" class="muted">耗时 {{ latencyMs }} ms</span>
+          <el-button v-if="reasoning" link type="primary" @click="reasoningVisible = true">
+            查看推理过程
+          </el-button>
+        </div>
+
+        <div v-if="running" class="cap-output__loading">
+          <el-icon class="is-loading"><Loading /></el-icon>
+          <span>模型生成中…</span>
+        </div>
+
+        <template v-if="!running">
+          <MindMap
+            v-if="mindNodes.length"
+            :nodes="mindNodes"
+            :height="460"
+            @node-context="onNodeContext"
+          />
+          <el-alert
+            v-if="mindNodes.length && (capability === 'xmind_to_case' || capability === 'testpoint_generation')"
+            type="info"
+            :closable="false"
+            show-icon
+            title="右键脑图节点可按该节点单独生成用例"
+            class="mindmap-hint"
+          />
+          <MarkdownView v-else-if="output && !isJson" :source="output" />
+          <pre v-else-if="output" class="cap-output__json">{{ prettyJson }}</pre>
+          <el-empty v-if="!output && !mindNodes.length" description="尚无产出" :image-size="80" />
+        </template>
+
+        <div v-if="refs.length" class="cap-refs">
+          <span class="cap-refs__title">参考来源</span>
+          <el-tag
+            v-for="ref in refs"
+            :key="ref.marker"
+            class="cap-refs__item"
+            type="info"
+            effect="plain"
+            @click="router.push(`/knowledge/${ref.articleId}`)"
+          >
+            [{{ ref.marker }}] {{ ref.title }}
+          </el-tag>
+        </div>
+      </div>
+    </div>
+
+    <el-drawer v-model="reasoningVisible" title="推理过程" size="40%">
+      <pre class="cap-output__json">{{ reasoning }}</pre>
+    </el-drawer>
+
+    <el-dialog v-model="knowledgeVisible" title="加入知识库" width="560px">
+      <el-form label-width="80px">
+        <el-form-item label="标题" required>
+          <el-input v-model="knowledgeForm.title" />
+        </el-form-item>
+        <el-form-item label="分类">
+          <el-select v-model="knowledgeForm.category">
+            <el-option v-for="item in categoryOptions" :key="item" :label="item" :value="item" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="标签">
+          <el-input v-model="knowledgeForm.tags" placeholder="逗号分隔" />
+        </el-form-item>
+      </el-form>
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="保存后进入待审核池，审核通过才计入数字资产"
+      />
+      <template #footer>
+        <el-button @click="knowledgeVisible = false">取消</el-button>
+        <el-button type="primary" :loading="savingKnowledge" @click="confirmSaveKnowledge">保存</el-button>
+      </template>
+    </el-dialog>
+    <el-dialog v-model="adoptVisible" title="采纳为测试用例" width="720px">
+      <el-form label-width="80px">
+        <el-form-item label="项目" required>
+          <el-select v-model="adoptForm.projectId" placeholder="选择项目">
+            <el-option v-for="item in appStore.projects" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="需求">
+          <el-select v-model="adoptForm.requirementId" placeholder="选择需求（可选）" clearable filterable>
+            <el-option v-for="item in requirementOptions" :key="item.id" :label="item.title" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="功能点">
+          <el-select v-model="adoptForm.moduleId" placeholder="选择功能点（可选）" clearable filterable>
+            <el-option v-for="item in moduleOptions" :key="item.id" :label="item.path" :value="item.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <el-table :data="adoptRows" size="small" border max-height="320">
+        <el-table-column prop="title" label="用例标题" min-width="240" show-overflow-tooltip />
+        <el-table-column prop="caseType" label="类型" width="100" />
+        <el-table-column prop="priority" label="优先级" width="90" />
+        <el-table-column label="步骤数" width="80" align="right">
+          <template #default="scope">{{ scope.row.steps?.length ?? 0 }}</template>
+        </el-table-column>
+      </el-table>
+      <el-alert
+        v-if="adoptRows.length"
+        type="warning"
+        :closable="false"
+        show-icon
+        class="adopt-alert"
+        title="AI 生成的用例需人工复核后再执行；采纳后状态为「未执行」"
+      />
+      <el-empty v-if="!adoptRows.length" description="产出不是用例 JSON 数组，无法自动采纳" :image-size="80" />
+      <template #footer>
+        <el-button @click="adoptVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="adopting"
+          :disabled="!adoptRows.length"
+          @click="confirmAdopt"
+        >
+          采纳 {{ adoptRows.length }} 条
+        </el-button>
+      </template>
+    </el-dialog>
+    <el-dialog v-model="reportAdoptVisible" title="采纳为测试报告" width="560px">
+      <el-form label-width="90px">
+        <el-form-item label="项目" required>
+          <el-select v-model="reportForm.projectId" placeholder="选择项目">
+            <el-option v-for="item in appStore.projects" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="标题" required>
+          <el-input v-model="reportForm.title" />
+        </el-form-item>
+        <el-form-item label="报告类型">
+          <el-select v-model="reportForm.reportType">
+            <el-option
+              v-for="item in reportTypeOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="统计周期">
+          <el-date-picker
+            v-model="reportPeriod"
+            type="daterange"
+            value-format="YYYY-MM-DD"
+            start-placeholder="开始"
+            end-placeholder="结束"
+          />
+        </el-form-item>
+      </el-form>
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="AI 产出的二级标题会拆成报告章节；采纳后为草稿，发布前请人工复核"
+      />
+      <template #footer>
+        <el-button @click="reportAdoptVisible = false">取消</el-button>
+        <el-button type="primary" :loading="reportAdopting" @click="confirmAdoptReport">采纳</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import type { UploadRequestOptions } from 'element-plus'
+import {
+  Back,
+  Collection,
+  CopyDocument,
+  Download,
+  Loading,
+  Promotion,
+  Select,
+  Upload,
+} from '@element-plus/icons-vue'
+import MarkdownView from '@/components/MarkdownView.vue'
+import MindMap from '@/components/MindMap.vue'
+import PromptOptimizer from '@/components/PromptOptimizer.vue'
+import { caseApi, knowledgeApi, labApi, reportApi, requirementApi } from '@/api'
+import { streamPost, type DegradeInfo } from '@/api/stream'
+import type { AdoptCaseItem, KnowledgeRef, MindNode, Requirement } from '@/api/types'
+import { useAppStore } from '@/stores/app'
+import { useLabStore } from '@/stores/lab'
+import { CAPABILITY_FORMS, primaryFieldOf } from './capabilityForms'
+import { findNodeByPath, subtreeText, testpointToMindNodes } from './mindmap'
+
+const route = useRoute()
+const router = useRouter()
+const labStore = useLabStore()
+const appStore = useAppStore()
+
+const capability = computed(() => String(route.params.capability ?? ''))
+const spec = computed(
+  () =>
+    labStore.allCapabilities.find((item) => item.code === capability.value) ??
+    labStore.capabilities.find((item) => item.code === capability.value) ??
+    null,
+)
+const fields = computed(() => CAPABILITY_FORMS[capability.value] ?? [])
+const moduleOptions = computed(() => labStore.moduleOptions)
+const primaryField = computed(() => primaryFieldOf(capability.value))
+
+const values = reactive<Record<string, string>>({})
+const moduleId = ref<number | null>(null)
+
+const running = ref(false)
+const output = ref('')
+const reasoning = ref('')
+const reasoningVisible = ref(false)
+const model = ref('')
+const latencyMs = ref(0)
+const egressWarning = ref('')
+const reviewRequired = ref(false)
+const refs = ref<KnowledgeRef[]>([])
+const parsing = ref(false)
+/** 本次执行是否已正常收尾；流式过程中产出可能还是半个 JSON，不允许采纳。 */
+const finished = ref(false)
+/** xmind 解析出来的树，用于脑图展示与按节点生成用例。 */
+const xmindTree = ref<MindNode[]>([])
+
+const isJson = computed(() => spec.value?.outputFormat === 'json')
+
+const prettyJson = computed(() => {
+  try {
+    return JSON.stringify(JSON.parse(output.value), null, 2)
+  } catch {
+    return output.value
+  }
+})
+
+/** 脑图数据：测试点能力取模型 JSON，xmind 能力取解析出来的树。 */
+const mindTree = computed<MindNode[]>(() => {
+  if (capability.value === 'xmind_to_case') {
+    return xmindTree.value
+  }
+  if (!spec.value?.mindmap || !output.value) {
+    return []
+  }
+  try {
+    return testpointToMindNodes(JSON.parse(output.value))
+  } catch {
+    return []
+  }
+})
+const mindNodes = computed<MindNode[]>(() => mindTree.value)
+
+const categoryOptions = ['general', 'test_method', 'experience', 'pitfall', 'meeting', 'security']
+
+function resetValues(): void {
+  Object.keys(values).forEach((key) => delete values[key])
+  fields.value.forEach((field) => {
+    values[field.name] = field.defaultValue ?? ''
+  })
+  const preset = String(route.query.text ?? '')
+  if (preset && primaryField.value) {
+    values[primaryField.value] = preset
+  }
+  const moduleQuery = Number(route.query.moduleId ?? 0)
+  moduleId.value = moduleQuery > 0 ? moduleQuery : null
+  if (moduleId.value) {
+    labStore.currentModuleId = moduleId.value
+  }
+}
+
+async function uploadXmind(options: UploadRequestOptions): Promise<void> {
+  const form = new FormData()
+  form.append('file', options.file)
+  parsing.value = true
+  try {
+    const result = await labApi.parseXmind(form)
+    xmindTree.value = result.tree
+    values.xmindOutline = result.outlineText
+    ElMessage.success('已解析 .xmind 大纲')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '解析失败')
+  } finally {
+    parsing.value = false
+  }
+}
+
+async function parseOutlineText(): Promise<void> {
+  const text = values.xmindOutline ?? ''
+  if (!text.trim()) {
+    ElMessage.warning('请先粘贴大纲文本')
+    return
+  }
+  parsing.value = true
+  try {
+    const result = await labApi.parseOutline(text)
+    xmindTree.value = result.tree
+    ElMessage.success('已解析大纲')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '解析失败')
+  } finally {
+    parsing.value = false
+  }
+}
+
+/** 脑图节点右键：按该节点单独生成用例。 */
+function onNodeContext(payload: { title: string; path: string[] }): void {
+  if (capability.value !== 'xmind_to_case' && capability.value !== 'testpoint_generation') {
+    return
+  }
+  const node = findNodeByPath(mindTree.value, payload.path)
+  const text = node ? subtreeText(node) : payload.path.join('\n')
+  void router.push({
+    path: '/lab/case_generation',
+    query: { text },
+  })
+}
+
+function onDegrade(info: DegradeInfo): void {
+  ElMessage({ type: 'warning', message: info.message, duration: 3000, showClose: false })
+}
+
+async function run(): Promise<void> {
+  const missing = fields.value
+    .filter((field) => !values[field.name]?.trim())
+    .map((field) => field.label)
+  if (missing.length) {
+    ElMessage.warning(`请填写：${missing.join('、')}`)
+    return
+  }
+  running.value = true
+  output.value = ''
+  finished.value = false
+  reasoning.value = ''
+  model.value = ''
+  latencyMs.value = 0
+  refs.value = []
+  reviewRequired.value = false
+  const startedAt = Date.now()
+  try {
+    await streamPost(
+      `/lab/${capability.value}/stream`,
+      {
+        variables: { ...values },
+        moduleId: moduleId.value ?? undefined,
+      },
+      {
+        onStart: (frame) => {
+          egressWarning.value = String(frame.egressWarning ?? '')
+          const list = frame.refs
+          if (Array.isArray(list)) {
+            refs.value = list as KnowledgeRef[]
+          }
+        },
+        onDelta: (content) => {
+          output.value += content
+        },
+        onReasoning: (content) => {
+          reasoning.value += content
+        },
+        onUsage: (usage) => {
+          const name = usage.model ?? usage.modelName
+          if (typeof name === 'string' && name) {
+            model.value = name
+          }
+        },
+        onDegrade,
+        onDone: (text, frame) => {
+          if (text) {
+            output.value = text
+          }
+          finished.value = true
+          reviewRequired.value = frame.reviewRequired === true
+          latencyMs.value = Date.now() - startedAt
+        },
+        onError: (message) => {
+          ElMessage.error(message)
+        },
+      },
+    )
+  } finally {
+    running.value = false
+    latencyMs.value = latencyMs.value || Date.now() - startedAt
+  }
+}
+
+function copyOutput(): void {
+  if (!output.value) {
+    ElMessage.warning('暂无产出')
+    return
+  }
+  void navigator.clipboard.writeText(output.value).then(
+    () => ElMessage.success('已复制到剪贴板'),
+    () => ElMessage.error('复制失败，请手动选择文本'),
+  )
+}
+
+function download(): void {
+  if (!output.value) {
+    ElMessage.warning('暂无产出')
+    return
+  }
+  const blob = new Blob([output.value], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `${capability.value}-${new Date().toISOString().slice(0, 10)}.md`
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+const knowledgeVisible = ref(false)
+const savingKnowledge = ref(false)
+const knowledgeForm = reactive({ title: '', category: 'general', tags: '' })
+
+function saveToKnowledge(): void {
+  knowledgeForm.title = `${spec.value?.label ?? capability.value} ${new Date().toLocaleString('zh-CN')}`
+  knowledgeForm.category = 'general'
+  knowledgeForm.tags = ''
+  knowledgeVisible.value = true
+}
+
+async function confirmSaveKnowledge(): Promise<void> {
+  if (!knowledgeForm.title.trim()) {
+    ElMessage.warning('标题为必填项')
+    return
+  }
+  savingKnowledge.value = true
+  try {
+    await knowledgeApi.createDraft({
+      title: knowledgeForm.title,
+      content: output.value,
+      summary: output.value.slice(0, 200),
+      category: knowledgeForm.category,
+      tags: knowledgeForm.tags,
+      moduleId: moduleId.value,
+      sourceType: 'ai_output',
+      producer: capability.value,
+    })
+    ElMessage.success('已进入待审核池，审核通过后才计入数字资产')
+    knowledgeVisible.value = false
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '保存失败')
+  } finally {
+    savingKnowledge.value = false
+  }
+}
+
+const adoptVisible = ref(false)
+const adopting = ref(false)
+const adoptRows = ref<AdoptCaseItem[]>([])
+const requirementOptions = ref<Requirement[]>([])
+const adoptForm = reactive({
+  projectId: null as number | null,
+  requirementId: null as number | null,
+  moduleId: null as number | null,
+})
+
+/** 把不同能力的 JSON 产出归一成用例草稿结构。 */
+function toAdoptItems(raw: unknown): AdoptCaseItem[] {
+  if (!Array.isArray(raw)) {
+    return []
+  }
+  const items: AdoptCaseItem[] = []
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') {
+      continue
+    }
+    const record = entry as Record<string, unknown>
+    const title = String(record.title ?? '').trim()
+    if (!title) {
+      continue
+    }
+    const rawSteps = record.steps
+    const steps = Array.isArray(rawSteps)
+      ? rawSteps
+          .map((step) => {
+            if (typeof step === 'string') {
+              return { action: step, expected: '' }
+            }
+            const item = (step ?? {}) as Record<string, unknown>
+            return {
+              action: String(item.action ?? item.step ?? ''),
+              expected: String(item.expected ?? ''),
+            }
+          })
+          .filter((step) => step.action.trim() || step.expected.trim())
+      : []
+    items.push({
+      title,
+      caseType: String(record.caseType ?? 'functional'),
+      priority: String(record.priority ?? 'P2'),
+      preconditions: String(record.preconditions ?? ''),
+      steps,
+      expectedResult: String(record.expectedResult ?? record.verifyTarget ?? ''),
+      tags: String(record.tags ?? record.module ?? ''),
+    })
+  }
+  return items
+}
+
+async function openAdopt(): Promise<void> {
+  try {
+    const parsed = JSON.parse(output.value) as unknown
+    adoptRows.value = toAdoptItems(parsed)
+  } catch {
+    adoptRows.value = []
+    ElMessage.warning('产出不是合法 JSON，无法自动采纳')
+  }
+  if (!adoptRows.value.length) {
+    adoptVisible.value = true
+    return
+  }
+  adoptForm.projectId = appStore.currentProjectId
+  adoptForm.moduleId = moduleId.value
+  adoptForm.requirementId = null
+  requirementOptions.value = []
+  const projectId = adoptForm.projectId
+  if (projectId) {
+    try {
+      requirementOptions.value = await requirementApi
+        .list({ projectId, pageSize: 100 })
+        .then((page) => page.list)
+    } catch {
+      requirementOptions.value = []
+    }
+  }
+  adoptVisible.value = true
+}
+
+async function confirmAdopt(): Promise<void> {
+  if (!adoptForm.projectId) {
+    ElMessage.warning('请先选择项目')
+    return
+  }
+  adopting.value = true
+  try {
+    const result = await caseApi.adopt({
+      projectId: adoptForm.projectId,
+      moduleId: adoptForm.moduleId,
+      requirementId: adoptForm.requirementId,
+      cases: adoptRows.value,
+    })
+    ElMessage.success(`已采纳 ${result.count} 条用例`)
+    adoptVisible.value = false
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '采纳失败')
+  } finally {
+    adopting.value = false
+  }
+}
+
+const reportAdoptVisible = ref(false)
+const reportAdopting = ref(false)
+const reportPeriod = ref<[string, string] | null>(null)
+const reportTypeOptions = [
+  { label: '测试总结', value: 'summary' },
+  { label: '迭代报告', value: 'iteration' },
+  { label: '回归报告', value: 'regression' },
+  { label: '验收报告', value: 'acceptance' },
+]
+const reportForm = reactive({
+  projectId: null as number | null,
+  title: '',
+  reportType: 'iteration',
+})
+
+function openAdoptReport(): void {
+  reportForm.projectId = appStore.currentProjectId
+  reportForm.title = `${spec.value?.label ?? '测试报告'} ${new Date().toLocaleDateString('zh-CN')}`
+  reportForm.reportType = 'iteration'
+  reportPeriod.value = null
+  reportAdoptVisible.value = true
+}
+
+async function confirmAdoptReport(): Promise<void> {
+  if (!reportForm.projectId) {
+    ElMessage.warning('请先选择项目')
+    return
+  }
+  if (!reportForm.title.trim()) {
+    ElMessage.warning('标题为必填项')
+    return
+  }
+  reportAdopting.value = true
+  try {
+    const report = await reportApi.adopt({
+      projectId: reportForm.projectId,
+      title: reportForm.title,
+      reportType: reportForm.reportType,
+      periodStart: reportPeriod.value?.[0] ?? '',
+      periodEnd: reportPeriod.value?.[1] ?? '',
+      content: output.value,
+    })
+    ElMessage.success('已采纳为报告草稿')
+    reportAdoptVisible.value = false
+    void router.push(`/reports/${report.id}`)
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '采纳失败')
+  } finally {
+    reportAdopting.value = false
+  }
+}
+
+watch(
+  () => route.query.text,
+  () => {
+    if (route.query.text) {
+      resetValues()
+    }
+  },
+)
+watch(capability, () => {
+  resetValues()
+  output.value = ''
+  reasoning.value = ''
+  finished.value = false
+  xmindTree.value = []
+})
+
+onMounted(async () => {
+  await labStore.loadAllCapabilities()
+  await labStore.loadModuleOptions(appStore.currentProjectId ?? undefined)
+  resetValues()
+})
+
+watch(
+  () => appStore.currentProjectId,
+  (projectId) => {
+    void labStore.loadModuleOptions(projectId ?? undefined)
+  },
+)
+</script>
+
+<style scoped>
+.cap-tag {
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.cap-layout {
+  display: grid;
+  grid-template-columns: minmax(340px, 460px) 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.cap-input {
+  max-height: calc(100vh - 150px);
+  overflow-y: auto;
+}
+
+.cap-output {
+  min-height: 420px;
+}
+
+.cap-output__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.cap-output__title {
+  font-weight: 600;
+}
+
+.cap-output__loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--aitp-text-weak);
+  margin-bottom: 10px;
+}
+
+.cap-output__json {
+  background: #f6f8fa;
+  border: 1px solid var(--aitp-border);
+  border-radius: 6px;
+  padding: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+  margin: 0;
+}
+
+.mindmap-hint {
+  margin-top: 10px;
+}
+
+.cap-refs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--aitp-border);
+}
+
+.cap-refs__title {
+  font-size: 13px;
+  color: var(--aitp-text-weak);
+}
+
+.cap-refs__item {
+  cursor: pointer;
+}
+
+.egress-alert {
+  margin-top: 4px;
+}
+
+.adopt-alert {
+  margin-top: 12px;
+}
+</style>

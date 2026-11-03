@@ -1,0 +1,551 @@
+import type { PagePayload } from './request'
+
+export type Id = number
+
+export interface Project {
+  id: Id
+  code: string
+  name: string
+  description: string
+  owner: string
+  status: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface Requirement {
+  id: Id
+  projectId: Id
+  title: string
+  content: string
+  priority: string
+  status: string
+  source: string
+  createdAt?: string
+  updatedAt?: string
+}
+export type ModuleNodeType = 'module' | 'submodule' | 'feature'
+
+export interface ModuleNode {
+  id: Id
+  projectId: Id
+  parentId: Id | null
+  nodeType: ModuleNodeType
+  name: string
+  code: string
+  description: string
+  sortOrder: number
+  status: string
+  depth: number
+  path: string
+  references: ModuleReferences
+  children: ModuleNode[]
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface ModuleReferences {
+  cases?: number
+  bugs?: number
+  knowledge?: number
+  [key: string]: number | undefined
+}
+
+export interface ModuleOption {
+  id: Id
+  name: string
+  nodeType: ModuleNodeType
+  projectId: Id
+  path: string
+}
+
+export interface CapabilityBinding {
+  capability: string
+  label: string
+  promptCode: string | null
+  enabled: boolean
+  config: Record<string, unknown>
+}
+
+export interface TestCase {
+  id: Id
+  projectId: Id
+  requirementId: Id | null
+  moduleId: Id | null
+  caseNo: string
+  title: string
+  caseType: string
+  priority: string
+  status: string
+  preconditions: string
+  steps: CaseStep[]
+  expectedResult: string
+  actualResult: string
+  tags: string
+  source: string
+  aiTaskId: Id | null
+  creator: string
+  /** 类型专属附加字段：接口用例的请求方式/断言规则等，导出 xlsx 时按列展开。 */
+  extra: Record<string, string>
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface CaseStep {
+  action: string
+  expected: string
+}
+
+/** 按功能点统计的覆盖矩阵行。 */
+export interface ModuleCoverage {
+  moduleId: Id
+  name: string
+  nodeType: ModuleNodeType
+  parentId: Id | null
+  path: string
+  caseCount: number
+  p0Count: number
+  p1Count: number
+  passCount: number
+  failCount: number
+  blockedCount: number
+  notExecutedCount: number
+}
+
+/** AI 生成用例的采纳载荷。 */
+export interface AdoptCaseItem {
+  title: string
+  caseType?: string
+  priority?: string
+  preconditions?: string
+  steps?: CaseStep[]
+  expectedResult?: string
+  tags?: string
+  moduleId?: Id | null
+  requirementId?: Id | null
+}
+
+export interface Bug {
+  id: Id
+  projectId: Id
+  moduleId: Id | null
+  bugNo: string
+  title: string
+  description: string
+  severity: string
+  priority: string
+  status: string
+  bugType: string
+  steps: string[]
+  expectedResult: string
+  actualResult: string
+  assignee: string
+  reporter: string
+  version: string
+  env: string
+  module: string
+  aiTaskId: Id | null
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface BugLog {
+  id: Id
+  bugId: Id
+  fromStatus: string
+  toStatus: string
+  operator: string
+  comment: string
+  createdAt?: string
+}
+
+export interface KnowledgeDraft {
+  id: Id
+  title: string
+  content: string
+  summary: string
+  category: string
+  tags: string
+  moduleId: Id | null
+  sourceType: string
+  producer: string
+  reviewStatus: string
+  refType: string
+  refId: Id | null
+  refLabel: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface KnowledgeArticle {
+  id: Id
+  title: string
+  content: string
+  summary: string
+  category: string
+  tags: string
+  moduleId: Id | null
+  reviewStatus: string
+  currentVersion: number
+  draftVersion: number | null
+  filePath: string
+  fileChanged?: boolean
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface KnowledgeVersion {
+  id: Id
+  articleId: Id
+  version: number
+  title: string
+  content: string
+  summary: string
+  category: string
+  tags: string
+  reviewStatus: string
+  reviewer: string
+  reviewComment: string
+  changeLog: string
+  createdAt?: string
+}
+
+export interface KnowledgeRef {
+  id: Id
+  articleId: Id
+  refType: string
+  refId: Id | null
+  refLabel: string
+  label?: string
+  createdAt?: string
+}
+
+export interface ReportItem {
+  id: Id
+  reportId: Id
+  section: string
+  title: string
+  content: string
+  metric: Record<string, unknown>
+  sortOrder: number
+}
+
+export interface Report {
+  id: Id
+  projectId: Id
+  reportNo: string
+  title: string
+  reportType: string
+  periodStart: string
+  periodEnd: string
+  summary: string
+  status: string
+  content: string
+  creator: string
+  aiTaskId: Id | null
+  createdAt?: string
+  updatedAt?: string
+}
+
+/** 报告图表数据：口径与工作台实时统计一致。 */
+export interface ReportStats {
+  reportId: Id
+  projectId: Id
+  periodStart: string
+  periodEnd: string
+  caseStatus: Record<string, number>
+  casePriority: Record<string, number>
+  caseType: Record<string, number>
+  bugStatus: Record<string, number>
+  bugSeverity: Record<string, number>
+  metrics: {
+    caseTotal: number
+    passed: number
+    failed: number
+    blocked: number
+    notExecuted: number
+    passRate: number
+    bugTotal: number
+    openBugs: number
+  }
+}
+
+export interface AiTask {
+  id: Id
+  capability: string
+  moduleId: Id | null
+  sessionId: Id | null
+  status: string
+  model: string
+  promptCode: string
+  latencyMs: number
+  usage: Record<string, unknown>
+  result: Record<string, unknown>
+  errorCode: number | null
+  errorMessage: string | null
+  createdAt?: string
+}
+
+export interface AiSession {
+  id: Id
+  title: string
+  module: string
+  model: string
+  createdAt?: string
+  updatedAt?: string
+  messages?: AiMessage[]
+}
+
+export interface AiMessage {
+  id: Id
+  sessionId: Id
+  role: string
+  content: string
+  reasoning: string
+  promptCode: string
+  model: string
+  tokensPrompt: number
+  tokensCompletion: number
+  createdAt?: string
+}
+
+export interface CapabilitySpec {
+  code: string
+  label: string
+  goal: string
+  keywords: string[]
+  promptCode: string
+  variables: string[]
+  outputFormat: string
+  mindmap: boolean
+  adoptable: boolean
+}
+
+export interface RouteResult {
+  capability: string
+  label: string
+  score: number
+  reason: string
+  targetModuleId?: Id
+  targetModulePath?: string
+}
+
+export interface ModuleRouteResult {
+  moduleId: Id
+  path: string
+  score: number
+  reason: string
+}
+
+export interface RouteResponse {
+  capabilityRoutes: RouteResult[]
+  moduleRoutes: ModuleRouteResult[]
+  source: 'ai' | 'fallback'
+}
+
+/** 脑图节点：与后端 xmind_parser / testpoint-generation 的输出结构一致。 */
+export interface MindNode {
+  title: string
+  children?: MindNode[]
+  /** 补充说明，渲染在标题后面。 */
+  note?: string
+  /** 优先级标签，例如 P0。 */
+  priority?: string
+}
+
+/** xmind 解析结果。 */
+export interface XmindParseResult {
+  tree: MindNode[]
+  outlineText: string
+  source: string
+}
+
+/** 知识问答引用（[K1] 标记）。 */
+export interface KnowledgeRef {
+  marker: string
+  articleId: Id
+  title: string
+  category?: string
+}
+
+export interface WorkbenchOverview {
+  metrics: {
+    caseTotal: number
+    casePassRate: number
+    bugTotal: number
+    bugOpen: number
+    requirementTotal: number
+    knowledgeTotal: number
+    reportTotal: number
+    moduleTotal: number
+    aiTaskTotal: number
+    aiTaskSuccessRate: number
+  }
+  assets: {
+    project: number
+    requirement: number
+    case: number
+    bug: number
+    knowledge: number
+    report: number
+    task: number
+  }
+  pendingKnowledge: number
+  recentTasks: RecentTask[]
+  shortcuts: QuickEntry[]
+  caseStatus: Record<string, number>
+  bugStatus: Record<string, number>
+}
+
+export interface RecentTask {
+  id: Id
+  taskType: string
+  capability: string | null
+  status: string
+  moduleId: Id | null
+  createdAt?: string
+  finishedAt?: string | null
+}
+
+export interface QuickEntry {
+  key: string
+  label: string
+  path: string
+  group: string
+}
+
+export interface AiProfile {
+  id: Id
+  name: string
+  provider: string
+  protocol: string
+  baseUrl: string
+  model: string
+  priority: number
+  isDefault: boolean
+  isActive: boolean
+  isLocal: boolean
+  apiKeyMasked: string
+  hasApiKey: boolean
+  extra: Record<string, unknown>
+  temperature: number
+  maxTokens: number
+  timeout: number
+  sortOrder: number
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface SystemConfigItem {
+  key: string
+  value: string
+  valueType: string
+  scope: string
+  description: string
+  isSystem: boolean
+}
+
+export interface AuditLog {
+  id: Id
+  actor: string
+  action: string
+  resourceType: string
+  resourceId: Id | null
+  resourceLabel: string
+  detail: Record<string, unknown>
+  result: string
+  traceId: string
+  clientIp: string
+  createdAt?: string
+}
+
+/** 按优先级排好序的 AI 候选档案。 */
+export interface AiCandidate {
+  provider: string
+  model: string
+  profileId: Id | null
+  profileName: string | null
+  priority: number
+  isLocal: boolean
+  hasApiKey: boolean
+  source: string
+  sourceLabel: string
+}
+
+/** 当前生效的 AI 配置与各字段来源层。 */
+export interface AiStatus {
+  configured: boolean
+  provider: string
+  model: string
+  baseUrl: string
+  profileId: Id | null
+  profileName: string | null
+  priority: number
+  isLocal: boolean
+  locality: string
+  egress: string
+  hasApiKey: boolean
+  sources: Record<string, string>
+  sourceLabels: Record<string, string>
+  candidates: AiCandidate[]
+  error: string
+}
+
+/** 自检结果。 */
+export interface SelfCheckResult {
+  ok: boolean
+  reason: string
+  message: string
+  hint: string
+  latencyMs: number
+  reply: string
+  usage: Record<string, unknown>
+  draft: boolean
+  provider: string
+  model: string
+  baseUrl: string
+  profileId: Id | null
+  profileName: string | null
+  isLocal: boolean
+  hasApiKey: boolean
+}
+
+/** 服务端可用模型。 */
+export interface AiModelInfo {
+  id: string
+  label: string
+  size: number
+  family: string
+  parameterSize: string
+  quantization: string
+  source: string
+}
+
+/** 知识库存放状态。 */
+export interface KnowledgeStorage {
+  storagePath: string
+  fileMode: string
+  autoReindex: boolean
+  articleCount: number
+  fileCount: number
+  exists: boolean
+}
+
+/** 重建知识库索引的结果。 */
+export interface KnowledgeReindexResult {
+  root: string
+  scanned: number
+  imported: number
+  updated: number
+  skipped: number
+}
+
+/** 迁移知识库存放目录的结果。 */
+export interface KnowledgeMigrateResult extends KnowledgeReindexResult {
+  copied: number
+  source: string
+  target: string
+  removedFromSource: number
+}
+
+export type { PagePayload }
