@@ -36,11 +36,31 @@
       <el-header class="aitp-header">
         <div class="aitp-header-left">
           <el-button text :icon="appStore.sidebarCollapsed ? Expand : Fold" @click="appStore.toggleSidebar()" />
-          <el-breadcrumb separator="/">
-            <el-breadcrumb-item :to="{ path: '/' }"><BrandName size="small" /></el-breadcrumb-item>
-            <el-breadcrumb-item v-if="groupTitle" :to="{ path: groupPath }">{{ groupTitle }}</el-breadcrumb-item>
-            <el-breadcrumb-item v-if="pageTitle">{{ pageTitle }}</el-breadcrumb-item>
-          </el-breadcrumb>
+          <!--
+            面包屑自己拼而不直接用 el-breadcrumb-item：
+            Element Plus 的可点击项渲染成 role="link" 的 <span>，键盘 Tab 走不到。
+            这里保持它的类名与层级（样式照旧），链接换成真正的 <a>，可以聚焦和回车跳转。
+          -->
+          <nav class="el-breadcrumb aitp-breadcrumb" aria-label="面包屑导航">
+            <span class="el-breadcrumb__item">
+              <span class="el-breadcrumb__inner">
+                <RouterLink to="/" aria-label="AITestPilot 首页">
+                  <BrandName size="small" />
+                </RouterLink>
+              </span>
+              <span class="el-breadcrumb__separator" role="presentation">/</span>
+            </span>
+            <span v-if="groupTitle" class="el-breadcrumb__item">
+              <span class="el-breadcrumb__inner">
+                <RouterLink :to="groupPath">{{ groupTitle }}</RouterLink>
+              </span>
+              <span class="el-breadcrumb__separator" role="presentation">/</span>
+            </span>
+            <span v-if="pageTitle" class="el-breadcrumb__item" aria-current="page">
+              <span class="el-breadcrumb__inner">{{ pageTitle }}</span>
+              <span class="el-breadcrumb__separator" role="presentation">/</span>
+            </span>
+          </nav>
         </div>
         <div class="aitp-header-right">
           <GlobalSearch />
@@ -92,7 +112,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, RouterLink } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Expand, Fold } from '@element-plus/icons-vue'
 import { get } from '@/api/request'
@@ -514,6 +534,22 @@ onUnmounted(() => {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* 链接换成真正的 <a>，键盘 Tab 能走到，聚焦时给一个明显的焦点框 */
+.aitp-header-left :deep(.el-breadcrumb__inner a:focus-visible) {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* 末级标题可能很长，链接里的文字也要能截断 */
+.aitp-header-left :deep(.el-breadcrumb__inner a) {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  vertical-align: bottom;
 }
 
 .aitp-header-right {
