@@ -11,6 +11,7 @@
           @keyup.enter="runSearch"
         />
         <el-button type="primary" :icon="Search" @click="runSearch">检索</el-button>
+        <el-button :icon="Files" @click="openCategoryDialog">分类管理</el-button>
         <el-button :icon="Plus" @click="openCreate">手工录入</el-button>
       </div>
     </div>
@@ -109,8 +110,19 @@
           <el-input v-model="form.title" />
         </el-form-item>
         <el-form-item label="分类">
-          <el-select v-model="form.category">
-            <el-option v-for="item in categoryOptions" :key="item" :label="item" :value="item" />
+          <el-select
+            v-model="form.category"
+            filterable
+            allow-create
+            default-first-option
+            placeholder="选择分类，或直接输入新分类"
+          >
+            <el-option
+              v-for="item in categoryOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="功能点">
@@ -134,6 +146,39 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="categoryVisible" title="知识分类管理" width="520px">
+      <p class="muted category-hint">
+        分类名称就是知识条目上显示的分类；新增后所有录入入口都能直接选到。
+      </p>
+      <div class="category-add">
+        <el-input
+          v-model="newCategory"
+          maxlength="20"
+          placeholder="输入新分类名称"
+          @keyup.enter="addCategory"
+        />
+        <el-button type="primary" :loading="categoryBusy" @click="addCategory">新增</el-button>
+      </div>
+      <el-table :data="categoryStore.list" size="small" border max-height="320">
+        <el-table-column prop="name" label="分类名称" />
+        <el-table-column label="类型" width="90">
+          <template #default="{ row }">
+            <el-tag size="small" effect="plain" :type="row.isSystem ? 'info' : 'success'">
+              {{ row.isSystem ? '内置' : '自定义' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="90">
+          <template #default="{ row }">
+            <el-button v-if="!row.isSystem" link type="danger" @click="removeCategory(row)">
+              删除
+            </el-button>
+            <span v-else class="muted">-</span>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
+
     <el-drawer v-model="previewVisible" :title="previewTitle" size="46%">
       <MarkdownView v-if="previewContent" :source="previewContent" />
     </el-drawer>
@@ -147,21 +192,23 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search } from '@element-plus/icons-vue'
+import { Files, Plus, Search } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import MarkdownView from '@/components/MarkdownView.vue'
 import { knowledgeApi, moduleApi, workbenchApi } from '@/api'
 import type { KnowledgeArticle, KnowledgeDraft, ModuleOption } from '@/api/types'
 import { useAppStore } from '@/stores/app'
+import { DEFAULT_KNOWLEDGE_CATEGORY, useKnowledgeCategoryStore } from '@/stores/knowledgeCategory'
 import { useReferenceGuard } from '@/composables/useReferenceGuard'
 import ReferenceBlockDialog from '@/components/ReferenceBlockDialog.vue'
 
 const router = useRouter()
 const appStore = useAppStore()
+const categoryStore = useKnowledgeCategoryStore()
 
 const activeTab = ref('drafts')
 const keyword = ref('')
@@ -173,7 +220,7 @@ const { blockedVisible, blockedRefs, blockedMessage, handleError } = useReferenc
 const draftTableRef = ref<TableExpose | null>(null)
 const articleTableRef = ref<TableExpose | null>(null)
 
-const categoryOptions = ['general', 'test_method', 'experience', 'pitfall', 'meeting', 'security']
+const categoryOptions = computed(() => categoryStore.options)
 
 const draftColumns: ColumnDef[] = [
   { prop: 'title', label: '标题', minWidth: 220 },
@@ -202,10 +249,10 @@ const articleColumns: ColumnDef[] = [
   { prop: 'id', label: '操作', width: 160, slot: 'actions' },
 ]
 
-const articleSearchFields: SearchField[] = [
+const articleSearchFields = computed<SearchField[]>(() => [
   { prop: 'keyword', label: '标题' },
-  { prop: 'category', label: '分类', type: 'select', options: categoryOptions.map((c) => ({ label: c, value: c })) },
-]
+  { prop: 'category', label: '分类', type: 'select', options: categoryOptions.value },
+])
 
 function draftFetcher(query: Record<string, unknown>) {
   return knowledgeApi.listDrafts(query)
@@ -361,7 +408,7 @@ const form = reactive({
   title: '',
   content: '',
   summary: '',
-  category: 'general',
+  category: DEFAULT_KNOWLEDGE_CATEGORY,
   tags: '',
   moduleId: null as number | null,
 })
@@ -371,7 +418,7 @@ function openCreate(): void {
     title: '',
     content: '',
     summary: '',
-    category: 'general',
+    category: DEFAULT_KNOWLEDGE_CATEGORY,
     tags: '',
     moduleId: null,
   })
@@ -385,7 +432,12 @@ async function save(): Promise<void> {
   }
   saving.value = true
   try {
-    await knowledgeApi.createDraft({ ...form, sourceType: 'manual' })
+    // 下拉里直接输入的新分类先建分类，再提交条目，避免校验失败
+    const category = form.category.trim()
+    if (category && !categoryStore.names.includes(category)) {
+      await categoryStore.create(category)
+    }
+    await knowledgeApi.createDraft({ ...form, category, sourceType: 'manual' })
     ElMessage.success('已进入待审核池，审核通过后才计入数字资产')
     dialogVisible.value = false
     draftTableRef.value?.reload()
@@ -423,9 +475,60 @@ watch(() => appStore.currentProjectId, () => {
   void loadModuleOptions()
 })
 
+const categoryVisible = ref(false)
+const categoryBusy = ref(false)
+const newCategory = ref('')
+
+function openCategoryDialog(): void {
+  newCategory.value = ''
+  categoryVisible.value = true
+  void categoryStore.load(true)
+}
+
+async function addCategory(): Promise<void> {
+  const name = newCategory.value.trim()
+  if (!name) {
+    ElMessage.warning('请输入分类名称')
+    return
+  }
+  if (categoryStore.names.includes(name)) {
+    ElMessage.warning('该分类已存在')
+    return
+  }
+  categoryBusy.value = true
+  try {
+    await categoryStore.create(name)
+    newCategory.value = ''
+    ElMessage.success('分类已新增')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '新增分类失败')
+  } finally {
+    categoryBusy.value = false
+  }
+}
+
+async function removeCategory(row: { id: number; name: string }): Promise<void> {
+  try {
+    await ElMessageBox.confirm(`删除分类「${row.name}」？已归入该分类的条目不受影响。`, '删除分类', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  try {
+    await categoryStore.remove(row.id)
+    ElMessage.success('已删除')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '删除失败')
+  }
+}
+
 onMounted(() => {
   void loadModuleOptions()
   void refreshPending()
+  void categoryStore.load()
 })
 </script>
 
@@ -435,6 +538,18 @@ onMounted(() => {
 }
 
 .knowledge-tabs :deep(.el-tabs__header) {
+  margin-bottom: 12px;
+}
+
+.category-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.category-add {
+  display: flex;
+  gap: 8px;
   margin-bottom: 12px;
 }
 </style>

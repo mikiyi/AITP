@@ -7,7 +7,9 @@ from flask import Blueprint, Response
 from ..ai.capability_codes import CAPABILITIES
 from ..common import enums
 from ..common.constants import PROVIDERS
+from ..db.connection import get_db
 from ..envelope import ok
+from ..repositories.knowledge_category_repo import KnowledgeCategoryRepository
 
 bp = Blueprint("meta", __name__)
 
@@ -28,7 +30,7 @@ def list_enums() -> Response:
         "bugType": list(enums.BUG_TYPE),
         "bugRelation": list(enums.BUG_RELATION),
         "bugTransitions": {k: list(v) for k, v in enums.BUG_TRANSITIONS.items()},
-        "knowledgeCategory": list(enums.KNOWLEDGE_CATEGORY),
+        "knowledgeCategory": _knowledge_categories(),
         "knowledgeSource": list(enums.KNOWLEDGE_SOURCE),
         "reportType": list(enums.REPORT_TYPE),
         "reportStatus": list(enums.REPORT_STATUS),
@@ -36,6 +38,15 @@ def list_enums() -> Response:
         "aiTaskStatus": list(enums.AI_TASK_STATUS),
         "aiTaskType": list(enums.AI_TASK_TYPE),
     })
+
+
+def _knowledge_categories() -> list[str]:
+    """分类以库里的清单为准（含自定义分类），查不到时退回内置中文分类。"""
+    try:
+        names = [item["name"] for item in KnowledgeCategoryRepository(get_db()).list_categories()]
+    except Exception:  # noqa: BLE001 - 元数据接口不该因为分类表异常整体失败
+        names = []
+    return names or list(enums.KNOWLEDGE_CATEGORY)
 
 
 @bp.get("/capabilities")

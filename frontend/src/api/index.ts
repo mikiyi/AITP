@@ -29,6 +29,7 @@ import type {
   DocumentAttachment,
   EntityRelation,
   KnowledgeArticle,
+  KnowledgeCategory,
   KnowledgeDraft,
   KnowledgeMigrateResult,
   KnowledgeRef,
@@ -277,6 +278,10 @@ export const bugApi = {
 
 /** 知识库：待审池 + 正式库。 */
 export const knowledgeApi = {
+  /** 分类清单：内置中文分类 + 自定义分类。 */
+  categories: () => get<{ list: KnowledgeCategory[] }>('/knowledge/categories'),
+  createCategory: (name: string) => post<KnowledgeCategory>('/knowledge/categories', { name }),
+  removeCategory: (id: number) => del(`/knowledge/categories/${id}`),
   listDrafts: (query: Record<string, unknown> = {}) =>
     get<PagePayload<KnowledgeDraft>>('/knowledge/drafts', query as never),
   createDraft: (body: Record<string, unknown>) => post<KnowledgeDraft>('/knowledge/drafts', body),

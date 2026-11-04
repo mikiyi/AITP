@@ -40,7 +40,8 @@ BUG_TYPE = ("functional", "interface", "boundary", "security", "ui", "exception"
 
 BUG_RELATION = ("related", "caused_by", "blocked_by")
 
-KNOWLEDGE_CATEGORY = ("general", "test_method", "experience", "pitfall", "meeting", "security")
+# 知识分类直接存中文；自定义分类存 sys_knowledge_category，完整清单以接口为准
+KNOWLEDGE_CATEGORY = ("通用", "测试方法", "经验总结", "踩坑记录", "会议纪要", "安全测试")
 
 KNOWLEDGE_SOURCE = ("manual", "ai_generated", "bug", "session", "imported")
 

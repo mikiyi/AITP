@@ -398,7 +398,7 @@ def check_knowledge(api: Api, project_id: int, feature_id: int) -> None:
         "title": "支付回调幂等方案",
         "content": "回调按交易流水号去重，落库前先查幂等表。",
         "summary": "幂等处理要点",
-        "category": "test_method",
+        "category": "测试方法",
         "tags": "支付,幂等",
         "moduleId": feature_id,
         "sourceType": "ai_output",

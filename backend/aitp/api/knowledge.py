@@ -6,10 +6,13 @@ from typing import Any
 
 from flask import Blueprint, Response, request
 
-from ..common.enums import KNOWLEDGE_CATEGORY
 from ..common.validators import check_choice, optional_str, require_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
+from ..repositories.knowledge_category_repo import (
+    KnowledgeCategoryRepository,
+    decorate as category_public,
+)
 from ..repositories.knowledge_draft_repo import (
     DRAFT_STATUS_PENDING,
     KnowledgeDraftRepository,
@@ -17,15 +20,60 @@ from ..repositories.knowledge_draft_repo import (
 from ..repositories.knowledge_ref_repo import KnowledgeRefRepository
 from ..repositories.knowledge_repo import KnowledgeRepository
 from ..repositories.knowledge_version_repo import KnowledgeVersionRepository
-from ..services import audit_service, knowledge_storage, tabular_export
+from ..services import audit_service, knowledge_category_service, knowledge_storage, tabular_export
 from ..repositories.sys_config_repo import SysConfigRepository
 from .helpers import (audit, body, bool_arg, commit, db, download_response, keyword_of, page_args,
-                      page_payload, query_filters, tabular_format_of)
+                      page_payload, path_int, query_filters, tabular_format_of)
 
 bp = Blueprint("knowledge", __name__)
 
 ARTICLE_FILTERS = {"category": "category", "sourceType": "source_type", "moduleId": "module_id"}
 DRAFT_FILTERS = {"reviewStatus": "review_status", "sourceType": "source_type", "moduleId": "module_id"}
+
+
+@bp.get("/categories")
+def list_categories() -> Response:
+    """分类清单：内置中文分类 + 用户自定义分类，按排序值升序。"""
+    conn = db()
+    return ok({"list": KnowledgeCategoryRepository(conn).list_categories()})
+
+
+@bp.post("/categories")
+def create_category() -> Response:
+    """新增自定义分类；名称就是文章里的分类值。"""
+    conn = db()
+    data = body()
+    name = require_str(data.get("name"), "name", 20)
+    repo = KnowledgeCategoryRepository(conn)
+    if repo.find_by_name(name):
+        raise AppError(ErrorCode.PARAM_ERROR, "该分类已存在")
+    row_id = repo.insert({
+        "name": name,
+        "sort_order": repo.next_sort_order(),
+        "is_system": 0,
+    })
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_CREATE,
+          audit_service.RESOURCE_KNOWLEDGE_CATEGORY, row_id, name, {})
+    return ok(category_public(repo.get(row_id) or {}))
+
+
+@bp.delete("/categories/<pk>")
+def delete_category(pk: str) -> Response:
+    """删除自定义分类；内置分类不允许删除，已归类文章不受影响。"""
+    conn = db()
+    repo = KnowledgeCategoryRepository(conn)
+    target = path_int(pk)
+    row = repo.get(target)
+    if not row:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "分类不存在")
+    if row.get("is_system"):
+        raise AppError(ErrorCode.ILLEGAL_OPERATION, "内置分类不能删除")
+    repo.soft_delete(target)
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_DELETE,
+          audit_service.RESOURCE_KNOWLEDGE_CATEGORY, target, str(row.get("name") or ""))
+    return ok({"id": target})
 ARTICLE_TABULAR_COLUMNS: tuple[tuple[str, str], ...] = (
     ("id", "ID"),
     ("title", "标题"),
@@ -154,7 +202,7 @@ def create_draft() -> Response:
     data = body()
     title = require_str(data.get("title"), "title", 500)
     content = require_str(data.get("content"), "content", 500000)
-    category = check_choice(data.get("category"), KNOWLEDGE_CATEGORY, "category", "general") or "general"
+    category = knowledge_category_service.ensure_category(conn, data.get("category"))
     source_type = optional_str(data.get("sourceType"), "sourceType", 40) or "ai_output"
     repo = KnowledgeDraftRepository(conn)
     new_id = repo.create_draft(
@@ -191,7 +239,9 @@ def update_draft(pk: str) -> Response:
         "title": require_str(data.get("title"), "title", 500) if "title" in data else row["title"],
         "content": require_str(data.get("content"), "content", 500000) if "content" in data else row["content"],
     }
-    for key in ("summary", "category", "tags"):
+    if "category" in data:
+        payload["category"] = knowledge_category_service.ensure_category(conn, data["category"])
+    for key in ("summary", "tags"):
         if key in data:
             payload[key] = optional_str(data[key], key, 2000 if key == "summary" else 500)
     if "moduleId" in data:
@@ -326,7 +376,7 @@ def update_article(pk: str) -> Response:
         title=title,
         content=content,
         summary=optional_str(data.get("summary"), "summary", 2000),
-        category=optional_str(data.get("category"), "category", 100),
+        category=knowledge_category_service.ensure_category(conn, data.get("category")),
         tags=optional_str(data.get("tags"), "tags", 500),
         change_log=optional_str(data.get("changeLog"), "changeLog", 1000),
         created_by=optional_str(data.get("operator"), "operator", 64),

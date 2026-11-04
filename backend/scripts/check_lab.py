@@ -288,7 +288,7 @@ def check_knowledge_flow(api: Api) -> None:
         "title": "验收用例产出物",
         "content": "这是一条 AI 产出物，用于验证待审池流转。",
         "summary": "验收产出物",
-        "category": "general",
+        "category": "通用",
         "sourceType": "ai_output",
         "producer": "requirement_confirm",
     })

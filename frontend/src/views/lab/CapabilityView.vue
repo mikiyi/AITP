@@ -426,7 +426,12 @@
         </el-form-item>
         <el-form-item label="分类">
           <el-select v-model="knowledgeForm.category">
-            <el-option v-for="item in categoryOptions" :key="item" :label="item" :value="item" />
+            <el-option
+              v-for="item in categoryOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="标签">
@@ -572,6 +577,7 @@ import type {
   Requirement,
 } from '@/api/types'
 import { useAppStore } from '@/stores/app'
+import { DEFAULT_KNOWLEDGE_CATEGORY, useKnowledgeCategoryStore } from '@/stores/knowledgeCategory'
 import { useLabStore } from '@/stores/lab'
 import { CAPABILITY_FORMS, optionPromptText, primaryFieldOf, visibleFields, visibleOptions } from './capabilityForms'
 import { findNodeByPath, subtreeText, testpointToMindNodes } from './mindmap'
@@ -580,6 +586,7 @@ const route = useRoute()
 const router = useRouter()
 const labStore = useLabStore()
 const appStore = useAppStore()
+const categoryStore = useKnowledgeCategoryStore()
 
 const capability = computed(() => String(route.params.capability ?? ''))
 const spec = computed(
@@ -852,7 +859,8 @@ const mindTree = computed<MindNode[]>(() => {
 })
 const mindNodes = computed<MindNode[]>(() => mindTree.value)
 
-const categoryOptions = ['general', 'test_method', 'experience', 'pitfall', 'meeting', 'security']
+/** 分类清单来自 store：内置中文分类 + 自定义分类。 */
+const categoryOptions = computed(() => categoryStore.options)
 
 /** 可导入的文档格式。 */
 const DOC_ACCEPT = '.docx,.doc,.xlsx,.xlsm,.csv,.md,.markdown,.txt,.log,.json,.html,.htm,.pdf'
@@ -1187,11 +1195,11 @@ function downloadText(text: string, filename: string): void {
 
 const knowledgeVisible = ref(false)
 const savingKnowledge = ref(false)
-const knowledgeForm = reactive({ title: '', category: 'general', tags: '' })
+const knowledgeForm = reactive({ title: '', category: DEFAULT_KNOWLEDGE_CATEGORY, tags: '' })
 
 function saveToKnowledge(): void {
   knowledgeForm.title = `${spec.value?.label ?? capability.value} ${new Date().toLocaleString('zh-CN')}`
-  knowledgeForm.category = 'general'
+  knowledgeForm.category = DEFAULT_KNOWLEDGE_CATEGORY
   knowledgeForm.tags = ''
   knowledgeVisible.value = true
 }
@@ -1475,6 +1483,7 @@ onMounted(async () => {
   await labStore.loadModuleOptions(appStore.currentProjectId ?? undefined)
   resetValues()
   void loadHistory(1)
+  void categoryStore.load()
   window.addEventListener('paste', onPaste)
 })
 

@@ -177,6 +177,15 @@ export interface KnowledgeDraft {
   updatedAt?: string
 }
 
+/** 知识分类：名称即分类值，内置分类不可删除。 */
+export interface KnowledgeCategory {
+  id: Id
+  name: string
+  sortOrder: number
+  isSystem: boolean
+  createdAt: string
+}
+
 export interface KnowledgeArticle {
   id: Id
   title: string

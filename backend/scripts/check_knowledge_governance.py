@@ -108,7 +108,7 @@ def check_draft_flow(api: Api, project_id: int) -> int:
     draft = cast(JsonDict, api.data("POST", "/api/v1/knowledge/drafts", {
         "title": "验证码时效测试要点",
         "content": "验证码 60 秒有效，连续错误 5 次锁定账号 15 分钟。",
-        "category": "test_method",
+        "category": "测试方法",
         "tags": "登录,验证码",
         "sourceType": "ai_output",
         "producer": "testpoint_generation",
