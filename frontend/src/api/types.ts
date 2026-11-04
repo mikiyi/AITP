@@ -488,6 +488,8 @@ export interface SystemConfigItem {
   valueType: string
   scope: string
   description: string
+  /** 取值说明：可填哪些值、每个值是什么意思；为空时回退到 description */
+  hint: string
   isSystem: boolean
 }
 

@@ -19,6 +19,50 @@ from .helpers import audit, body, commit, db, keyword_of, page_args, page_payloa
 
 bp = Blueprint("settings", __name__)
 
+#: 每个配置项的取值说明：告诉新用户「能填什么、每个值是什么意思」。
+#: description 是短标题，这里负责解释取值，前端在字段下方带提示图标展示。
+CONFIG_HINTS: dict[str, str] = {
+    "ai.degrade.enabled": (
+        "可填 true 或 false。true：首选模型不可用时，按优先级自动换用下一个可用模型，"
+        "页面只弹 3 秒提示；false：首选模型失败就直接报错，不自动切换。"
+    ),
+    "ai.timeout.default": (
+        "整数，单位秒，默认 60。单次 AI 调用超过这个时长即判定超时。"
+        "云端接口一般 30~60，本地小模型可放宽到 120~300。"
+    ),
+    "knowledge.auto_reindex": (
+        "可填 true 或 false。true：服务启动时按文件内容重建知识库全文索引（条目多时启动会变慢）；"
+        "false：只在保存条目或手动点「重建索引」时更新。"
+    ),
+    "knowledge.file_mode": (
+        "可填 mirror 或 db_only。mirror：审核通过的条目同时写一份 Markdown 到存放目录，便于备份与外部编辑；"
+        "db_only：只存数据库，不落盘。"
+    ),
+    "knowledge.storage_path": (
+        "绝对目录路径，例如 D:\Qoter\AItools\knowledge。知识条目会以 .md 形式写到这里；"
+        "改路径不会自动搬动已有文件，需要迁移请到「知识库设置」执行迁移。"
+    ),
+    "module.default_types": (
+        "逗号分隔的层级角色名，默认 module,submodule,feature，依次对应模块、子模块、功能点。"
+        "新建模块树时按这个顺序生成层级，一般不需要修改。"
+    ),
+    "automation.python.interpreter": (
+        "Python 解释器的绝对路径，例如 D:\app_install\python311\python.exe。"
+        "留空则使用 AITP 服务自身的解释器；只影响自动化脚本执行，不影响 AI 调用。"
+    ),
+    "automation.python.timeout": (
+        "整数，单位秒，默认 300。自动化脚本单次执行超过该时长会被强制结束，并记为「超时」。"
+    ),
+    "performance.jmeter.home": (
+        "JMeter 安装根目录，例如 C:\tools\apache-jmeter-5.6.3，"
+        "其下需要有 bin/jmeter（Windows 为 bin/jmeter.bat）。"
+    ),
+    "performance.jmeter.args": (
+        "额外启动参数，空格分隔，例如 -Jthread.count=50 -Jduration=60。留空表示不加参数。"
+    ),
+}
+
+
 PROFILE_WRITE_FIELDS = {
     "name", "provider", "protocol", "base_url", "model", "temperature",
     "max_tokens", "timeout", "is_default", "is_active", "sort_order", "priority",
@@ -247,6 +291,7 @@ def list_config() -> Response:
             "valueType": row.get("value_type"),
             "scope": row.get("scope"),
             "description": row.get("description"),
+            "hint": CONFIG_HINTS.get(str(row.get("config_key") or ""), ""),
             "isSystem": bool(row.get("is_system")),
         })
     return ok(result)

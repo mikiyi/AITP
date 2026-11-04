@@ -43,7 +43,10 @@
       <el-form label-width="220px">
         <el-form-item v-for="item in configs" :key="item.key" :label="item.key">
           <el-input v-model="item.value" :placeholder="item.description" />
-          <div class="muted settings-block__desc">{{ item.description }}</div>
+          <div class="settings-config__hint">
+            <el-icon class="settings-config__icon"><InfoFilled /></el-icon>
+            <span>{{ item.hint || item.description || '按当前配置项的类型填写对应值' }}</span>
+          </div>
         </el-form-item>
       </el-form>
     </div>
@@ -69,6 +72,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { InfoFilled } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField } from '@/components/BaseProTable.vue'
 import { settingsApi } from '@/api'
 import type { SystemConfigItem } from '@/api/types'
@@ -201,8 +205,21 @@ onMounted(() => {
   font-size: 15px;
 }
 
-.settings-block__desc {
+/* 配置项说明：小图标 + 取值解释，新手也能看懂能填什么 */
+.settings-config__hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 4px;
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.6;
+  color: var(--aitp-text-weak);
+}
+
+.settings-config__icon {
+  margin-top: 2px;
+  flex-shrink: 0;
+  color: var(--el-color-primary);
+  opacity: 0.85;
 }
 </style>
