@@ -121,7 +121,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Expand, Fold, Files, HomeFilled, List, MagicStick, Operation, Setting } from '@element-plus/icons-vue'
@@ -246,12 +246,33 @@ async function loadAiStatus(): Promise<void> {
 
 watch(
   () => route.path,
-  () => {
+  async () => {
     appStore.loadProjects()
+    await nextTick()
+    scrollActiveMenuIntoView()
   },
 )
 
-onMounted(() => {
+/** 菜单较长时把当前所在入口滚进可视区，避免"看不到自己在哪一页"。 */
+function scrollActiveMenuIntoView(): void {
+  const menu = document.querySelector<HTMLElement>('.aitp-menu')
+  if (!menu) {
+    return
+  }
+  const active = menu.querySelector<HTMLElement>('.el-menu-item.is-active')
+  if (!active) {
+    return
+  }
+  const menuRect = menu.getBoundingClientRect()
+  const itemRect = active.getBoundingClientRect()
+  if (itemRect.top < menuRect.top) {
+    menu.scrollTop -= menuRect.top - itemRect.top
+  } else if (itemRect.bottom > menuRect.bottom) {
+    menu.scrollTop += itemRect.bottom - menuRect.bottom
+  }
+}
+
+onMounted(async () => {
   void ping()
   void loadAiStatus()
   updateVisibleWidth()
@@ -260,6 +281,8 @@ onMounted(() => {
     void ping()
     void loadAiStatus()
   }, 15000)
+  await nextTick()
+  scrollActiveMenuIntoView()
 })
 
 onUnmounted(() => {
@@ -287,7 +310,10 @@ onUnmounted(() => {
   background: #ffffff;
   border-right: 1px solid var(--aitp-border);
   transition: width 0.2s;
-  overflow-x: hidden;
+  /* 侧栏本身不滚动：品牌栏固定，菜单区自己滚动，导航全部展开时也能滚到底 */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .aitp-brand {
@@ -298,6 +324,7 @@ onUnmounted(() => {
   padding: 0 16px;
   font-weight: 700;
   font-size: 16px;
+  flex-shrink: 0;
   border-bottom: 1px solid var(--aitp-border);
 }
 
@@ -307,6 +334,31 @@ onUnmounted(() => {
 
 .aitp-menu {
   border-right: none;
+  /* flex 子项默认 min-height:auto，菜单展开后会撑破侧栏，这里放开让它内部滚动 */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #c6ccd6 transparent;
+}
+
+/* 滚动条做得明显一点，菜单长的时候一眼能看出可以往下滚 */
+.aitp-menu::-webkit-scrollbar {
+  width: 8px;
+}
+
+.aitp-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.aitp-menu::-webkit-scrollbar-thumb {
+  background: #c6ccd6;
+  border-radius: 4px;
+}
+
+.aitp-menu::-webkit-scrollbar-thumb:hover {
+  background: #a4abb6;
 }
 
 .aitp-header {

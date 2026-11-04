@@ -46,6 +46,7 @@
       v-loading="loading"
       :data="rows"
       :row-key="rowKey"
+      :max-height="maxHeight"
       border
       stripe
       style="width: 100%"
@@ -131,6 +132,8 @@ const props = withDefaults(
     searchFields?: SearchField[]
     rowKey?: string
     pageSize?: number
+    /** 表格体最大高度（像素）；超出时表格内部滚动，分页条紧跟在表格下方。 */
+    maxHeight?: number
     autoLoad?: boolean
     extraQuery?: Record<string, unknown>
     /** 开启左侧复选框，配合 #batch 插槽做批量操作。 */

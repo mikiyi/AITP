@@ -78,6 +78,7 @@
         :columns="auditColumns"
         :fetcher="auditFetcher"
         :search-fields="auditSearchFields"
+        :max-height="420"
         sync-query
         query-prefix="audit_"
       />
@@ -99,7 +100,7 @@ const configs = ref<SystemConfigItem[]>([])
 const saving = ref(false)
 
 const auditColumns: ColumnDef[] = [
-  { prop: 'createdAt', label: '时间', width: 180 },
+  { prop: 'createdAt', label: '时间', width: 170, formatter: (row) => formatAuditTime(row.createdAt) },
   { prop: 'actor', label: '操作者', width: 110 },
   { prop: 'action', label: '动作', width: 120 },
   { prop: 'resourceType', label: '资源类型', width: 140 },
@@ -107,6 +108,21 @@ const auditColumns: ColumnDef[] = [
   { prop: 'result', label: '结果', width: 90 },
   { prop: 'traceId', label: 'TraceId', width: 200 },
 ]
+
+/** 审计时间落库是 ISO 字符串，表格里换成本地可读时间，避免整列都被截断。 */
+function formatAuditTime(raw: unknown): string {
+  if (!raw) {
+    return '-'
+  }
+  const date = new Date(String(raw))
+  if (Number.isNaN(date.getTime())) {
+    return String(raw)
+  }
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  return `${day} ${time}`
+}
 
 const auditSearchFields: SearchField[] = [
   { prop: 'action', label: '动作' },
