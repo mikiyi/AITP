@@ -29,7 +29,9 @@
         <el-descriptions-item label="档案">{{ status.profileName || '环境变量 / 内置默认' }}</el-descriptions-item>
         <el-descriptions-item label="来源层">{{ sourceText }}</el-descriptions-item>
         <el-descriptions-item label="数据外发">{{ status.isLocal ? '不出本机' : '会上传第三方' }}</el-descriptions-item>
-        <el-descriptions-item label="凭证">{{ status.hasApiKey ? '已配置' : '未配置' }}</el-descriptions-item>
+        <el-descriptions-item label="凭证">
+          {{ status.isLocal ? '本地大模型无需配置 KEY' : status.hasApiKey ? '已配置' : '未配置' }}
+        </el-descriptions-item>
         <el-descriptions-item label="优先级">{{ status.priority }}</el-descriptions-item>
       </el-descriptions>
       <div v-if="status.candidates.length" class="candidates">
@@ -66,6 +68,9 @@
               <el-tag size="small" :type="row.envKeyPresent ? 'success' : 'warning'" effect="plain">
                 本地变量 {{ row.envKeyName || '未设置' }}
               </el-tag>
+            </el-tooltip>
+            <el-tooltip v-else-if="row.isLocal" content="本地大模型无需配置 KEY" placement="top">
+              <el-tag size="small" type="info" effect="plain">本地无需 Key</el-tag>
             </el-tooltip>
             <el-tag v-else-if="row.hasApiKey" size="small" type="success" effect="plain">
               {{ row.apiKeyMasked || '已配置' }}
@@ -194,17 +199,18 @@
         </el-form-item>
 
         <el-form-item label="启用本地 Key">
-          <el-switch v-model="form.useEnvKey" />
+          <el-switch v-model="form.useEnvKey" :disabled="isLocalProvider" />
           <div class="field-hint">
             <el-icon><InfoFilled /></el-icon>
-            <span>
+            <span v-if="isLocalProvider">配置本地大模型时无需配置本地 Key，本地模型不校验 API Key。</span>
+            <span v-else>
               开启后不再使用「设置 Key」保存的密钥，改为从本机环境变量读取：填写的变量名必须与本机环境变量完全一致（区分大小写）。
               用户变量只对当前登录用户生效，系统变量对所有用户生效；本工具直接读取注册表，设置完变量无需重启服务。
               变量不存在时，调用模型会提示「未读取到环境变量」。
             </span>
           </div>
         </el-form-item>
-        <template v-if="form.useEnvKey">
+        <template v-if="form.useEnvKey && !isLocalProvider">
           <el-form-item label="变量名" required>
             <el-input v-model="form.envKeyName" placeholder="例如 OPENAI_API_KEY" />
           </el-form-item>
@@ -220,7 +226,7 @@
           </el-form-item>
         </template>
 
-        <el-form-item v-if="!form.useEnvKey" label="临时 Key">
+        <el-form-item v-if="!form.useEnvKey && !isLocalProvider" label="临时 Key">
           <el-input
             v-model="draftApiKey"
             type="password"
@@ -311,6 +317,8 @@ interface ProviderSpec {
   defaultBaseUrl: string
   defaultModel: string
   requiresApiKey: boolean
+  /** 本地自托管模型（Ollama 等）无需 API Key */
+  isLocal: boolean
   envKeys: string[]
 }
 
@@ -374,6 +382,12 @@ const checkingDraft = ref(false)
 const draftApiKey = ref('')
 const modelOptions = ref<AiModelInfo[]>([])
 const loadingModels = ref(false)
+
+/** 当前选择的供应商是不是本地自托管模型（Ollama 等） */
+const isLocalProvider = computed(() => {
+  const spec = providers.value.find((item) => item.name === form.provider)
+  return Boolean(spec?.isLocal)
+})
 
 const sourceText = computed(() => {
   const labels = status.value?.sourceLabels ?? {}
@@ -440,6 +454,9 @@ function onProviderChange(name: string): void {
   form.protocol = spec.protocol
   form.baseUrl = spec.defaultBaseUrl
   form.model = spec.defaultModel
+  if (spec.isLocal) {
+    form.useEnvKey = false
+  }
   modelOptions.value = []
 }
 
@@ -531,7 +548,7 @@ async function save(): Promise<void> {
     maxTokens: form.maxTokens,
     timeout: form.timeout,
     isDefault: form.isDefault,
-    useEnvKey: form.useEnvKey,
+    useEnvKey: isLocalProvider.value ? false : form.useEnvKey,
     envKeyName: form.envKeyName.trim(),
     envKeyScope: form.envKeyScope,
   }

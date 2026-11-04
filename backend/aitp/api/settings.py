@@ -103,6 +103,14 @@ def _env_key_columns(data: dict[str, Any], existing: dict[str, Any] | None = Non
     }
 
 
+def _local_key_rule(spec: Any, columns: dict[str, Any]) -> dict[str, Any]:
+    """本地大模型不使用 API Key，本地 Key 开关一律落成关闭。"""
+    if spec is not None and getattr(spec, "is_local", False):
+        columns = dict(columns)
+        columns["use_env_key"] = 0
+    return columns
+
+
 def _camel_of(snake: str) -> str:
     """下划线转驼峰，用于兼容两种入参写法。"""
     head, *rest = snake.split("_")
@@ -139,6 +147,7 @@ def list_providers() -> Response:
             "defaultBaseUrl": spec.default_base_url,
             "defaultModel": spec.default_model,
             "requiresApiKey": spec.requires_api_key,
+            "isLocal": spec.is_local,
             "envKeys": list(spec.env_key),
         })
     return ok(result)
@@ -185,7 +194,7 @@ def create_profile() -> Response:
         "priority": int(data.get("priority", 0)),
         "is_local": 1 if (data.get("isLocal") if data.get("isLocal") is not None
                           else (spec.name == "ollama" if spec else False)) else 0,
-        **_env_key_columns(data),
+        **_local_key_rule(spec, _env_key_columns(data)),
     })
     api_key = optional_str(data.get("apiKey"), "apiKey", 500)
     if api_key:
@@ -229,7 +238,8 @@ def update_profile(pk: str) -> Response:
     if "extra" in data:
         payload["extra_json"] = dumps(data["extra"] or {})
     if any(key in data for key in ("useEnvKey", "envKeyName", "envKeyScope")):
-        payload.update(_env_key_columns(data, row))
+        final_provider = str(payload.get("provider") or row.get("provider") or "")
+        payload.update(_local_key_rule(PROVIDERS.get(final_provider), _env_key_columns(data, row)))
     repo.update(target, payload)
     api_key = optional_str(data.get("apiKey"), "apiKey", 500)
     if api_key:

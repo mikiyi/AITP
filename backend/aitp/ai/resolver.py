@@ -201,7 +201,7 @@ def _build_config(
 
     # ---- api key ----
     # 本地 Key 模式优先：Key 由用户自己放在系统环境变量里，库里只记变量名与作用域
-    use_env_key = bool((profile or {}).get("use_env_key"))
+    use_env_key = bool((profile or {}).get("use_env_key")) and not spec.is_local
     env_key_name = str((profile or {}).get("env_key_name") or "").strip()
     env_key_scope = normalize_scope((profile or {}).get("env_key_scope"))
     api_key = ""
