@@ -7,7 +7,7 @@
       @click="go(item)"
     >
       <span class="quick-entry-label">{{ item.label }}</span>
-      <span class="quick-entry-group">{{ item.group }}</span>
+      <span class="quick-entry-group">（{{ item.group }}）</span>
     </el-button>
   </div>
 </template>
