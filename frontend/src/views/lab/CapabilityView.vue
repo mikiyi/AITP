@@ -285,6 +285,14 @@
             添加回归清单
           </el-button>
           <el-button
+            v-if="capability === 'sql_analysis'"
+            :icon="DataLine"
+            :disabled="!finished || !output"
+            @click="openAdoptAsset('sql')"
+          >
+            添加 SQL 分析
+          </el-button>
+          <el-button
             v-if="spec?.adoptable"
             type="success"
             :icon="Select"
@@ -627,6 +635,7 @@ import {
   Collection,
   CopyDocument,
   Document,
+  DataLine,
   DocumentAdd,
   Download,
   FolderAdd,
@@ -865,12 +874,13 @@ function downloadExcelArtifact(): void {
 
 /* ---- 一键添加到资产 ---- */
 
-type AssetTarget = 'requirement' | 'bug' | 'regression'
+type AssetTarget = 'requirement' | 'bug' | 'regression' | 'sql'
 
 const ASSET_LABEL: Record<AssetTarget, string> = {
   requirement: '需求',
   bug: '缺陷',
   regression: '回归清单',
+  sql: 'SQL 分析',
 }
 
 const adoptAssetVisible = ref(false)

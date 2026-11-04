@@ -63,6 +63,7 @@
         :width="column.width"
         :min-width="column.minWidth"
         :align="column.align || 'left'"
+        :fixed="column.fixed || false"
         show-overflow-tooltip
       >
         <template #default="scope">
@@ -105,6 +106,8 @@ export interface ColumnDef<T = Record<string, any>> {
   width?: number
   minWidth?: number
   align?: 'left' | 'center' | 'right'
+  /** 固定列，通常操作列用 'right'，横向滚动时仍可见 */
+  fixed?: boolean | 'left' | 'right'
   slot?: string
   formatter?: (row: T) => string
 }

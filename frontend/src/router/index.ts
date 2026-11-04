@@ -132,6 +132,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '缺陷详情', hidden: true },
   },
   {
+    path: '/sql-analyses',
+    name: 'sql-analyses',
+    component: () => import('@/views/sql/SqlAnalysisListView.vue'),
+    meta: { title: 'SQL 分析', icon: 'DataLine' },
+  },
+  {
     path: '/knowledge',
     name: 'knowledge',
     component: () => import('@/views/knowledge/KnowledgeView.vue'),

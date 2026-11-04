@@ -23,6 +23,7 @@ def register_blueprints(app: Flask) -> None:
     from .reports import bp as reports_bp
     from .requirements import bp as requirements_bp
     from .search import bp as search_bp
+    from .sql_analyses import bp as sql_analyses_bp
     from .settings import bp as settings_bp
     from .todos import bp as todos_bp
     from .validation import bp as validation_bp
@@ -35,6 +36,7 @@ def register_blueprints(app: Flask) -> None:
         (ai_bp, "/api/v1/ai"),
         (ai_records_bp, "/api/v1/ai-records"),
         (search_bp, "/api/v1/search"),
+        (sql_analyses_bp, "/api/v1/sql-analyses"),
         (projects_bp, "/api/v1/projects"),
         (requirements_bp, "/api/v1/requirements"),
         (modules_bp, "/api/v1/modules"),

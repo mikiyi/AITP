@@ -1119,3 +1119,20 @@ export interface DocTemplateUpload {
 
 /** 模板列表分页。 */
 export type DocTemplatePage = PagePayload<DocTemplate>
+
+/** 一条 SQL 分析资产：被分析的 SQL + 分析结论。 */
+export interface SqlAnalysis {
+  id: Id
+  projectId: Id
+  moduleId: Id | null
+  sqlNo: string
+  title: string
+  sqlText: string
+  analysis: string
+  riskLevel: string
+  riskLabel: string
+  source: string
+  tags: string
+  createdAt?: string
+  updatedAt?: string
+}

@@ -7,6 +7,7 @@ export const SECTION_BY_PATH: Record<string, string> = {
   '/requirements': 'requirements',
   '/test-cases': 'cases',
   '/bugs': 'bugs',
+  '/sql-analyses': 'sql_analyses',
   '/regressions': 'regressions',
   '/reports': 'reports',
   '/automation/web': 'automation_web',

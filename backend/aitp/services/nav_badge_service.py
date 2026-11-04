@@ -22,6 +22,7 @@ SECTIONS: tuple[str, ...] = (
     "automation_app",
     "automation_api",
     "automation_performance",
+    "sql_analyses",
 )
 
 

@@ -53,6 +53,7 @@ RESOURCE_AUTOMATION_SCRIPT = "automation_script"
 RESOURCE_AUTOMATION_RUN = "automation_run"
 RESOURCE_DOC_TEMPLATE = "doc_template"
 RESOURCE_KNOWLEDGE_CATEGORY = "knowledge_category"
+RESOURCE_SQL_ANALYSIS = "sql_analysis"
 
 _MAX_DETAIL_CHARS = 2000
 

@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Iterator
@@ -31,6 +32,7 @@ from ..repositories.ai_session_repo import AISessionRepository, AITaskRepository
 from ..repositories.bug_repo import BugRepository
 from ..repositories.project_repo import ProjectRepository
 from ..repositories.requirement_repo import RequirementRepository
+from ..repositories.sql_analysis_repo import SqlAnalysisRepository
 from ..repositories.base import dumps, loads
 from ..repositories.doc_template_repo import (
     CAPABILITY_KIND,
@@ -441,6 +443,18 @@ def _apply_output_template(
     variables["outputTemplate"] = doc_template_service.resolve_for_run(conn, template_id, capability)
 
 
+_SQL_FENCE_RE = re.compile(
+    "```(?:sql)?" + chr(92) + "s*" + chr(10) + "(.*?)```",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _extract_sql_text(output: str) -> str:
+    """从产出里取第一段代码块作为被分析的 SQL；没有代码块时留空，正文仍在分析结论里。"""
+    match = _SQL_FENCE_RE.search(output or "")
+    return match.group(1).strip() if match else ""
+
+
 @bp.post("/output/adopt")
 def adopt_capability_output() -> Response:
     """把产出物一键添加到需求 / 缺陷 / 回归清单，并点亮对应导航角标。"""
@@ -493,6 +507,21 @@ def adopt_capability_output() -> Response:
         })
         section = "bugs"
         resource = audit_service.RESOURCE_BUG
+    elif target == "sql":
+        sql_repo = SqlAnalysisRepository(conn)
+        new_id = sql_repo.insert({
+            "project_id": project_id,
+            "module_id": module_id,
+            "sql_no": sql_repo.next_sql_no(project_id),
+            "title": title,
+            "sql_text": _extract_sql_text(output),
+            "analysis": output,
+            "risk_level": "none",
+            "source": "ai",
+            "tags": "",
+        })
+        section = "sql_analyses"
+        resource = audit_service.RESOURCE_SQL_ANALYSIS
     elif target == "regression":
         new_id = int(regression_service.create_regression(
             conn,
@@ -510,7 +539,7 @@ def adopt_capability_output() -> Response:
     else:
         raise AppError(
             ErrorCode.PARAM_ERROR,
-            "target 只能是 requirement / bug / regression",
+            "target 只能是 requirement / bug / regression / sql",
         )
 
     nav_badge_service.increase_for(conn, section)

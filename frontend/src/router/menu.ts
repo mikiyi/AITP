@@ -101,6 +101,7 @@ export const MENU_NODES: MenuNode[] = [
       { path: '/test-cases', title: '测试用例', icon: Finished },
       { path: '/test-cases/tree', title: '用例树', icon: Share },
       { path: '/bugs', title: '缺陷', icon: Warning },
+      { path: '/sql-analyses', title: 'SQL 分析', icon: DataLine },
       { path: '/regressions', title: '回归清单', icon: Refresh },
       { path: '/reports', title: '测试报告', icon: DataAnalysis },
       { path: '/automation/web', title: 'Web 自动化管理', icon: Monitor },

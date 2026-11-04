@@ -50,6 +50,7 @@ import type {
   ReportItem,
   ReportStats,
   Requirement,
+  SqlAnalysis,
   RestoreResult,
   RouteResponse,
   SearchResult,
@@ -348,7 +349,7 @@ export const labApi = {
   adoptOutput: (body: {
     capability: string
     output: string
-    target: 'requirement' | 'bug' | 'regression'
+    target: 'requirement' | 'bug' | 'regression' | 'sql'
     projectId: number
     title?: string
     moduleId?: number
@@ -482,6 +483,17 @@ export const automationApi = {
   runs: (query: Record<string, unknown> = {}) =>
     get<AutomationRunPage>('/automation/runs', query as never),
   runDetail: (id: number) => get<AutomationRun>(`/automation/runs/${id}`),
+}
+
+/** SQL 分析资产：AI 产出的 SQL 分析结论统一归档在这里。 */
+export const sqlAnalysisApi = {
+  list: (query: Record<string, unknown> = {}) =>
+    get<PagePayload<SqlAnalysis>>('/sql-analyses', query as never),
+  get: (id: number) => get<SqlAnalysis>(`/sql-analyses/${id}`),
+  create: (body: Record<string, unknown>) => post<SqlAnalysis>('/sql-analyses', body),
+  update: (id: number, body: Record<string, unknown>) =>
+    put<SqlAnalysis>(`/sql-analyses/${id}`, body),
+  remove: (id: number) => del(`/sql-analyses/${id}`),
 }
 
 /** 设置：AI 档案、系统配置、枚举。 */
