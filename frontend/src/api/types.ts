@@ -873,3 +873,56 @@ export interface CaseTreeNode extends ModuleNode {
 }
 
 export type { PagePayload }
+
+/** 任务清单里的一条任务；子任务与派生字段只在取详情/列表时出现。 */
+export interface Todo {
+  id: Id
+  todoNo: string
+  parentId: number
+  projectId: Id
+  moduleId: Id
+  title: string
+  description: string
+  status: string
+  priority: string
+  category: string
+  tags: string
+  dueDate: string
+  progress: number
+  isPinned: boolean
+  sortOrder: number
+  completedAt?: string
+  createdAt?: string
+  updatedAt?: string
+  /** 后端算好的派生标记，前端直接用来上色，不再自己比日期。 */
+  isOverdue?: boolean
+  isDueToday?: boolean
+  childDone?: number
+  childTotal?: number
+  children?: Todo[]
+}
+
+/** 任务清单顶部指标。 */
+export interface TodoSummary {
+  total: number
+  active: number
+  open: number
+  doing: number
+  done: number
+  cancelled: number
+  dueToday: number
+  overdue: number
+  pinned: number
+  completionRate: number
+}
+
+export interface TodoStats {
+  summary: TodoSummary
+  byStatus: Record<string, number>
+  categories: Array<{ category: string; total: number; active: number }>
+}
+
+export interface TodoPage extends PagePayload<Todo> {
+  view: string
+  stats: TodoSummary
+}

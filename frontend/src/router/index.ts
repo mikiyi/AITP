@@ -9,7 +9,13 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     name: 'workbench',
     component: () => import('@/views/workbench/HomeView.vue'),
-    meta: { title: '工作台', icon: 'HomeFilled' },
+    meta: { title: '首页', icon: 'HomeFilled' },
+  },
+  {
+    path: '/todos',
+    name: 'todos',
+    component: () => import('@/views/todos/TodoView.vue'),
+    meta: { title: '任务清单', icon: 'List' },
   },
   {
     path: '/lab',

@@ -46,6 +46,7 @@ RESOURCE_WORKBENCH_ENTRY = "workbench_entry"
 RESOURCE_VALIDATION_CASE = "validation_case"
 RESOURCE_REGRESSION = "regression"
 RESOURCE_ENTITY_RELATION = "entity_relation"
+RESOURCE_TODO = "todo"
 
 _MAX_DETAIL_CHARS = 2000
 

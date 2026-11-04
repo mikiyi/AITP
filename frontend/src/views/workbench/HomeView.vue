@@ -1,8 +1,9 @@
 <template>
   <div class="page home">
     <div class="page-header">
-      <h2 class="page-title">工作台</h2>
-      <el-button :icon="Refresh" :loading="loading" @click="reload">刷新</el-button>
+      <el-button :icon="Refresh" :loading="loading" style="margin: 0 0 0 auto" @click="reload">
+        刷新
+      </el-button>
     </div>
 
     <el-alert

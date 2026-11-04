@@ -17,6 +17,8 @@ html,
 body,
 #app {
   height: 100%;
+  /* 宽度显式铺满，避免根节点退化成内容宽而在右侧留出空白 */
+  width: 100%;
   margin: 0;
   padding: 0;
 }

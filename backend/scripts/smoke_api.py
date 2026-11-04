@@ -1345,6 +1345,133 @@ def check_composite_guard(api: Api, project_id: int) -> None:
           str(missing[1])[:200])
 
 
+def check_todos(api: Api, project_id: int) -> None:
+    """任务清单：勾选、父子进度回推、视图筛选、批量与导出。"""
+    parent = api.data("POST", "/api/v1/todos", {
+        "title": "核对支付回调重复推送",
+        "priority": "urgent",
+        "category": "缺陷跟进",
+        "dueDate": "2020-01-01",
+        "projectId": project_id,
+    })
+    parent_id = int(parent.get("id") or 0)
+    check("任务创建成功", parent_id > 0, str(parent)[:200])
+    check("任务编号形如 TD-001", str(parent.get("todoNo") or "").startswith("TD-"), str(parent.get("todoNo")))
+    check("过期任务标为逾期", parent.get("isOverdue") is True, str(parent)[:200])
+    check("新任务默认待办", parent.get("status") == "open", str(parent.get("status")))
+
+    child_a = api.data("POST", "/api/v1/todos", {"title": "拉取网关日志", "parentId": parent_id})
+    child_b = api.data("POST", "/api/v1/todos", {"title": "补一条回归用例", "parentId": parent_id})
+    child_a_id = int(child_a.get("id") or 0)
+    child_b_id = int(child_b.get("id") or 0)
+    check("子任务创建成功", child_a_id > 0 and child_b_id > 0, str(child_a)[:160])
+
+    api.data("POST", f"/api/v1/todos/{child_a_id}/toggle")
+    half = api.data("GET", f"/api/v1/todos/{parent_id}")
+    check("子任务完成一半父任务进度 50", half.get("progress") == 50, str(half.get("progress")))
+    check("父任务详情带子任务", len(half.get("children") or []) == 2, str(half.get("children"))[:200])
+
+    api.data("POST", f"/api/v1/todos/{child_b_id}/toggle")
+    full = api.data("GET", f"/api/v1/todos/{parent_id}")
+    check("子任务全完成父任务自动完成", full.get("status") == "done", str(full.get("status")))
+    check("子任务全完成父任务进度 100", full.get("progress") == 100, str(full.get("progress")))
+
+    api.data("POST", f"/api/v1/todos/{child_a_id}/toggle")
+    reopened = api.data("GET", f"/api/v1/todos/{parent_id}")
+    check("子任务退回后父任务回到进行中", reopened.get("status") == "doing", str(reopened.get("status")))
+
+    api.expect("任务非法优先级返回 100100", "POST", "/api/v1/todos",
+               ErrorCode.PARAM_ERROR, {"title": "x", "priority": "asap"})
+    api.expect("任务非法到期日返回 100100", "POST", "/api/v1/todos",
+               ErrorCode.PARAM_ERROR, {"title": "x", "dueDate": "not-a-date"})
+    api.expect("任务空标题返回 100100", "POST", "/api/v1/todos",
+               ErrorCode.PARAM_ERROR, {"title": "   "})
+    api.expect("任务进度越界返回 100100", "POST", "/api/v1/todos",
+               ErrorCode.PARAM_ERROR, {"title": "x", "progress": 120})
+    api.expect("任务父级不存在返回 140100", "POST", "/api/v1/todos",
+               ErrorCode.RESOURCE_NOT_FOUND, {"title": "x", "parentId": 999999})
+    api.expect("任务挂到自己下面被拦", "PUT", f"/api/v1/todos/{parent_id}",
+               ErrorCode.ILLEGAL_OPERATION, {"parentId": parent_id})
+    api.expect("任务挂到自己子树下被拦", "PUT", f"/api/v1/todos/{parent_id}",
+               ErrorCode.ILLEGAL_OPERATION, {"parentId": child_a_id})
+    api.expect("任务列表非法视图返回 100100", "GET", "/api/v1/todos?view=bogus",
+               ErrorCode.PARAM_ERROR)
+    api.expect("任务批量空 ids 返回 100100", "POST", "/api/v1/todos/batch-update",
+               ErrorCode.PARAM_ERROR, {"ids": []})
+    api.expect("任务非数字 id 返回 100100", "GET", "/api/v1/todos/not-a-number",
+               ErrorCode.PARAM_ERROR)
+
+    overdue = api.data("GET", "/api/v1/todos?view=overdue")
+    check("逾期视图取到逾期任务",
+          any(int(item.get("id") or 0) == parent_id for item in overdue.get("list") or []),
+          str(overdue)[:200])
+    check("任务列表一次带回统计", isinstance(overdue.get("stats"), dict), str(overdue)[:160])
+
+    done_view = api.data("GET", "/api/v1/todos?view=done")
+    check("已完成视图不含未收口任务",
+          all(item.get("status") in ("done", "cancelled") for item in done_view.get("list") or []),
+          str(done_view)[:200])
+
+    keyword = api.data("GET", "/api/v1/todos?keyword=支付回调")
+    check("任务关键词检索命中",
+          any(int(item.get("id") or 0) == parent_id for item in keyword.get("list") or []),
+          str(keyword)[:200])
+
+    by_category = api.data("GET", "/api/v1/todos?category=缺陷跟进")
+    check("任务按分类筛选命中",
+          any(int(item.get("id") or 0) == parent_id for item in by_category.get("list") or []),
+          str(by_category)[:200])
+
+    by_project = api.data("GET", f"/api/v1/todos?projectId={project_id}")
+    check("任务按项目筛选命中",
+          any(int(item.get("id") or 0) == parent_id for item in by_project.get("list") or []),
+          str(by_project)[:200])
+
+    top_only = api.data("GET", "/api/v1/todos")
+    check("列表默认只返回顶层任务",
+          all(int(item.get("parentId") or 0) == 0 for item in top_only.get("list") or []),
+          str(top_only)[:200])
+
+    stats = api.data("GET", "/api/v1/todos/stats")
+    summary = stats.get("summary") or {}
+    check("任务统计带总数与逾期", int(summary.get("total") or 0) >= 3 and int(summary.get("overdue") or 0) >= 1,
+          str(summary)[:200])
+    check("任务统计带完成率", isinstance(summary.get("completionRate"), float), str(summary)[:200])
+    check("任务统计带状态分布", set((stats.get("byStatus") or {})) == {"open", "doing", "done", "cancelled"},
+          str(stats.get("byStatus")))
+    check("任务分类清单可用",
+          any(item.get("category") == "缺陷跟进" for item in stats.get("categories") or []),
+          str(stats.get("categories"))[:200])
+
+    pinned = api.data("PUT", f"/api/v1/todos/{parent_id}", {"isPinned": True})
+    check("任务置顶生效", pinned.get("isPinned") is True, str(pinned)[:200])
+    starred = api.data("GET", "/api/v1/todos?view=starred")
+    check("星标视图取到置顶任务",
+          any(int(item.get("id") or 0) == parent_id for item in starred.get("list") or []),
+          str(starred)[:200])
+
+    batched = api.data("POST", "/api/v1/todos/batch-update",
+                       {"ids": [child_a_id, child_b_id], "priority": "high"})
+    check("任务批量更新生效", int(batched.get("count") or 0) == 2, str(batched)[:200])
+    check("任务批量移动可用",
+          api.data("POST", f"/api/v1/todos/{child_a_id}/move", {"direction": "down"}) is not None)
+    api.expect("任务非法移动方向返回 100100", "POST", f"/api/v1/todos/{child_a_id}/move",
+               ErrorCode.PARAM_ERROR, {"direction": "sideways"})
+    check("任务重排序可用",
+          int((api.data("POST", "/api/v1/todos/reorder", {"ids": [parent_id]}) or {}).get("count") or 0) == 1)
+
+    for fmt in ("csv", "json"):
+        resp, _ = api.call("GET", f"/api/v1/todos/export?format={fmt}")
+        check(f"任务导出 {fmt}", resp.status_code == 200 and len(resp.data) > 0, str(resp.status_code))
+    api.expect("任务导出非法格式返回 100100", "GET", "/api/v1/todos/export?format=xlsx",
+               ErrorCode.PARAM_ERROR)
+
+    removed = api.data("DELETE", f"/api/v1/todos/{parent_id}")
+    check("删除父任务连带子任务", len(removed.get("removed") or []) == 3, str(removed)[:200])
+    api.expect("子任务随父删除后不可取", "GET", f"/api/v1/todos/{child_a_id}",
+               ErrorCode.RESOURCE_NOT_FOUND)
+
+
 def main() -> int:
     workdir = pathlib.Path(tempfile.mkdtemp(prefix="aitp-smoke-"))
     try:
@@ -1376,6 +1503,7 @@ def main() -> int:
         check_regression(api, project_id)
         check_relations(api)
         check_composite_guard(api, project_id)
+        check_todos(api, project_id)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 

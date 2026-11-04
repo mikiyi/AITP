@@ -44,6 +44,9 @@ import type {
   SelfCheckResult,
   SystemConfigItem,
   TestCase,
+  Todo,
+  TodoPage,
+  TodoStats,
   ValidationCase,
   ValidationResult,
   WorkbenchEntry,
@@ -132,9 +135,32 @@ export const regressionApi = {
     ),
 }
 
+/** 任务清单。 */
+export const todoApi = {
+  list: (query: Record<string, unknown> = {}) =>
+    get<TodoPage>('/todos', query as never),
+  get: (id: number) => get<Todo>(`/todos/${id}`),
+  create: (body: Record<string, unknown>) => post<Todo>('/todos', body),
+  update: (id: number, body: Record<string, unknown>) => put<Todo>(`/todos/${id}`, body),
+  toggle: (id: number) => post<Todo>(`/todos/${id}/toggle`),
+  remove: (id: number) => del<{ id: number; deleted: boolean; removed: number[] }>(`/todos/${id}`),
+  move: (id: number, direction: 'up' | 'down') =>
+    post<{ moved: boolean; reason?: string }>(`/todos/${id}/move`, { direction }),
+  batchUpdate: (ids: number[], body: Record<string, unknown>) =>
+    post<{ updated: number[]; count: number; skipped: number[] }>('/todos/batch-update', {
+      ids,
+      ...body,
+    }),
+  batchDelete: (ids: number[]) =>
+    post<{ deleted: number[]; count: number; skipped: number[] }>('/todos/batch-delete', { ids }),
+  reorder: (ids: number[]) => post<{ ordered: number[]; count: number }>('/todos/reorder', { ids }),
+  stats: (query: Record<string, unknown> = {}) => get<TodoStats>('/todos/stats', query as never),
+  categories: (query: Record<string, unknown> = {}) =>
+    get<{ list: TodoStats['categories'] }>('/todos/categories', query as never),
+}
+
 /** 通用实体关联。 */
-export const relationApi = {
-  types: () =>
+export const relationApi = {  types: () =>
     get<{ entityTypes: string[]; relationTypes: string[] }>('/relations/types'),
   list: (query: Record<string, unknown> = {}) =>
     get<PagePayload<EntityRelation>>('/relations', query as never),

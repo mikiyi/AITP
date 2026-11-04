@@ -14,7 +14,11 @@
       >
         <el-menu-item index="/">
           <el-icon><HomeFilled /></el-icon>
-          <template #title>工作台</template>
+          <template #title>首页</template>
+        </el-menu-item>
+        <el-menu-item index="/todos">
+          <el-icon><List /></el-icon>
+          <template #title>任务清单</template>
         </el-menu-item>
         <el-sub-menu index="lab">
           <template #title>
@@ -57,12 +61,12 @@
       </el-menu>
     </el-aside>
 
-    <el-container>
+    <el-container class="aitp-body">
       <el-header class="aitp-header">
         <div class="aitp-header-left">
           <el-button text :icon="appStore.sidebarCollapsed ? Expand : Fold" @click="appStore.toggleSidebar()" />
           <el-breadcrumb separator="/">
-            <el-breadcrumb-item :to="{ path: '/' }">工作台</el-breadcrumb-item>
+            <el-breadcrumb-item :to="{ path: '/' }">AITestPilot</el-breadcrumb-item>
             <el-breadcrumb-item v-if="pageTitle">{{ pageTitle }}</el-breadcrumb-item>
           </el-breadcrumb>
         </div>
@@ -117,7 +121,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { Expand, Fold, Files, HomeFilled, MagicStick, Operation, Setting } from '@element-plus/icons-vue'
+import { Expand, Fold, Files, HomeFilled, List, MagicStick, Operation, Setting } from '@element-plus/icons-vue'
 import { get } from '@/api/request'
 import { settingsApi } from '@/api'
 import type { AiStatus } from '@/api/types'
@@ -236,6 +240,14 @@ onUnmounted(() => {
 <style scoped>
 .aitp-layout {
   height: 100%;
+  /* 根容器必须铺满视口：一旦宽度塌成内容宽，右侧就会空出一大块 */
+  width: 100%;
+}
+
+.aitp-body {
+  /* flex 子项默认 min-width:auto，窄内容时会把外层撑破，这里放开让它跟着收缩 */
+  min-width: 0;
+  width: 100%;
 }
 
 .aitp-aside {
@@ -338,5 +350,6 @@ onUnmounted(() => {
   padding: 0;
   background: var(--aitp-bg);
   overflow-y: auto;
+  min-width: 0;
 }
 </style>
