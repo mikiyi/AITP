@@ -56,7 +56,7 @@ stop.bat          :: Windows
 
 ## 功能地图
 
-前端 21 条路由 / 21 个页面组件，后端 12 个蓝图统一挂在 `/api/v1` 下。
+前端 23 条路由 / 23 个页面组件，后端 14 个蓝图统一挂在 `/api/v1` 下。
 
 ### 工作台首页
 
@@ -86,6 +86,30 @@ stop.bat          :: Windows
 - **智能路由**：输入一句话，自动匹配最合适的能力。
 - **会话记录**：每次运行留痕，可回看输入、输出、模型、用量与降级情况。
 - **流式输出**：SSE 增量返回，首选模型失败时先弹降级提示再切模型。
+
+### AI 执行记录
+
+每次能力执行都会落一条结构化记录（表 `biz_ai_record`），回答三个问题：它引用的是不是真东西、缺了什么、谁来拍板。
+
+| 段落 | 内容 |
+|---|---|
+| 证据 | 产出物里引用的缺陷编号、用例编号、需求编号、知识引用标记，逐条回库核对，标「真实存在 / 无法核实」 |
+| 缺项 | 模型自述的信息不足，外加本次没填的可选变量 |
+| 风险点 | 命中行为安全规则的条目：批准性结论、涉及 P0/P1、Prompt 测试结果、引用无法核实、信息不足 |
+| 人工复核 | 待复核 / 已采纳 / 已驳回 + 备注，复核动作写入审计日志 |
+
+- 页面：**AI 实验室 → 执行记录**（`/lab/records`），支持按能力、复核状态、风险等级筛选，筛选与分页同样写进地址栏。
+- 高风险记录（涉及 P0/P1、出现「可以上线」这类结论、引用无法核实）**强制标记为需人工复核**。
+- 接口：`GET /api/v1/ai-records`、`GET /api/v1/ai-records/<id>`、`POST /api/v1/ai-records/<id>/review`。
+
+### 全局搜索
+
+页面右上角常驻搜索框，一次检索需求、用例、缺陷、知识库四类实体：
+
+- 关键词子串匹配，命中位置返回片段，便于一眼看清命中在哪。
+- 按类型分组展示，点击命中项直接跳到对应详情页。
+- 知识库只检索**已发布**条目，待审池不进搜索结果。
+- 接口：`GET /api/v1/search?q=…&types=requirement,case,bug,knowledge`。
 
 ### 测试资产
 
@@ -167,17 +191,18 @@ stop.bat          :: Windows
 - **AI 外发**：调用第三方模型时输入内容会离开本机（含手机号、身份证、内部 SQL、生产日志等敏感信息），
   请先脱敏或改用本地模型 / 自托管服务；页面对每次调用都会提示外发边界。
 - **AI 行为安全**：证据不足时明确提示而非编造；不编造知识标题或缺陷编号；AI 不批准上线；
-  P0/P1 与 Prompt 测试结果必须人工复核。
+  P0/P1 与 Prompt 测试结果必须人工复核。这些判定会落到 **AI 执行记录** 里，由人工写最终结论。
 
 ---
 
 ## 质量门禁
 
 ```bash
-python -m mypy                          # 后端类型门禁（--strict，94 个源文件）
-python backend/scripts/smoke_api.py     # API 冒烟（229 项）
+python -m mypy                          # 后端类型门禁（--strict，100 个源文件）
+python backend/scripts/smoke_api.py     # API 冒烟（247 项）
 python backend/scripts/check_security.py     # 密钥/注入/路径安全回归
 python backend/scripts/check_types.py        # mypy 门禁封装
+python backend/scripts/check_walkthrough.py   # 固定走查案例（路由顺序 + 降级 + 安全规则 + 复核闭环）
 python backend/scripts/check_lab.py          # AI 实验室能力回归
 python backend/scripts/check_prompts.py      # 提示词库校验
 python backend/scripts/check_knowledge_governance.py  # 知识治理回归
@@ -199,7 +224,7 @@ cd frontend && npm run build   # vue-tsc --noEmit && vite build
 ```
 backend/
   aitp/
-    api/          12 个蓝图：workbench/lab/ai/projects/requirements/modules
+    api/          14 个蓝图：workbench/lab/ai/ai-records/search/projects/requirements/modules
                   test-cases/bugs/knowledge/reports/settings/meta
     ai/           resolver（优先级解析）、client（降级）、adapters（openai_compat/ollama_native）
     common/       常量、校验、分页、密钥库、安全工具
@@ -215,7 +240,7 @@ frontend/
     api/          统一请求层（仅 request.ts / stream.ts 允许出现 fetch）
     components/   通用组件
     composables/  useEchart 等
-    views/        21 个页面组件
+    views/        23 个页面组件
 data/             运行时数据（SQLite、日志、密钥、导出文件）
 data/backups/     数据库备份快照（与 SQLite 同级，恢复前会自动留一份安全备份）
 knowledge/        知识库 Markdown 落盘目录
