@@ -1,5 +1,28 @@
 import type { Component } from 'vue'
-import { Files, HomeFilled, List, MagicStick, Operation, Setting } from '@element-plus/icons-vue'
+import {
+  ChatDotRound,
+  CircleCheck,
+  Connection,
+  DataAnalysis,
+  Document,
+  Files,
+  Finished,
+  Folder,
+  Grid,
+  HomeFilled,
+  List,
+  MagicStick,
+  Notebook,
+  Odometer,
+  Operation,
+  Reading,
+  Refresh,
+  Setting,
+  Share,
+  Sort,
+  Tickets,
+  Warning,
+} from '@element-plus/icons-vue'
 
 /** 侧边导航的叶子项，直接对应一个路由。 */
 export interface MenuItemNode {
@@ -16,7 +39,14 @@ export interface MenuGroupNode {
   key: string
   title: string
   icon: Component
-  children: Array<{ path: string; title: string }>
+  children: MenuChild[]
+}
+
+/** 分组下的子入口。 */
+export interface MenuChild {
+  path: string
+  title: string
+  icon: Component
 }
 
 export type MenuNode = MenuItemNode | MenuGroupNode
@@ -24,6 +54,12 @@ export type MenuNode = MenuItemNode | MenuGroupNode
 /**
  * 侧边导航结构。
  * 侧边栏渲染、当前项高亮、面包屑分组都从这里取，避免两处各写一份导致对不上。
+ *
+ * 图标约定：优先选「看一眼就知道是干什么」的图形——
+ * 仪表盘=总览、箭头排序=顺序执行、对话框=会话、工单=记录、
+ * 文件夹=项目、文档=需求、对勾=用例、分叉=用例树、警告三角=缺陷、
+ * 书本=知识库、循环箭头=回归、图表=报告、九宫格=编排入口、
+ * 对勾圆=验证沙箱、连接=实体关联。
  */
 export const MENU_NODES: MenuNode[] = [
   { type: 'item', path: '/', title: '首页', icon: HomeFilled },
@@ -34,11 +70,11 @@ export const MENU_NODES: MenuNode[] = [
     title: 'AI 实验室',
     icon: MagicStick,
     children: [
-      { path: '/lab', title: '能力总览' },
-      { path: '/lab/pipeline', title: '顺序执行' },
-      { path: '/lab/prompts', title: '提示词库' },
-      { path: '/lab/sessions', title: '会话记录' },
-      { path: '/lab/records', title: '执行记录' },
+      { path: '/lab', title: '能力总览', icon: Odometer },
+      { path: '/lab/pipeline', title: '顺序执行', icon: Sort },
+      { path: '/lab/prompts', title: '提示词库', icon: Notebook },
+      { path: '/lab/sessions', title: '会话记录', icon: ChatDotRound },
+      { path: '/lab/records', title: '执行记录', icon: Tickets },
     ],
   },
   {
@@ -47,14 +83,14 @@ export const MENU_NODES: MenuNode[] = [
     title: '测试资产',
     icon: Files,
     children: [
-      { path: '/projects', title: '项目' },
-      { path: '/requirements', title: '需求' },
-      { path: '/test-cases', title: '测试用例' },
-      { path: '/test-cases/tree', title: '用例树' },
-      { path: '/bugs', title: '缺陷' },
-      { path: '/knowledge', title: '知识库' },
-      { path: '/regressions', title: '回归清单' },
-      { path: '/reports', title: '测试报告' },
+      { path: '/projects', title: '项目', icon: Folder },
+      { path: '/requirements', title: '需求', icon: Document },
+      { path: '/test-cases', title: '测试用例', icon: Finished },
+      { path: '/test-cases/tree', title: '用例树', icon: Share },
+      { path: '/bugs', title: '缺陷', icon: Warning },
+      { path: '/knowledge', title: '知识库', icon: Reading },
+      { path: '/regressions', title: '回归清单', icon: Refresh },
+      { path: '/reports', title: '测试报告', icon: DataAnalysis },
     ],
   },
   {
@@ -63,9 +99,9 @@ export const MENU_NODES: MenuNode[] = [
     title: '编排与验证',
     icon: Operation,
     children: [
-      { path: '/workbench/entries', title: '编排入口' },
-      { path: '/workbench/validation', title: '验证沙箱' },
-      { path: '/workbench/relations', title: '实体关联' },
+      { path: '/workbench/entries', title: '编排入口', icon: Grid },
+      { path: '/workbench/validation', title: '验证沙箱', icon: CircleCheck },
+      { path: '/workbench/relations', title: '实体关联', icon: Connection },
     ],
   },
   { type: 'item', path: '/settings', title: '设置', icon: Setting },

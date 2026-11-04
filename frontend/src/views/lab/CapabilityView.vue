@@ -60,37 +60,39 @@
           />
 
           <el-form-item>
-            <el-button
-              type="primary"
-              :icon="Promotion"
-              :loading="running"
-              @click="run"
-            >
-              执行
-            </el-button>
-            <el-button :icon="CopyDocument" @click="copyOutput">复制</el-button>
-            <el-button :icon="Download" @click="download">下载</el-button>
-            <el-button :icon="Collection" :disabled="!finished || !output" @click="saveToKnowledge">
-              加入知识库
-            </el-button>
-            <el-button
-              v-if="spec?.adoptable"
-              type="success"
-              :icon="Select"
-              :disabled="!finished || !output"
-              @click="openAdopt"
-            >
-              采纳为用例
-            </el-button>
-            <el-button
-              v-if="capability === 'report_generation'"
-              type="success"
-              :icon="Select"
-              :disabled="!finished || !output"
-              @click="openAdoptReport"
-            >
-              采纳为报告
-            </el-button>
+            <div class="cap-actions">
+              <el-button
+                type="primary"
+                :icon="Promotion"
+                :loading="running"
+                @click="run"
+              >
+                执行
+              </el-button>
+              <el-button :icon="CopyDocument" @click="copyOutput">复制</el-button>
+              <el-button :icon="Download" @click="download">下载</el-button>
+              <el-button :icon="Collection" :disabled="!finished || !output" @click="saveToKnowledge">
+                加入知识库
+              </el-button>
+              <el-button
+                v-if="spec?.adoptable"
+                type="success"
+                :icon="Select"
+                :disabled="!finished || !output"
+                @click="openAdopt"
+              >
+                采纳为用例
+              </el-button>
+              <el-button
+                v-if="capability === 'report_generation'"
+                type="success"
+                :icon="Select"
+                :disabled="!finished || !output"
+                @click="openAdoptReport"
+              >
+                采纳为报告
+              </el-button>
+            </div>
           </el-form-item>
         </el-form>
 
@@ -828,6 +830,23 @@ watch(
 
 .egress-alert {
   margin-top: 4px;
+}
+
+/*
+ * 操作按钮会换行（面板窄的时候），用 gap 统一控制横竖间距。
+ * Element Plus 默认给相邻按钮加 margin-left:12px，换行后第一颗按钮会多出一个左边距、
+ * 两行之间也会顶在一起，这里把它清掉改由 gap 负责。
+ */
+.cap-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  width: 100%;
+}
+
+.cap-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 .adopt-alert {
