@@ -561,8 +561,8 @@ def check_workbench(api: Api, project_id: int) -> None:
     check("缺陷状态分桶总和等于缺陷总数",
           sum(overview["bugStatus"].values()) == bugs["total"],
           str(overview["bugStatus"]))
-    check("快捷入口包含 12 个 AI 能力",
-          len([s for s in overview["shortcuts"] if s["group"] == "AI 能力"]) == 12,
+    check("快捷入口包含 18 个 AI 能力",
+          len([s for s in overview["shortcuts"] if s["group"] == "AI 能力"]) == 18,
           str(len(overview["shortcuts"])))
     check("待审池数量可从概览读到", isinstance(overview["pendingKnowledge"], int),
           str(overview["pendingKnowledge"]))
@@ -660,10 +660,11 @@ def check_meta(api: Api) -> None:
     enums = api.data("GET", "/api/v1/meta/enums")
     check("枚举字典含缺陷状态机", "bugTransitions" in enums, str(sorted(enums.keys())))
     caps = api.data("GET", "/api/v1/meta/capabilities")
-    check("能力目录含 12 项", len(caps) == 12, str(len(caps)))
+    check("能力目录含 18 项", len(caps) == 18, str(len(caps)))
     codes = {item["code"] for item in caps}
-    check("能力目录覆盖 10 个实验室能力 + 2 个辅助能力",
-          "requirement_review" in codes and "knowledge_qa" in codes and "prompt_optimize" in codes,
+    check("能力目录覆盖 16 个实验室能力 + 2 个辅助能力",
+          "requirement_review" in codes and "knowledge_qa" in codes and "prompt_optimize" in codes
+          and "api_test_design" in codes and "risk_assessment" in codes,
           str(sorted(codes)))
 
 
@@ -674,7 +675,7 @@ def json_dump(value: object) -> str:
 
 # ---------------- AI 实验室 ----------------
 
-#: 10 个实验室能力的样例变量
+#: 实验室能力的样例变量（10 个主能力 + 6 个提示词库扩展能力）
 LAB_SAMPLES: dict[str, JsonDict] = {
     "requirement_review": {"requirement": "手机号+验证码登录，验证码 5 分钟有效", "projectName": "示例电商"},
     "testpoint_generation": {"requirement": "手机号+验证码登录", "projectName": "示例电商", "moduleCount": "3"},
@@ -694,6 +695,25 @@ LAB_SAMPLES: dict[str, JsonDict] = {
     },
     "project_progress_board": {
         "projectName": "示例电商", "progressData": "完成 60%", "period": "第 3 周", "milestones": "登录上线",
+    },
+    "requirement_clarify": {"projectName": "示例电商", "requirement": "手机号+验证码登录"},
+    "api_test_design": {
+        "projectName": "示例电商",
+        "apiDescription": "POST /api/v1/orders 提交订单，参数 productId、quantity",
+        "baseUrl": "https://api.example.com",
+    },
+    "test_plan": {
+        "projectName": "示例电商", "period": "第 3 周",
+        "requirementSummary": "登录与下单", "modules": "登录、交易",
+    },
+    "case_review": {"cases": "用例1：正常登录", "requirement": "手机号+验证码登录", "criteria": "覆盖度"},
+    "bug_classification": {
+        "bugTitle": "支付回调金额翻倍", "bugDescription": "重复推送导致金额翻倍",
+        "modulePath": "示例电商/交易模块",
+    },
+    "risk_assessment": {
+        "projectName": "示例电商", "changeScope": "支付回调改造",
+        "metricsJson": "{\"passRate\": 0.92}",
     },
 }
 
@@ -774,11 +794,21 @@ def check_lab(api: Api, project_id: int, feature_id: int) -> None:
 
 def _check_lab_inner(api: Api, project_id: int, feature_id: int) -> None:
     caps = api.data("GET", "/api/v1/lab/capabilities")
-    check("能力目录含 12 项", len(caps) == 12, str(len(caps)))
+    check("能力目录含 18 项", len(caps) == 18, str(len(caps)))
     main_caps = api.data("GET", "/api/v1/lab/main-capabilities")
-    check("实验室主能力 10 个", len(main_caps) == 10, str(len(main_caps)))
+    check("实验室主能力 10 个 + 扩展能力 6 个", len(main_caps) == 16, str(len(main_caps)))
+    check("主能力与扩展能力分开标注",
+          sum(1 for item in main_caps if item.get("category") == "core") == 10
+          and sum(1 for item in main_caps if item.get("category") == "extended") == 6,
+          str([item.get("category") for item in main_caps]))
     check("能力目录含提示词编号",
           all(item.get("promptCode") for item in main_caps), str(main_caps[:1]))
+    check("能力卡片带提示词库元数据",
+          all(item.get("promptTitle") and item.get("promptDescription") is not None
+              for item in main_caps), str(main_caps[:1]))
+    check("能力卡片区分必填与可选变量",
+          all("requiredVariables" in item and "optionalVariables" in item
+              for item in main_caps), str(main_caps[:1]))
     prompts = api.data("GET", "/api/v1/lab/prompts")
     check("提示词库可列出 20 个模板", len(prompts) >= 20, str(len(prompts)))
 
@@ -799,7 +829,7 @@ def _check_lab_inner(api: Api, project_id: int, feature_id: int) -> None:
                ErrorCode.ILLEGAL_OPERATION,
                {"moduleId": feature_id, "variables": {"logContent": "NPE"}})
 
-    # 10 个能力逐个跑通
+    # 10 个主能力 + 6 个扩展能力逐个跑通
     task_ids: list[int] = []
     for code, variables in LAB_SAMPLES.items():
         result = api.data("POST", f"/api/v1/lab/{code}/run", {"variables": variables})

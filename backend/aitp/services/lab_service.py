@@ -13,7 +13,7 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
 from ..ai.capability_codes import (
     CAPABILITIES,
@@ -168,6 +168,13 @@ def prepare_variables(
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """合并请求变量与功能点默认参数，并对需要检索的能力补上下文。"""
     merged = merge_variables(spec, variables, binding.config)
+    # 归属模块类能力（缺陷归类）需要候选模块；绑定了功能点时自动带入路径
+    if (
+        "modulePath" in spec.variables
+        and not str(merged.get("modulePath") or "").strip()
+        and binding.module_path
+    ):
+        merged["modulePath"] = binding.module_path
     refs: list[dict[str, Any]] = []
     if spec.code == CAP_KNOWLEDGE_QA:
         context, refs = retrieve_knowledge_context(conn, str(merged.get("question") or ""))
@@ -427,6 +434,47 @@ def _diff_lines(original: str, optimized: str) -> list[str]:
         tofile="改写后",
         lineterm="",
     ))
+
+
+# ---------------- 能力卡片 ----------------
+
+def capability_card(spec: CapabilitySpec) -> dict[str, Any]:
+    """能力卡片 = 能力目录 + 提示词库元数据。
+
+    标题、说明、必填/可选变量一律以 backend/prompts 下的模板为准：
+    提示词文件改了，卡片内容跟着变，不用两处维护。
+    """
+    data = spec.as_dict()
+    template = None
+    if spec.prompt_code:
+        try:
+            template = get_registry().get(spec.prompt_code)
+        except Exception:  # noqa: BLE001 - 自定义提示词可能不存在或不在应用上下文里，不该让目录接口整个失败
+            template = None
+    if template is None:
+        data.update({
+            "promptTitle": spec.label,
+            "promptDescription": spec.goal,
+            "requiredVariables": list(spec.variables),
+            "optionalVariables": [],
+        })
+        return data
+    optional = list(template.optional)
+    required = [name for name in template.variables if name not in optional]
+    data.update({
+        "promptTitle": template.title or spec.label,
+        "promptDescription": template.description or spec.goal,
+        "requiredVariables": required,
+        "optionalVariables": optional,
+    })
+    return data
+
+
+def capability_cards(codes: Iterable[str] | None = None) -> list[dict[str, Any]]:
+    """能力卡片列表；不传 codes 时返回全部能力。"""
+    if codes is None:
+        codes = tuple(CAPABILITIES.keys())
+    return [capability_card(CAPABILITIES[code]) for code in codes]
 
 
 # ---------------- 智能路由 ----------------

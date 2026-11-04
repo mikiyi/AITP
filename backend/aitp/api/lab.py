@@ -14,7 +14,11 @@ from typing import Any, Iterator
 
 from flask import Blueprint, Response, current_app, request, stream_with_context
 
-from ..ai.capability_codes import CAPABILITIES, LAB_CAPABILITIES, OUTPUT_JSON
+from ..ai.capability_codes import (
+    LAB_CAPABILITIES,
+    LAB_EXTENDED_CAPABILITIES,
+    OUTPUT_JSON,
+)
 from ..ai.errors import AIError
 from ..ai.safety import mark_review_required, needs_human_review
 from ..common.constants import EGRESS_NONE, EGRESS_THIRD_PARTY
@@ -204,7 +208,7 @@ def _write_record_standalone(db_path: Path, **kwargs: Any) -> int:
 
 @bp.get("/capabilities")
 def list_capabilities() -> Response:
-    return ok([spec.as_dict() for spec in CAPABILITIES.values()])
+    return ok(lab_service.capability_cards())
 
 
 @bp.get("/prompts")
@@ -228,8 +232,10 @@ def get_prompt(code: str) -> Response:
 
 @bp.get("/main-capabilities")
 def list_lab_capabilities() -> Response:
-    """AI 实验室首页展示的 10 个主能力。"""
-    return ok([CAPABILITIES[code].as_dict() for code in LAB_CAPABILITIES])
+    """AI 实验室首页展示的能力卡片：主能力在前，提示词库补充能力在后。"""
+    return ok(lab_service.capability_cards(
+        LAB_CAPABILITIES + LAB_EXTENDED_CAPABILITIES
+    ))
 
 
 # ---------------- 执行 ----------------

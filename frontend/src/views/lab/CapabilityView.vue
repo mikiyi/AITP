@@ -10,6 +10,11 @@
       </div>
     </div>
 
+    <p v-if="spec" class="cap-sub">
+      <span class="cap-sub__prompt">{{ spec.promptCode }}</span>
+      <span class="cap-sub__desc">{{ spec.promptDescription || spec.goal }}</span>
+    </p>
+
     <div class="cap-layout">
       <div class="panel panel-pad cap-input">
         <el-form label-width="96px" label-position="right">
@@ -24,7 +29,21 @@
             </el-select>
           </el-form-item>
 
-          <el-form-item v-for="field in fields" :key="field.name" :label="field.label">
+          <el-form-item v-for="field in fields" :key="field.name">
+            <template #label>
+              <span class="cap-field-label">
+                {{ field.label }}
+                <el-tag
+                  v-if="isOptionalVariable(field.name)"
+                  size="small"
+                  type="info"
+                  effect="plain"
+                  class="cap-field-optional"
+                >
+                  选填
+                </el-tag>
+              </span>
+            </template>
             <el-input
               v-if="field.type === 'textarea'"
               v-model="values[field.name]"
@@ -347,6 +366,14 @@ const xmindTree = ref<MindNode[]>([])
 
 const isJson = computed(() => spec.value?.outputFormat === 'json')
 
+/**
+ * 可选变量以提示词模板的 optional 声明为准（后端会填「（未提供）」占位），
+ * 所以表单不再强制填写，避免提示词里明明写了可选还卡住用户。
+ */
+function isOptionalVariable(name: string): boolean {
+  return (spec.value?.optionalVariables ?? []).includes(name)
+}
+
 const prettyJson = computed(() => {
   try {
     return JSON.stringify(JSON.parse(output.value), null, 2)
@@ -386,6 +413,21 @@ function resetValues(): void {
   moduleId.value = moduleQuery > 0 ? moduleQuery : null
   if (moduleId.value) {
     labStore.currentModuleId = moduleId.value
+  }
+  syncModulePath()
+}
+
+/**
+ * 选了功能点后，把功能点路径带进「可能归属的模块」这类字段，
+ * 免得用户再手抄一遍路径。
+ */
+function syncModulePath(): void {
+  if (!fields.value.some((field) => field.name === 'modulePath')) {
+    return
+  }
+  const path = moduleOptions.value.find((item) => item.id === moduleId.value)?.path ?? ''
+  if (path) {
+    values.modulePath = path
   }
 }
 
@@ -442,7 +484,7 @@ function onDegrade(info: DegradeInfo): void {
 
 async function run(): Promise<void> {
   const missing = fields.value
-    .filter((field) => !values[field.name]?.trim())
+    .filter((field) => !values[field.name]?.trim() && !isOptionalVariable(field.name))
     .map((field) => field.label)
   if (missing.length) {
     ElMessage.warning(`请填写：${missing.join('、')}`)
@@ -750,12 +792,44 @@ watch(
     void labStore.loadModuleOptions(projectId ?? undefined)
   },
 )
+
+watch(moduleId, () => {
+  syncModulePath()
+})
 </script>
 
 <style scoped>
 .cap-tag {
   margin-left: 8px;
   vertical-align: middle;
+}
+
+/* 标题下方的提示词来源与说明 */
+.cap-sub {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -4px 0 12px;
+  font-size: 13px;
+  color: var(--aitp-text-weak);
+}
+
+.cap-sub__prompt {
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  padding: 1px 6px;
+  border: 1px solid var(--aitp-border);
+  border-radius: 4px;
+  background: #f6f8fa;
+}
+
+.cap-field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cap-field-optional {
+  transform: scale(0.9);
 }
 
 .cap-layout {

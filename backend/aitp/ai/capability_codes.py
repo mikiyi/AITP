@@ -23,9 +23,21 @@ CAP_PROJECT_PROGRESS_BOARD = "project_progress_board"
 CAP_KNOWLEDGE_QA = "knowledge_qa"
 CAP_PROMPT_OPTIMIZE = "prompt_optimize"
 
+# 提示词库里已就绪、但此前未开成能力入口的提示词对应的能力
+CAP_REQUIREMENT_CLARIFY = "requirement_clarify"
+CAP_API_TEST_DESIGN = "api_test_design"
+CAP_TEST_PLAN = "test_plan"
+CAP_CASE_REVIEW = "case_review"
+CAP_BUG_CLASSIFICATION = "bug_classification"
+CAP_RISK_ASSESSMENT = "risk_assessment"
+
 # 输出格式
 OUTPUT_MARKDOWN = "markdown"
 OUTPUT_JSON = "json"
+
+#: 能力分组：core=闭环主能力，extended=提示词库里补充的能力
+CATEGORY_CORE = "core"
+CATEGORY_EXTENDED = "extended"
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +51,7 @@ class CapabilitySpec:
     output_format: str = OUTPUT_MARKDOWN
     mindmap: bool = False
     adoptable: bool = False
+    category: str = CATEGORY_CORE
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -51,6 +64,7 @@ class CapabilitySpec:
             "outputFormat": self.output_format,
             "mindmap": self.mindmap,
             "adoptable": self.adoptable,
+            "category": self.category,
         }
 
 
@@ -142,6 +156,48 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
         prompt_code="prompt-optimizer",
         variables=("capability", "capabilityGoal", "rawText"),
     ),
+    CAP_REQUIREMENT_CLARIFY: CapabilitySpec(
+        CAP_REQUIREMENT_CLARIFY, "需求澄清", "把含糊需求转成待确认问题清单",
+        ("澄清", "需求澄清", "歧义", "疑问", "clarify", "待确认", "需求确认"),
+        prompt_code="requirement-clarify",
+        variables=("projectName", "requirement"),
+        category=CATEGORY_EXTENDED,
+    ),
+    CAP_API_TEST_DESIGN: CapabilitySpec(
+        CAP_API_TEST_DESIGN, "接口测试设计", "为接口设计覆盖正常、异常与安全的测试用例",
+        ("接口", "api", "接口测试", "接口用例", "接口文档", "endpoint", "url"),
+        prompt_code="api-test-design",
+        variables=("projectName", "apiDescription", "baseUrl"),
+        category=CATEGORY_EXTENDED,
+    ),
+    CAP_TEST_PLAN: CapabilitySpec(
+        CAP_TEST_PLAN, "测试计划", "为版本定测试范围、策略与准入准出标准",
+        ("测试计划", "计划", "排期", "准入", "准出", "测试范围", "testplan"),
+        prompt_code="test-plan",
+        variables=("projectName", "period", "requirementSummary", "modules"),
+        category=CATEGORY_EXTENDED,
+    ),
+    CAP_CASE_REVIEW: CapabilitySpec(
+        CAP_CASE_REVIEW, "用例评审", "评审用例覆盖率与质量并给出修改建议",
+        ("用例评审", "评审用例", "覆盖分析", "用例质量", "覆盖矩阵", "casereview"),
+        prompt_code="case-review",
+        variables=("requirement", "criteria", "cases"),
+        category=CATEGORY_EXTENDED,
+    ),
+    CAP_BUG_CLASSIFICATION: CapabilitySpec(
+        CAP_BUG_CLASSIFICATION, "缺陷归类", "判断缺陷类型、严重级别与归属模块",
+        ("缺陷归类", "归类", "分类", "严重级别", "归属模块", "分诊", "定级"),
+        prompt_code="bug-classification",
+        variables=("bugTitle", "bugDescription", "modulePath"),
+        category=CATEGORY_EXTENDED,
+    ),
+    CAP_RISK_ASSESSMENT: CapabilitySpec(
+        CAP_RISK_ASSESSMENT, "风险评估", "按变更范围与质量数据评估发布风险",
+        ("风险", "发布风险", "风险清单", "缓解措施", "上线风险", "risk"),
+        prompt_code="risk-assessment",
+        variables=("projectName", "changeScope", "metricsJson"),
+        category=CATEGORY_EXTENDED,
+    ),
 }
 
 CAPABILITY_CODES: tuple[str, ...] = tuple(CAPABILITIES.keys())
@@ -152,13 +208,21 @@ BINDABLE_CAPABILITIES: tuple[str, ...] = (
     CAP_XMIND_TO_CASE, CAP_BUG_ANALYSIS, CAP_LOG_ANALYSIS, CAP_SQL_ANALYSIS,
     CAP_REGRESSION_GENERATION, CAP_REPORT_GENERATION, CAP_PROJECT_PROGRESS_BOARD,
     CAP_KNOWLEDGE_QA,
+    CAP_REQUIREMENT_CLARIFY, CAP_API_TEST_DESIGN, CAP_TEST_PLAN,
+    CAP_CASE_REVIEW, CAP_BUG_CLASSIFICATION, CAP_RISK_ASSESSMENT,
 )
 
-#: AI 实验室首页展示的 10 个主能力
+#: AI 实验室首页展示的主能力（质量闭环主干）
 LAB_CAPABILITIES: tuple[str, ...] = (
     CAP_REQUIREMENT_REVIEW, CAP_TESTPOINT_GENERATION, CAP_CASE_GENERATION,
     CAP_XMIND_TO_CASE, CAP_BUG_ANALYSIS, CAP_LOG_ANALYSIS, CAP_SQL_ANALYSIS,
     CAP_REGRESSION_GENERATION, CAP_REPORT_GENERATION, CAP_PROJECT_PROGRESS_BOARD,
+)
+
+#: 提示词库里其余可直接跑的提示词，作为补充能力一并展示
+LAB_EXTENDED_CAPABILITIES: tuple[str, ...] = (
+    CAP_REQUIREMENT_CLARIFY, CAP_API_TEST_DESIGN, CAP_TEST_PLAN,
+    CAP_CASE_REVIEW, CAP_BUG_CLASSIFICATION, CAP_RISK_ASSESSMENT,
 )
 
 

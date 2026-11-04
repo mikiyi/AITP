@@ -319,6 +319,16 @@ export interface CapabilitySpec {
   outputFormat: string
   mindmap: boolean
   adoptable: boolean
+  /** core=闭环主能力，extended=提示词库里补充的能力 */
+  category: string
+  /** 提示词库里的标题 */
+  promptTitle: string
+  /** 提示词库里的说明 */
+  promptDescription: string
+  /** 提示词模板的必填变量 */
+  requiredVariables: string[]
+  /** 提示词模板的可选变量 */
+  optionalVariables: string[]
 }
 
 export interface RouteResult {

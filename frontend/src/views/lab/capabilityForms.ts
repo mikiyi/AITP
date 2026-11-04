@@ -80,6 +80,42 @@ export const CAPABILITY_FORMS: Record<string, CapabilityField[]> = {
   knowledge_qa: [
     { name: 'question', label: '问题', type: 'textarea', rows: 6, primary: true, placeholder: '想从知识库里查什么？' },
   ],
+  requirement_clarify: [
+    { name: 'projectName', label: '项目名称', type: 'text' },
+    { name: 'requirement', label: '需求原文', type: 'textarea', rows: 10, primary: true, placeholder: '粘贴需求描述' },
+  ],
+  api_test_design: [
+    { name: 'projectName', label: '项目名称', type: 'text' },
+    { name: 'apiDescription', label: '接口说明', type: 'textarea', rows: 8, primary: true, placeholder: '接口路径、参数、返回结构' },
+    { name: 'baseUrl', label: '服务地址', type: 'text', placeholder: '例如：https://api.example.com' },
+  ],
+  test_plan: [
+    { name: 'projectName', label: '项目名称', type: 'text' },
+    { name: 'period', label: '统计周期', type: 'text', placeholder: '例如：2026 第 45 周' },
+    { name: 'requirementSummary', label: '需求概要', type: 'textarea', rows: 6, primary: true },
+    { name: 'modules', label: '模块清单', type: 'textarea', rows: 5, placeholder: '每行一个模块' },
+  ],
+  case_review: [
+    { name: 'cases', label: '待评审用例', type: 'textarea', rows: 10, primary: true, placeholder: '粘贴用例清单' },
+    { name: 'requirement', label: '需求原文', type: 'textarea', rows: 8 },
+    { name: 'criteria', label: '评审判据', type: 'textarea', rows: 4, placeholder: '本次评审重点关注什么' },
+  ],
+  bug_classification: [
+    { name: 'bugTitle', label: '缺陷标题', type: 'text', primary: true },
+    { name: 'bugDescription', label: '缺陷描述', type: 'textarea', rows: 6 },
+    { name: 'modulePath', label: '可能归属的模块', type: 'text', placeholder: '选择功能点后自动带入，也可手动填写' },
+  ],
+  risk_assessment: [
+    { name: 'projectName', label: '项目名称', type: 'text' },
+    { name: 'changeScope', label: '变更范围', type: 'textarea', rows: 6, primary: true },
+    { name: 'metricsJson', label: '质量数据', type: 'textarea', rows: 5, placeholder: '用例通过率、缺陷数等' },
+  ],
+}
+
+/** 取某个能力下变量对应的中文标签，用于卡片上展示输入项。 */
+export function variableLabel(capability: string, variable: string): string {
+  const field = (CAPABILITY_FORMS[capability] ?? []).find((item) => item.name === variable)
+  return field ? field.label : variable
 }
 
 /** 取能力的主输入变量名；没有标注时退回第一个 textarea。 */
