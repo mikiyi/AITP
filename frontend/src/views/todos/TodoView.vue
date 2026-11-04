@@ -25,7 +25,7 @@
           :show-text="false"
           class="todo-stat__bar"
         />
-        <span class="todo-stat__value">{{ Math.round((summary.completionRate || 0) * 100) }}%</span>
+        <span class="todo-stat__value">{{ ((summary.completionRate || 0) * 100).toFixed(2) }}%</span>
       </div>
     </div>
 

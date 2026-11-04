@@ -45,7 +45,7 @@
             <ul class="preflight-box__list">
               <li v-for="task in preflight.tasks" :key="task.capability">
                 <strong>{{ task.label }}</strong>
-                <span class="muted">完整度 {{ Math.round(task.completeness * 100) }}%</span>
+                <span class="muted">完整度 {{ (task.completeness * 100).toFixed(2) }}%</span>
                 <el-tag size="small" effect="plain">{{ task.role === 'primary' ? '主任务' : '辅助' }}</el-tag>
                 <span v-if="task.missing.length" class="missing">
                   缺：{{ task.missing.join('、') }}

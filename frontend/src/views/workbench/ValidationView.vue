@@ -34,7 +34,7 @@
       </div>
       <div class="run-summary__item">
         <span class="muted">通过率</span>
-        <strong>{{ Math.round(lastRun.passRate * 100) }}%</strong>
+        <strong>{{ (lastRun.passRate * 100).toFixed(2) }}%</strong>
       </div>
     </div>
 

@@ -19,7 +19,7 @@
       <MetricCard
         label="用例通过率"
         :value="metrics.passRate * 100"
-        :precision="1"
+        :precision="2"
         suffix="%"
         icon="CircleCheck"
         tone="success"

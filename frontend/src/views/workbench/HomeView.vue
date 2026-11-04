@@ -64,8 +64,8 @@
     <div class="home__metrics">
       <MetricCard
         label="用例执行通过率"
-        :value="metrics.casePassRate ?? 0"
-        :precision="4"
+        :value="(metrics.casePassRate ?? 0) * 100"
+        :precision="2"
         suffix="%"
         icon="TrendCharts"
         tone="success"
@@ -84,8 +84,8 @@
       />
       <MetricCard
         label="AI 任务成功率"
-        :value="metrics.aiTaskSuccessRate ?? 0"
-        :precision="4"
+        :value="(metrics.aiTaskSuccessRate ?? 0) * 100"
+        :precision="2"
         suffix="%"
         icon="MagicStick"
         tone="primary"
