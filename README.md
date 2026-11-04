@@ -2,8 +2,8 @@
 
 个人 AI 测试工作台 —— **单用户、本地优先、离线可用**的质量管控工具。
 
-把 AI 实验室、测试用例、缺陷、日志分析、SQL 分析、回归、报告、知识库、工作台配置收进同一条闭环：
-**需求 → 测试点 → 用例 → 执行 → 缺陷 → 回归 → 报告 → 知识沉淀**。
+把 AI 实验室、测试用例、缺陷、日志分析、SQL 分析、回归、报告、知识库、任务清单、工作台配置收进同一条闭环：
+**需求 → 测试点 → 用例 → 执行 → 缺陷 → 回归 → 报告 → 知识沉淀**，中间随时把待办推进度挂在清单里。
 
 - 数据全部保存在本机 SQLite（`data/aitp.db`），默认仅本机可访问，不对局域网/公网暴露。
 - AI 能力直接读取本地环境变量中的 AI 配置信息获取，同时支持工作台内配置与本地大模型（Ollama）。
@@ -56,13 +56,27 @@ stop.bat          :: Windows
 
 ## 功能地图
 
-前端 30 条路由 / 30 个页面组件，后端 17 个蓝图统一挂在 `/api/v1` 下。
+前端 31 条路由 / 31 个页面组件，后端 18 个蓝图统一挂在 `/api/v1` 下。
 
-### 工作台首页
+### 首页
 
 - 概览指标：项目数、用例数、缺陷数、待审知识数
 - 快捷入口：12 个 AI 能力直达
 - 近期报告与缺陷动态
+
+### 任务清单
+
+页面：**任务清单**（`/todos`）。本地待办清单，用来盯「这轮该做什么、做到哪一步了」：
+
+- 顶部速览：未完成 / 今天到期 / 逾期 / 已完成 / 完成率。
+- 左侧视图：全部任务、今天到期、本周到期、已逾期、置顶、已完成；下面按分类统计条数。
+- 中间清单：顶部一行快速录入（标题 + 优先级 + 到期日，回车即存），下方是筛选、批量操作与导出。
+- 右侧详情：状态、优先级、到期日、分类、标签、所属项目、进度与说明，可挂子任务。
+- 优先级紧急 → 低，排序时置顶优先、其次按优先级；到期日过期自动标红。
+- 子任务完成度自动回推父任务：全部收口则父任务转完成，子任务又被打开则父任务回到进行中。
+- 筛选与分页写进地址栏；导出走的是列表当前筛选条件（CSV / JSON）。
+- 接口：`GET/POST /api/v1/todos`、`PUT/DELETE /api/v1/todos/<id>`、`POST /api/v1/todos/<id>/toggle`、
+  `POST /api/v1/todos/batch-update`、`POST /api/v1/todos/batch-delete`、`GET /api/v1/todos/export`。
 
 ### AI 实验室
 
@@ -286,8 +300,8 @@ stop.bat          :: Windows
 ## 质量门禁
 
 ```bash
-python -m mypy                          # 后端类型门禁（--strict，100 个源文件）
-python backend/scripts/smoke_api.py     # API 冒烟（311 项）
+python -m mypy                          # 后端类型门禁（--strict，103 个源文件）
+python backend/scripts/smoke_api.py     # API 冒烟（353 项）
 python backend/scripts/check_security.py     # 密钥/注入/路径安全回归
 python backend/scripts/check_types.py        # mypy 门禁封装
 python backend/scripts/check_walkthrough.py   # 固定走查案例（路由顺序 + 降级 + 安全规则 + 复核闭环 + 预检/顺序执行/编排/验证沙箱/回归）
@@ -312,13 +326,13 @@ cd frontend && npm run build   # vue-tsc --noEmit && vite build
 ```
 backend/
   aitp/
-    api/          17 个蓝图：workbench/lab/ai/ai-records/search/projects/requirements/modules
-                  test-cases/bugs/knowledge/reports/regressions/relations/validation/settings/meta
+    api/          18 个蓝图：workbench/lab/ai/ai-records/search/projects/requirements/modules
+                  test-cases/bugs/knowledge/reports/regressions/relations/todos/validation/settings/meta
     ai/           resolver（优先级解析）、client（降级）、adapters（openai_compat/ollama_native）
     common/       常量、校验、分页、密钥库、安全工具
     db/           连接与迁移
     repositories/ 参数化 SQL 仓储层
-    services/     知识落盘、报告导出、xlsx、xmind、备份恢复、AI 自检、预检、顺序执行、编排、验证沙箱、回归、关联
+    services/     知识落盘、报告导出、xlsx、xmind、备份恢复、AI 自检、预检、顺序执行、编排、验证沙箱、回归、关联、任务清单
     prompts/      提示词模板库
     static/       前端构建产物（由 npm run build 生成）
   prompts/        提示词 YAML
@@ -328,7 +342,7 @@ frontend/
     api/          统一请求层（仅 request.ts / stream.ts 允许出现 fetch）
     components/   通用组件
     composables/  useEchart、usePromptTemplates 等
-    views/        30 个页面组件
+    views/        31 个页面组件
 data/             运行时数据（SQLite、日志、密钥、导出文件）
 data/backups/     数据库备份快照（与 SQLite 同级，恢复前会自动留一份安全备份）
 knowledge/        知识库 Markdown 落盘目录
