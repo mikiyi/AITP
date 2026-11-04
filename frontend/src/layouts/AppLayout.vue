@@ -65,39 +65,6 @@
         </div>
         <div class="aitp-header-right">
           <GlobalSearch />
-          <el-dropdown trigger="click" @command="onThemeChange">
-            <button type="button" class="theme-switch" :title="`皮肤：${themeStore.current.label}`">
-              <span
-                class="theme-switch__swatch"
-                :style="{
-                  background: themeStore.current.swatch.bg,
-                  borderColor: themeStore.current.swatch.border,
-                }"
-              />
-              <span class="theme-switch__text">{{ themeStore.current.label }}</span>
-              <el-icon><ArrowDown /></el-icon>
-            </button>
-            <template #dropdown>
-              <el-dropdown-menu class="theme-menu">
-                <el-dropdown-item
-                  v-for="item in themeStore.themes"
-                  :key="item.key"
-                  :command="item.key"
-                  class="theme-menu__item"
-                >
-                  <span
-                    class="theme-menu__swatch"
-                    :style="{
-                      background: item.swatch.bg,
-                      borderColor: item.swatch.border,
-                    }"
-                  />
-                  <span class="theme-menu__label">{{ item.label }}</span>
-                  <el-icon v-if="item.key === themeStore.theme" class="theme-menu__check"><Check /></el-icon>
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
           <el-select
             v-if="appStore.projects.length"
             :model-value="appStore.currentProjectId"
@@ -130,6 +97,46 @@
           <el-tag :type="online ? 'success' : 'danger'" effect="plain" size="small">
             {{ online ? '后端在线' : '后端未连接' }}
           </el-tag>
+          <el-tooltip :content="`切换皮肤（当前：${themeStore.current.label}）`" placement="bottom-end">
+            <el-dropdown trigger="click" @command="onThemeChange">
+              <button type="button" class="theme-switch" aria-label="切换皮肤">
+                <svg class="theme-switch__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path
+                    d="M12 3.2a8.8 8.8 0 1 0 0 17.6c1.1 0 1.8-.8 1.8-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.1 0-1 .8-1.8 1.8-1.8h1.5a4.8 4.8 0 0 0 4.8-4.8c0-3.9-4-7-8.9-7Z"
+                  />
+                  <circle cx="7.4" cy="11.4" r="1.1" fill="currentColor" stroke="none" />
+                  <circle cx="9.2" cy="7.8" r="1.1" fill="currentColor" stroke="none" />
+                  <circle cx="13.2" cy="7.2" r="1.1" fill="currentColor" stroke="none" />
+                  <circle cx="16.4" cy="9.6" r="1.1" fill="currentColor" stroke="none" />
+                </svg>
+                <span
+                  class="theme-switch__dot"
+                  :style="{ background: themeStore.current.swatch.primary }"
+                />
+              </button>
+              <template #dropdown>
+                <el-dropdown-menu class="theme-menu">
+                  <el-dropdown-item
+                    v-for="item in themeStore.themes"
+                    :key="item.key"
+                    :command="item.key"
+                    class="theme-menu__item"
+                  >
+                    <span
+                      class="theme-menu__swatch"
+                      :style="{
+                        background: item.swatch.bg,
+                        borderColor: item.swatch.border,
+                      }"
+                    />
+                    <span class="theme-menu__label">{{ item.label }}</span>
+                    <el-icon v-if="item.key === themeStore.theme" class="theme-menu__check"><Check /></el-icon>
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </el-tooltip>
         </div>
       </el-header>
 
@@ -148,7 +155,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, RouterLink } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowDown, Check, Expand, Fold } from '@element-plus/icons-vue'
+import { Check, Expand, Fold } from '@element-plus/icons-vue'
 import { get } from '@/api/request'
 import { settingsApi } from '@/api'
 import type { AiStatus } from '@/api/types'
@@ -623,36 +630,41 @@ onUnmounted(() => {
   width: 180px;
 }
 
-/* 皮肤切换按钮：色块 + 名称，和搜索框、项目下拉保持同一行高 */
+/* 皮肤切换：方形调色板图标，右下角小圆点显示当前皮肤主色 */
 .theme-switch {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  width: 28px;
   height: 28px;
-  padding: 0 8px;
-  font-size: 13px;
-  color: var(--aitp-text);
+  padding: 0;
+  color: var(--aitp-text-weak);
   background: var(--aitp-panel);
   border: 1px solid var(--aitp-border);
   border-radius: 4px;
   cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
 }
 
 .theme-switch:hover {
-  border-color: var(--el-color-primary);
   color: var(--el-color-primary);
+  border-color: var(--el-color-primary);
 }
 
-.theme-switch__swatch {
-  width: 14px;
-  height: 14px;
-  border-radius: 3px;
-  border: 1px solid;
-  flex-shrink: 0;
+.theme-switch__icon {
+  width: 17px;
+  height: 17px;
 }
 
-.theme-switch__text {
-  white-space: nowrap;
+.theme-switch__dot {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--aitp-panel);
 }
 
 .ai-chip {
