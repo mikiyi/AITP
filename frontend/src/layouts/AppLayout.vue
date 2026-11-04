@@ -1,9 +1,11 @@
 <template>
-  <el-container class="aitp-layout">
+  <el-container class="aitp-layout" :style="viewportStyle">
     <el-aside :width="appStore.sidebarCollapsed ? '64px' : '216px'" class="aitp-aside">
       <div class="aitp-brand">
         <el-icon :size="20" color="#2f6fed"><Promotion /></el-icon>
-        <span v-show="!appStore.sidebarCollapsed" class="aitp-brand-text">AITestPilot</span>
+        <span v-show="!appStore.sidebarCollapsed" class="aitp-brand-text">
+          <BrandName />
+        </span>
       </div>
       <el-menu
         :default-active="activePath"
@@ -66,7 +68,7 @@
         <div class="aitp-header-left">
           <el-button text :icon="appStore.sidebarCollapsed ? Expand : Fold" @click="appStore.toggleSidebar()" />
           <el-breadcrumb separator="/">
-            <el-breadcrumb-item :to="{ path: '/' }">AITestPilot</el-breadcrumb-item>
+            <el-breadcrumb-item :to="{ path: '/' }"><BrandName size="small" /></el-breadcrumb-item>
             <el-breadcrumb-item v-if="pageTitle">{{ pageTitle }}</el-breadcrumb-item>
           </el-breadcrumb>
         </div>
@@ -121,11 +123,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { Expand, Fold, Files, HomeFilled, List, MagicStick, Operation, Setting } from '@element-plus/icons-vue'
 import { get } from '@/api/request'
 import { settingsApi } from '@/api'
 import type { AiStatus } from '@/api/types'
 import GlobalSearch from '@/components/GlobalSearch.vue'
+import BrandName from '@/components/BrandName.vue'
 import { useAppStore } from '@/stores/app'
 
 const route = useRoute()
@@ -133,6 +137,32 @@ const appStore = useAppStore()
 const online = ref(true)
 const aiStatus = ref<AiStatus | null>(null)
 let timer: number | undefined
+
+/** 浏览器布局视口比物理屏幕还宽时，右侧内容会被屏幕边缘切掉，这里把可用宽度钉到屏幕宽度。 */
+const visibleWidth = ref<number | null>(null)
+let clipHintShown = false
+
+const viewportStyle = computed(() =>
+  visibleWidth.value ? { maxWidth: `${visibleWidth.value}px` } : undefined,
+)
+
+function updateVisibleWidth(): void {
+  const screenWidth = window.screen?.width ?? 0
+  const innerWidth = window.innerWidth
+  if (screenWidth > 0 && innerWidth > screenWidth + 4) {
+    visibleWidth.value = screenWidth
+    if (!clipHintShown) {
+      clipHintShown = true
+      ElMessage({
+        type: 'warning',
+        duration: 3000,
+        message: '浏览器窗口比屏幕还宽，右侧内容原本会被挡在屏幕外，已收窄到可见区域；按 Ctrl+0 可恢复浏览器缩放。',
+      })
+    }
+  } else {
+    visibleWidth.value = null
+  }
+}
 
 const aiChipText = computed(() => {
   const status = aiStatus.value
@@ -224,6 +254,8 @@ watch(
 onMounted(() => {
   void ping()
   void loadAiStatus()
+  updateVisibleWidth()
+  window.addEventListener('resize', updateVisibleWidth)
   timer = window.setInterval(() => {
     void ping()
     void loadAiStatus()
@@ -234,6 +266,7 @@ onUnmounted(() => {
   if (timer) {
     window.clearInterval(timer)
   }
+  window.removeEventListener('resize', updateVisibleWidth)
 })
 </script>
 

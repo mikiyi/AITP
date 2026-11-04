@@ -34,7 +34,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ChatDotRound } from '@element-plus/icons-vue'
 import SmartEntry from '@/components/SmartEntry.vue'
@@ -43,7 +43,9 @@ import { useLabStore } from '@/stores/lab'
 const router = useRouter()
 const labStore = useLabStore()
 
-const capabilities = labStore.capabilities
+// 必须走 computed：store 加载完成后会整体替换 capabilities 数组，
+// 直接解构拿到的是旧数组快照，卡片永远渲染不出来。
+const capabilities = computed(() => labStore.capabilities)
 
 function open(code: string): void {
   void router.push(`/lab/${code}`)
