@@ -27,6 +27,7 @@
         </template>
         <template #actions="{ row }">
           <el-button link type="primary" @click.stop="onRowClick(row)">查看</el-button>
+          <el-button link type="success" @click.stop="openKnowledge(row)">加入知识库</el-button>
           <el-button link type="danger" @click.stop="remove(row)">删除</el-button>
         </template>
       </BaseProTable>
@@ -99,6 +100,15 @@
       </template>
     </el-dialog>
   </div>
+
+    <AddToKnowledgeDialog
+      v-model="knowledgeVisible"
+      :title="knowledgePayload.title"
+      :content="knowledgePayload.content"
+      ref-type="report"
+      :ref-id="knowledgePayload.refId"
+      :ref-label="knowledgePayload.refLabel"
+    />
 </template>
 
 <script setup lang="ts">
@@ -107,11 +117,28 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { MagicStick, Plus } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
+import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
 import { reportApi } from '@/api'
 import type { Report } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
+
+const knowledgeVisible = ref(false)
+const knowledgePayload = reactive({
+  title: '',
+  content: '',
+  refId: null as number | null,
+  refLabel: '',
+})
+
+function openKnowledge(row: Report): void {
+  knowledgePayload.title = row.title
+  knowledgePayload.content = [`# ${row.title}`, row.summary || row.content || ''].filter(Boolean).join('\n\n')
+  knowledgePayload.refId = Number(row.id)
+  knowledgePayload.refLabel = row.title
+  knowledgeVisible.value = true
+}
 const appStore = useAppStore()
 const tableRef = ref<TableExpose | null>(null)
 
@@ -128,7 +155,7 @@ const columns: ColumnDef[] = [
   { prop: 'reportType', label: '类型', width: 110, slot: 'reportType' },
   { prop: 'period', label: '统计周期', width: 200, slot: 'period' },
   { prop: 'status', label: '状态', width: 90, slot: 'status' },
-  { prop: 'id', label: '操作', width: 130, slot: 'actions' },
+  { prop: 'id', label: '操作', width: 210, slot: 'actions' },
 ]
 
 const searchFields: SearchField[] = [

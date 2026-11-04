@@ -46,6 +46,7 @@
         </template>
         <template #actions="{ row }">
           <el-button link type="primary" @click.stop="openEdit(row)">编辑</el-button>
+          <el-button link type="success" @click.stop="openKnowledge(row)">加入知识库</el-button>
           <el-button link type="danger" @click.stop="remove(row)">删除</el-button>
         </template>
       </BaseProTable>
@@ -168,6 +169,16 @@
       </template>
     </el-dialog>
   </div>
+
+    <AddToKnowledgeDialog
+      v-model="knowledgeVisible"
+      :title="knowledgePayload.title"
+      :content="knowledgePayload.content"
+      ref-type="test_case"
+      :ref-id="knowledgePayload.refId"
+      :ref-label="knowledgePayload.refLabel"
+      :module-id="knowledgePayload.moduleId"
+    />
 </template>
 
 <script setup lang="ts">
@@ -178,11 +189,45 @@ import { DataAnalysis, Plus, Upload, UploadFilled } from '@element-plus/icons-vu
 import type { UploadFile, UploadFiles } from 'element-plus'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import BaseExportMenu from '@/components/BaseExportMenu.vue'
+import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
 import { caseApi, moduleApi, requirementApi } from '@/api'
 import type { CaseStep, ModuleCoverage, ModuleOption, Requirement, TestCase } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
+
+const knowledgeVisible = ref(false)
+const knowledgePayload = reactive({
+  title: '',
+  content: '',
+  refId: null as number | null,
+  refLabel: '',
+  moduleId: null as number | null,
+})
+
+/** 用例正文整理成 Markdown：前置条件 → 步骤 → 预期结果。 */
+function caseMarkdown(row: TestCase): string {
+  const lines = [`# ${row.title}`]
+  if (row.preconditions) lines.push(`**前置条件**：${row.preconditions}`)
+  if (row.steps?.length) {
+    lines.push('**测试步骤**')
+    row.steps.forEach((step, index) => {
+      lines.push(`${index + 1}. ${step.action}${step.expected ? `（预期：${step.expected}）` : ''}`)
+    })
+  }
+  if (row.expectedResult) lines.push(`**预期结果**：${row.expectedResult}`)
+  if (row.tags) lines.push(`**标签**：${row.tags}`)
+  return lines.join('\n\n')
+}
+
+function openKnowledge(row: TestCase): void {
+  knowledgePayload.title = row.title
+  knowledgePayload.content = caseMarkdown(row)
+  knowledgePayload.refId = Number(row.id)
+  knowledgePayload.refLabel = row.title
+  knowledgePayload.moduleId = row.moduleId ?? null
+  knowledgeVisible.value = true
+}
 const appStore = useAppStore()
 const tableRef = ref<TableExpose | null>(null)
 
@@ -266,7 +311,7 @@ const columns: ColumnDef[] = [
   { prop: 'priority', label: '优先级', width: 90, slot: 'priority' },
   { prop: 'status', label: '执行状态', width: 100, slot: 'status' },
   { prop: 'moduleId', label: '功能点', minWidth: 160, slot: 'moduleId' },
-  { prop: 'id', label: '操作', width: 130, slot: 'actions' },
+  { prop: 'id', label: '操作', width: 210, slot: 'actions' },
 ]
 
 const searchFields: SearchField[] = [

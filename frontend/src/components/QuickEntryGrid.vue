@@ -4,7 +4,7 @@
       v-for="item in entries"
       :key="item.key"
       class="quick-entry-item"
-      @click="go(item.path)"
+      @click="go(item)"
     >
       <span class="quick-entry-label">{{ item.label }}</span>
       <span class="quick-entry-group">{{ item.group }}</span>
@@ -14,6 +14,7 @@
 
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
+import { workbenchApi } from '@/api'
 import type { QuickEntry } from '@/api/types'
 
 defineProps<{
@@ -22,8 +23,10 @@ defineProps<{
 
 const router = useRouter()
 
-function go(path: string): void {
-  void router.push(path)
+function go(item: QuickEntry): void {
+  // 上报点击次数，首页按使用频率取前 10；上报失败不阻塞跳转
+  void workbenchApi.reportShortcut(item.key).catch(() => undefined)
+  void router.push(item.path)
 }
 </script>
 

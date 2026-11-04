@@ -34,6 +34,7 @@ from ..repositories.automation_repo import (
     run_summary,
     script_summary,
 )
+from ..services import nav_badge_service
 from ..services import audit_service, automation_service
 from .helpers import (
     audit,
@@ -371,6 +372,7 @@ def create_from_output() -> Response:
     script_no = repo.next_script_no(category)
     payload["script_no"] = script_no
     script_id = repo.insert(payload)
+    nav_badge_service.increase_for(conn, f"automation_{category}")
     commit(conn)
     row = repo.get(script_id) or {}
     audit(conn, audit_service.AUDIT_ACTION_IMPORT, audit_service.RESOURCE_AUTOMATION_SCRIPT,

@@ -31,6 +31,7 @@
         </template>
         <template #actions="{ row }">
           <el-button link type="primary" @click.stop="openEdit(row)">编辑</el-button>
+          <el-button link type="success" @click.stop="openKnowledge(row)">加入知识库</el-button>
           <el-button link type="danger" @click.stop="remove(row)">删除</el-button>
         </template>
       </BaseProTable>
@@ -79,6 +80,15 @@
       </template>
     </el-dialog>
   </div>
+
+    <AddToKnowledgeDialog
+      v-model="knowledgeVisible"
+      :title="knowledgePayload.title"
+      :content="knowledgePayload.content"
+      ref-type="requirement"
+      :ref-id="knowledgePayload.refId"
+      :ref-label="knowledgePayload.refLabel"
+    />
 </template>
 
 <script setup lang="ts">
@@ -87,11 +97,28 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import BaseExportMenu from '@/components/BaseExportMenu.vue'
+import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
 import { requirementApi } from '@/api'
 import type { Requirement } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 
 const appStore = useAppStore()
+
+const knowledgeVisible = ref(false)
+const knowledgePayload = reactive({
+  title: '',
+  content: '',
+  refId: null as number | null,
+  refLabel: '',
+})
+
+function openKnowledge(row: Requirement): void {
+  knowledgePayload.title = row.title
+  knowledgePayload.content = [`# ${row.title}`, row.content].filter(Boolean).join('\n\n')
+  knowledgePayload.refId = Number(row.id)
+  knowledgePayload.refLabel = row.title
+  knowledgeVisible.value = true
+}
 const tableRef = ref<TableExpose | null>(null)
 
 const requirementStatusOptions = ['draft', 'reviewing', 'approved', 'implemented', 'rejected']
@@ -103,7 +130,7 @@ const columns: ColumnDef[] = [
   { prop: 'status', label: '状态', width: 100, slot: 'status' },
   { prop: 'source', label: '来源', width: 120 },
   { prop: 'updatedAt', label: '更新时间', width: 170 },
-  { prop: 'id', label: '操作', width: 130, slot: 'actions' },
+  { prop: 'id', label: '操作', width: 210, slot: 'actions' },
 ]
 
 const searchFields: SearchField[] = [

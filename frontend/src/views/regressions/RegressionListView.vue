@@ -56,10 +56,11 @@
           </template>
         </el-table-column>
         <el-table-column prop="updatedAt" label="更新时间" width="170" />
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="280" fixed="right">
           <template #default="scope">
             <el-button link type="primary" @click="openDetail(scope.row)">明细</el-button>
             <el-button link @click="openEdit(scope.row)">编辑</el-button>
+            <el-button link type="success" @click="openKnowledge(scope.row)">加入知识库</el-button>
             <el-button link type="danger" @click="remove(scope.row)">删除</el-button>
           </template>
         </el-table-column>
@@ -227,6 +228,15 @@
       </template>
     </el-dialog>
   </div>
+
+    <AddToKnowledgeDialog
+      v-model="knowledgeVisible"
+      :title="knowledgePayload.title"
+      :content="knowledgePayload.content"
+      ref-type="regression"
+      :ref-id="knowledgePayload.refId"
+      :ref-label="knowledgePayload.refLabel"
+    />
 </template>
 
 <script setup lang="ts">
@@ -236,6 +246,7 @@ import { Check, MagicStick, Plus, Refresh, RefreshLeft, Search } from '@element-
 import { regressionApi } from '@/api'
 import type { Regression, RegressionItem } from '@/api/types'
 import { useAppStore } from '@/stores/app'
+import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
 
 interface RegressionForm {
   id: number | null
@@ -258,6 +269,27 @@ interface ItemForm {
 }
 
 const appStore = useAppStore()
+
+const knowledgeVisible = ref(false)
+const knowledgePayload = reactive({
+  title: '',
+  content: '',
+  refId: null as number | null,
+  refLabel: '',
+})
+
+function openKnowledge(row: Regression): void {
+  knowledgePayload.title = row.title
+  knowledgePayload.content = [
+    `# ${row.title}`,
+    row.changeScope ? `**变更范围**：${row.changeScope}` : '',
+    row.affectedModules ? `**影响模块**：${row.affectedModules}` : '',
+    row.content || '',
+  ].filter(Boolean).join('\n\n')
+  knowledgePayload.refId = Number(row.id)
+  knowledgePayload.refLabel = row.title
+  knowledgeVisible.value = true
+}
 
 const rows = ref<Regression[]>([])
 const items = ref<RegressionItem[]>([])

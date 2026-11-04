@@ -28,6 +28,9 @@ from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..prompts.registry import list_templates
 from ..repositories.ai_session_repo import AISessionRepository, AITaskRepository
+from ..repositories.bug_repo import BugRepository
+from ..repositories.project_repo import ProjectRepository
+from ..repositories.requirement_repo import RequirementRepository
 from ..repositories.base import dumps, loads
 from ..repositories.doc_template_repo import (
     CAPABILITY_KIND,
@@ -41,6 +44,8 @@ from ..services import (
     composite_service,
     doc_template_service,
     lab_service,
+    nav_badge_service,
+    regression_service,
     output_exporter,
     tabular_export,
 )
@@ -434,6 +439,85 @@ def _apply_output_template(
     if template_id is None:
         return
     variables["outputTemplate"] = doc_template_service.resolve_for_run(conn, template_id, capability)
+
+
+@bp.post("/output/adopt")
+def adopt_capability_output() -> Response:
+    """把产出物一键添加到需求 / 缺陷 / 回归清单，并点亮对应导航角标。"""
+    conn = db()
+    data = body()
+    capability = require_str(data.get("capability"), "capability", 60)
+    output = require_str(data.get("output"), "output", 200000)
+    target = str(data.get("target") or "").strip()
+    project_id = require_int(data.get("projectId"), "projectId")
+    if not ProjectRepository(conn).get(project_id):
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "项目不存在")
+    title = optional_str(data.get("title"), "title", 200) or f"{label_of(capability)} 产出"
+    module_id = _optional_int(data.get("moduleId"), "moduleId")
+
+    if target == "requirement":
+        req_repo = RequirementRepository(conn)
+        new_id = req_repo.insert({
+            "project_id": project_id,
+            "req_no": req_repo.next_req_no(project_id),
+            "title": title,
+            "content": output,
+            "source": "ai",
+            "version": "",
+            "status": "draft",
+            "priority": "P2",
+            "tags": "",
+        })
+        section = "requirements"
+        resource = audit_service.RESOURCE_REQUIREMENT
+    elif target == "bug":
+        bug_repo = BugRepository(conn)
+        new_id = bug_repo.insert({
+            "project_id": project_id,
+            "bug_no": bug_repo.next_bug_no(project_id),
+            "title": title,
+            "severity": "P2",
+            "status": "open",
+            "priority": "P2",
+            "bug_type": "functional",
+            "description": output,
+            "steps_json": dumps([]),
+            "expected_result": "",
+            "actual_result": "",
+            "assignee": "",
+            "reporter": "AI 实验室",
+            "version": "",
+            "env": "",
+            "module": "",
+            "module_id": module_id,
+        })
+        section = "bugs"
+        resource = audit_service.RESOURCE_BUG
+    elif target == "regression":
+        new_id = int(regression_service.create_regression(
+            conn,
+            project_id=project_id,
+            title=title,
+            change_scope=label_of(capability),
+            affected_modules="",
+            version="",
+            risk_level="low",
+            content=output,
+            source="ai",
+        ))
+        section = "regressions"
+        resource = audit_service.RESOURCE_REGRESSION
+    else:
+        raise AppError(
+            ErrorCode.PARAM_ERROR,
+            "target 只能是 requirement / bug / regression",
+        )
+
+    nav_badge_service.increase_for(conn, section)
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_CREATE, resource, new_id, title,
+          {"capability": capability, "target": target})
+    return ok({"target": target, "id": new_id, "title": title})
 
 
 @bp.post("/output/export")

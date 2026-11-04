@@ -68,6 +68,7 @@
         <template #actions="{ row }">
           <el-button link type="primary" @click.stop="openEdit(row)">编辑</el-button>
           <el-button link type="success" @click.stop="execute(row)">执行</el-button>
+          <el-button link type="success" @click.stop="openKnowledge(row)">加入知识库</el-button>
           <el-button link type="info" @click.stop="openHistory(row)">历史</el-button>
           <el-button link type="danger" @click.stop="removeScript(row)">删除</el-button>
         </template>
@@ -185,6 +186,15 @@
       </template>
     </el-dialog>
   </div>
+
+    <AddToKnowledgeDialog
+      v-model="knowledgeVisible"
+      :title="knowledgePayload.title"
+      :content="knowledgePayload.content"
+      ref-type="automation_script"
+      :ref-id="knowledgePayload.refId"
+      :ref-label="knowledgePayload.refLabel"
+    />
 </template>
 
 <script setup lang="ts">
@@ -194,6 +204,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import MetricCard from '@/components/MetricCard.vue'
+import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
 import { automationApi } from '@/api'
 import type {
   AutomationCategory,
@@ -204,6 +215,30 @@ import type {
 } from '@/api/types'
 
 const route = useRoute()
+
+const knowledgeVisible = ref(false)
+const knowledgePayload = reactive({
+  title: '',
+  content: '',
+  refId: null as number | null,
+  refLabel: '',
+})
+
+function openKnowledge(row: AutomationScript): void {
+  knowledgePayload.title = row.name
+  knowledgePayload.content = [
+    `# ${row.name}`,
+    row.description || '',
+    `**类别**：${row.categoryLabel || row.category}`,
+    `**框架**：${row.framework || '-'}　**语言**：${row.language || '-'}`,
+    row.content
+      ? '```' + (row.language || '') + '\n' + row.content + '\n' + '```'
+      : '',
+  ].filter(Boolean).join('\n\n')
+  knowledgePayload.refId = Number(row.id)
+  knowledgePayload.refLabel = row.name
+  knowledgeVisible.value = true
+}
 
 /** 四个二级菜单共用这一个页面，类别从路由里取。 */
 const category = computed<AutomationCategory>(() => {
@@ -308,7 +343,7 @@ const columns: ColumnDef[] = [
   { prop: 'status', label: '状态', width: 90, slot: 'status' },
   { prop: 'lastRunStatus', label: '最近执行', width: 110, slot: 'lastRunStatus' },
   { prop: 'lastRunAt', label: '最近执行时间', width: 170, slot: 'lastRunAt' },
-  { prop: 'actions', label: '操作', width: 240, slot: 'actions' },
+  { prop: 'actions', label: '操作', width: 320, slot: 'actions' },
 ]
 
 const searchFields = computed<SearchField[]>(() => [

@@ -80,6 +80,8 @@ function exportUrl(path: string, query: Record<string, unknown>): string {
 
 /** 工作台概览。 */
 export const workbenchApi = {
+  /** 首页快捷入口点击上报，用于按使用频率排序。 */
+  reportShortcut: (key: string) => post('/workbench/quick-entry/usage', { key }),
   overview: (projectId?: number) =>
     get<WorkbenchOverview>('/workbench/overview', { projectId }),
   coverage: (projectId: number) => get('/workbench/coverage', { projectId }),
@@ -342,6 +344,15 @@ export const labApi = {
   prompts: () => get<PromptTemplate[]>('/lab/prompts'),
   run: (capability: string, body: Record<string, unknown>) =>
     post(`/lab/${capability}/run`, body),
+  /** 把产出物一键添加到需求 / 缺陷 / 回归清单。 */
+  adoptOutput: (body: {
+    capability: string
+    output: string
+    target: 'requirement' | 'bug' | 'regression'
+    projectId: number
+    title?: string
+    moduleId?: number
+  }) => post<{ target: string; id: number; title: string }>('/lab/output/adopt', body),
   /** 把能力产出导出成 Excel（用例类能力）；失败时抛业务错误。 */
   exportOutput: (body: {
     capability: string
@@ -510,6 +521,15 @@ export const settingsApi = {
   backupDownloadUrl: (name: string) => `/api/v1/settings/backups/${encodeURIComponent(name)}/download`,
   enums: () => get('/meta/enums'),
   capabilities: () => get('/meta/capabilities'),
+}
+
+/** 导航未读角标：AI 产出一键添加到资产后累加，进入对应页面后清零。 */
+export const badgeApi = {
+  list: () => get<{ items: Record<string, number> }>('/badges'),
+  clear: (section: string) =>
+    post<{ section: string; cleared: number }>(`/badges/${section}/clear`),
+  increase: (section: string, count = 1) =>
+    post(`/badges/${section}/increase`, { count }),
 }
 
 /** 测试文档模板：按类别（测试用例 / 测试报告 / 测试点脑图）维护产出物模板。 */

@@ -16,7 +16,7 @@ from ..repositories.module_repo import ModuleRepository
 from ..repositories.project_repo import ProjectRepository
 from ..repositories.requirement_repo import RequirementRepository
 from ..repositories.test_case_repo import TestCaseRepository
-from ..services import audit_service
+from ..services import audit_service, nav_badge_service
 from ..services import tabular_export, xlsx_exporter, xlsx_importer
 from .helpers import (
     audit,
@@ -527,6 +527,7 @@ def adopt_cases() -> Response:
         })
         created.append({"id": new_id, "caseNo": case_no})
 
+    nav_badge_service.increase_for(conn, "cases", len(created))
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_CREATE, audit_service.RESOURCE_TEST_CASE, None,
           f"采纳 AI 用例 {len(created)} 条", {"count": len(created), "projectId": project_id})

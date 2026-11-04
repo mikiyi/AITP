@@ -9,6 +9,7 @@ def register_blueprints(app: Flask) -> None:
     from .ai import bp as ai_bp
     from .ai_records import bp as ai_records_bp
     from .automation import bp as automation_bp
+    from .badges import bp as badges_bp
     from .bugs import bp as bugs_bp
     from .cases import bp as cases_bp
     from .doc_templates import bp as doc_templates_bp
@@ -29,6 +30,7 @@ def register_blueprints(app: Flask) -> None:
 
     for bp, prefix in (
         (workbench_bp, "/api/v1/workbench"),
+        (badges_bp, "/api/v1/badges"),
         (lab_bp, "/api/v1/lab"),
         (ai_bp, "/api/v1/ai"),
         (ai_records_bp, "/api/v1/ai-records"),

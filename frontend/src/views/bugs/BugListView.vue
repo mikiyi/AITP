@@ -35,6 +35,7 @@
         </template>
         <template #actions="{ row }">
           <el-button link type="primary" @click.stop="openEdit(row)">编辑</el-button>
+          <el-button link type="success" @click.stop="openKnowledge(row)">加入知识库</el-button>
           <el-button link type="danger" @click.stop="remove(row)">删除</el-button>
         </template>
       </BaseProTable>
@@ -96,6 +97,16 @@
       </template>
     </el-dialog>
   </div>
+
+    <AddToKnowledgeDialog
+      v-model="knowledgeVisible"
+      :title="knowledgePayload.title"
+      :content="knowledgePayload.content"
+      ref-type="bug"
+      :ref-id="knowledgePayload.refId"
+      :ref-label="knowledgePayload.refLabel"
+      :module-id="knowledgePayload.moduleId"
+    />
 </template>
 
 <script setup lang="ts">
@@ -105,11 +116,45 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import BaseExportMenu from '@/components/BaseExportMenu.vue'
+import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
 import { bugApi, moduleApi } from '@/api'
 import type { Bug, ModuleOption } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
+
+const knowledgeVisible = ref(false)
+const knowledgePayload = reactive({
+  title: '',
+  content: '',
+  refId: null as number | null,
+  refLabel: '',
+  moduleId: null as number | null,
+})
+
+/** 缺陷正文整理成 Markdown：描述 → 复现步骤 → 预期/实际。 */
+function bugMarkdown(row: Bug): string {
+  const lines = [`# ${row.title}`]
+  if (row.description) lines.push(row.description)
+  if (row.steps?.length) {
+    lines.push('**复现步骤**')
+    row.steps.forEach((step, index) => lines.push(`${index + 1}. ${step}`))
+  }
+  if (row.expectedResult) lines.push(`**预期结果**：${row.expectedResult}`)
+  if (row.actualResult) lines.push(`**实际结果**：${row.actualResult}`)
+  if (row.env) lines.push(`**环境**：${row.env}`)
+  if (row.version) lines.push(`**版本**：${row.version}`)
+  return lines.join('\n\n')
+}
+
+function openKnowledge(row: Bug): void {
+  knowledgePayload.title = row.title
+  knowledgePayload.content = bugMarkdown(row)
+  knowledgePayload.refId = Number(row.id)
+  knowledgePayload.refLabel = row.title
+  knowledgePayload.moduleId = row.moduleId ?? null
+  knowledgeVisible.value = true
+}
 const appStore = useAppStore()
 const tableRef = ref<TableExpose | null>(null)
 
@@ -136,7 +181,7 @@ const columns: ColumnDef[] = [
   { prop: 'status', label: '状态', width: 100, slot: 'status' },
   { prop: 'assignee', label: '指派', width: 100 },
   { prop: 'moduleId', label: '功能点', minWidth: 140, slot: 'moduleId' },
-  { prop: 'id', label: '操作', width: 130, slot: 'actions' },
+  { prop: 'id', label: '操作', width: 210, slot: 'actions' },
 ]
 
 const searchFields: SearchField[] = [

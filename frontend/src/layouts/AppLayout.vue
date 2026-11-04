@@ -17,7 +17,12 @@
         <template v-for="node in menuNodes" :key="node.type === 'group' ? node.key : node.path">
           <el-menu-item v-if="node.type === 'item'" :index="node.path">
             <el-icon><component :is="node.icon" /></el-icon>
-            <template #title>{{ node.title }}</template>
+            <template #title>
+              {{ node.title }}
+              <span v-if="badgeStore.countOf(node.path)" class="menu-badge">
+                {{ badgeStore.countOf(node.path) }}
+              </span>
+            </template>
           </el-menu-item>
           <el-sub-menu v-else :index="node.key">
             <template #title>
@@ -26,7 +31,10 @@
             </template>
             <el-menu-item v-for="child in node.children" :key="child.path" :index="child.path">
               <el-icon><component :is="child.icon" /></el-icon>
-              <span>{{ child.title }}</span>
+              <span class="menu-item-text">{{ child.title }}</span>
+              <span v-if="badgeStore.countOf(child.path)" class="menu-badge">
+                {{ badgeStore.countOf(child.path) }}
+              </span>
             </el-menu-item>
           </el-sub-menu>
         </template>
@@ -163,11 +171,13 @@ import GlobalSearch from '@/components/GlobalSearch.vue'
 import BrandName from '@/components/BrandName.vue'
 import { useAppStore } from '@/stores/app'
 import { useThemeStore, type ThemeKey } from '@/stores/theme'
+import { useBadgeStore } from '@/stores/badges'
 import { MENU_NODES, isGroupActive, matchMenu } from '@/router/menu'
 
 const route = useRoute()
 const appStore = useAppStore()
 const themeStore = useThemeStore()
+const badgeStore = useBadgeStore()
 const online = ref(true)
 const aiStatus = ref<AiStatus | null>(null)
 let timer: number | undefined
@@ -257,6 +267,15 @@ const aiCandidateText = computed(() =>
 )
 
 const menuNodes = MENU_NODES
+
+// 进入资产页面即视为已查看，清掉该分区未读角标
+watch(
+  () => route.path,
+  (path) => {
+    void badgeStore.clearForPath(path)
+  },
+  { immediate: true },
+)
 
 /** 当前路由命中的导航项，用来驱动侧栏高亮。 */
 const menuMatch = computed(() => matchMenu(route.path))
@@ -433,6 +452,7 @@ function setupMenuObserver(): void {
 }
 
 onMounted(async () => {
+  void badgeStore.load()
   void ping()
   void loadAiStatus()
   updateVisibleSize()
@@ -628,6 +648,23 @@ onUnmounted(() => {
 
 .aitp-project-select {
   width: 180px;
+}
+
+/* 未读角标：红底白字，数字超过 99 显示 99+ */
+.menu-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  color: #fff;
+  background: var(--el-color-danger);
+  border-radius: 9px;
 }
 
 /* 皮肤切换：方形调色板图标，右下角小圆点显示当前皮肤主色 */

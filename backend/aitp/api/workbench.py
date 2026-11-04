@@ -9,6 +9,7 @@ from flask import Blueprint, Response, request
 
 from ..ai.capability_codes import CAPABILITIES
 from ..common.enums import BUG_STATUS, CASE_STATUS
+from ..common.time_utils import utcnow_iso
 from ..common.validators import require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
@@ -36,7 +37,11 @@ def _count(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()) -> 
     return int(conn.execute(sql, params).fetchone()[0])
 
 
-def _shortcuts() -> list[dict[str, Any]]:
+#: 首页只展示使用频率最高的若干个快捷入口
+QUICK_ENTRY_LIMIT = 10
+
+
+def _all_shortcuts() -> list[dict[str, Any]]:
     items = [
         {"key": "modules", "label": "模块树", "path": "/settings/modules", "group": "结构"},
         {"key": "cases", "label": "测试用例", "path": "/test-cases", "group": "资产"},
@@ -54,6 +59,41 @@ def _shortcuts() -> list[dict[str, Any]]:
             "group": "AI 能力",
         })
     return items
+
+
+def _shortcuts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """按点击次数从高到低取前 10；没点过的保持原始顺序排在后面。"""
+    items = _all_shortcuts()
+    usage = {
+        str(row["entry_key"]): int(row["use_count"] or 0)
+        for row in conn.execute("SELECT entry_key, use_count FROM sys_quick_entry_usage")
+    }
+    order = {item["key"]: index for index, item in enumerate(items)}
+    ranked = sorted(items, key=lambda item: (-usage.get(str(item["key"]), 0), order[str(item["key"])]))
+    return ranked[:QUICK_ENTRY_LIMIT]
+
+
+@bp.post("/quick-entry/usage")
+def record_quick_entry_usage() -> Response:
+    """首页快捷入口点击上报：只统计真实存在的入口，脏 key 直接拒绝。"""
+    conn = db()
+    data = body()
+    key = require_str(data.get("key"), "key", 60)
+    if key not in {item["key"] for item in _all_shortcuts()}:
+        raise AppError(ErrorCode.PARAM_ERROR, "未知的快捷入口")
+    now = utcnow_iso()
+    conn.execute(
+        """
+        INSERT INTO sys_quick_entry_usage (entry_key, use_count, last_used_at)
+        VALUES (?, 1, ?)
+        ON CONFLICT(entry_key) DO UPDATE SET
+            use_count = use_count + 1,
+            last_used_at = excluded.last_used_at
+        """,
+        (key, now),
+    )
+    commit(conn)
+    return ok({"key": key})
 
 
 @bp.get("/overview")
@@ -131,7 +171,7 @@ def overview() -> Response:
         },
         "pendingKnowledge": draft_repo.pending_count(),
         "recentTasks": recent_tasks,
-        "shortcuts": _shortcuts(),
+        "shortcuts": _shortcuts(conn),
         "caseStatus": case_status,
         "bugStatus": bug_status,
     })

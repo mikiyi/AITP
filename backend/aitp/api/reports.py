@@ -16,6 +16,7 @@ from ..repositories.base import dumps, loads
 from ..repositories.knowledge_ref_repo import KnowledgeRefRepository
 from ..repositories.project_repo import ProjectRepository
 from ..repositories.report_repo import ReportRepository
+from ..services import nav_badge_service
 from ..services import audit_service, report_exporter
 from .helpers import (audit, body, commit, db, keyword_of, page_args, page_payload,
                      path_int, query_filters)
@@ -498,6 +499,7 @@ def adopt_report() -> Response:
             }
             for index, section in enumerate(sections)
         ])
+    nav_badge_service.increase_for(conn, "reports")
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_CREATE, audit_service.RESOURCE_REPORT, new_id, title,
           {"source": "ai_adopt", "sections": len(sections)})

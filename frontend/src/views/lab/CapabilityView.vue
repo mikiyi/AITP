@@ -269,6 +269,21 @@
           <el-button :icon="Collection" :disabled="!finished || !output" @click="saveToKnowledge">
             加入知识库
           </el-button>
+          <el-button :icon="DocumentAdd" :disabled="!finished || !output" @click="openAdoptAsset('requirement')">
+            添加需求
+          </el-button>
+          <el-button
+            :icon="Warning"
+            type="warning"
+            plain
+            :disabled="!finished || !output"
+            @click="openAdoptAsset('bug')"
+          >
+            添加缺陷
+          </el-button>
+          <el-button :icon="Refresh" :disabled="!finished || !output" @click="openAdoptAsset('regression')">
+            添加回归清单
+          </el-button>
           <el-button
             v-if="spec?.adoptable"
             type="success"
@@ -447,6 +462,40 @@
       <pre class="cap-output__json">{{ reasoning }}</pre>
     </el-drawer>
 
+    <el-dialog
+      v-model="adoptAssetVisible"
+      :title="`添加为${ASSET_LABEL[adoptAssetTarget]}`"
+      width="520px"
+    >
+      <el-form label-width="80px">
+        <el-form-item label="项目" required>
+          <el-select v-model="adoptAssetForm.projectId" placeholder="选择项目">
+            <el-option
+              v-for="item in appStore.projects"
+              :key="item.id"
+              :label="item.name"
+              :value="item.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="标题" required>
+          <el-input v-model="adoptAssetForm.title" maxlength="200" />
+        </el-form-item>
+      </el-form>
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="产出正文会完整写入这条记录，可在对应列表继续编辑；导航栏会出现未读提醒"
+      />
+      <template #footer>
+        <el-button @click="adoptAssetVisible = false">取消</el-button>
+        <el-button type="primary" :loading="adoptingAsset" @click="confirmAdoptAsset">
+          确认添加
+        </el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="knowledgeVisible" title="加入知识库" width="560px">
       <el-form label-width="80px">
         <el-form-item label="标题" required>
@@ -578,6 +627,7 @@ import {
   Collection,
   CopyDocument,
   Document,
+  DocumentAdd,
   Download,
   FolderAdd,
   Grid,
@@ -588,6 +638,7 @@ import {
   Refresh,
   Select,
   Upload,
+  Warning,
 } from '@element-plus/icons-vue'
 import MarkdownView from '@/components/MarkdownView.vue'
 import MindMap from '@/components/MindMap.vue'
@@ -605,6 +656,7 @@ import type {
   Requirement,
 } from '@/api/types'
 import { useAppStore } from '@/stores/app'
+import { useBadgeStore } from '@/stores/badges'
 import { DEFAULT_KNOWLEDGE_CATEGORY, useKnowledgeCategoryStore } from '@/stores/knowledgeCategory'
 import { useLabStore } from '@/stores/lab'
 import { CAPABILITY_FORMS, optionPromptText, primaryFieldOf, visibleFields, visibleOptions } from './capabilityForms'
@@ -615,6 +667,7 @@ const router = useRouter()
 const labStore = useLabStore()
 const appStore = useAppStore()
 const categoryStore = useKnowledgeCategoryStore()
+const badgeStore = useBadgeStore()
 
 const capability = computed(() => String(route.params.capability ?? ''))
 const spec = computed(
@@ -805,6 +858,73 @@ function downloadExcelArtifact(): void {
   const artifact = excelArtifact.value
   if (artifact) {
     saveBlob(artifact.blob, artifact.filename)
+  }
+}
+
+/* ---- 一键添加到资产 ---- */
+
+type AssetTarget = 'requirement' | 'bug' | 'regression'
+
+const ASSET_LABEL: Record<AssetTarget, string> = {
+  requirement: '需求',
+  bug: '缺陷',
+  regression: '回归清单',
+}
+
+const adoptAssetVisible = ref(false)
+const adoptAssetTarget = ref<AssetTarget>('requirement')
+const adoptingAsset = ref(false)
+const adoptAssetForm = reactive({
+  projectId: null as number | null,
+  title: '',
+})
+
+/** 默认标题取产出第一行有效内容，去掉 Markdown 标题符号。 */
+function defaultAssetTitle(): string {
+  const first = output.value
+    .split('\n')
+    .map((line) => line.trim().replace(/^#+\s*/, ''))
+    .find((line) => Boolean(line))
+  return (first || spec.value?.label || capability.value).slice(0, 60)
+}
+
+function openAdoptAsset(target: AssetTarget): void {
+  if (!output.value.trim()) {
+    ElMessage.warning('暂无产出')
+    return
+  }
+  adoptAssetTarget.value = target
+  adoptAssetForm.projectId = appStore.currentProjectId
+  adoptAssetForm.title = defaultAssetTitle()
+  adoptAssetVisible.value = true
+}
+
+async function confirmAdoptAsset(): Promise<void> {
+  if (!adoptAssetForm.projectId) {
+    ElMessage.warning('请先选择项目')
+    return
+  }
+  if (!adoptAssetForm.title.trim()) {
+    ElMessage.warning('请填写标题')
+    return
+  }
+  adoptingAsset.value = true
+  try {
+    const result = await labApi.adoptOutput({
+      capability: capability.value,
+      output: output.value,
+      target: adoptAssetTarget.value,
+      projectId: adoptAssetForm.projectId,
+      title: adoptAssetForm.title.trim(),
+      moduleId: moduleId.value ?? undefined,
+    })
+    ElMessage.success(`已添加到${ASSET_LABEL[adoptAssetTarget.value]}：${result.title}`)
+    adoptAssetVisible.value = false
+    await badgeStore.load()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '添加失败')
+  } finally {
+    adoptingAsset.value = false
   }
 }
 
@@ -1433,6 +1553,7 @@ async function confirmAdopt(): Promise<void> {
     })
     ElMessage.success(`已采纳 ${result.count} 条用例`)
     adoptVisible.value = false
+    await badgeStore.load()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '采纳失败')
   } finally {
@@ -1484,6 +1605,7 @@ async function confirmAdoptReport(): Promise<void> {
     })
     ElMessage.success('已采纳为报告草稿')
     reportAdoptVisible.value = false
+    await badgeStore.load()
     void router.push(`/reports/${report.id}`)
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '采纳失败')
@@ -1549,6 +1671,7 @@ async function importToAutomation(category: AutomationCategory): Promise<void> {
       source: 'ai',
     })
     ElMessage.success(`已入库：${script.scriptNo}`)
+    await badgeStore.load()
     await router.push(`/automation/${category}`)
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '入库失败')

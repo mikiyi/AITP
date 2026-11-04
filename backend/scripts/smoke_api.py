@@ -561,9 +561,14 @@ def check_workbench(api: Api, project_id: int) -> None:
     check("缺陷状态分桶总和等于缺陷总数",
           sum(overview["bugStatus"].values()) == bugs["total"],
           str(overview["bugStatus"]))
-    check("快捷入口包含 19 个 AI 能力",
-          len([s for s in overview["shortcuts"] if s["group"] == "AI 能力"]) == 19,
-          str(len(overview["shortcuts"])))
+    shortcuts = overview["shortcuts"]
+    check("快捷入口最多 10 个", len(shortcuts) == 10, str(len(shortcuts)))
+    check("快捷入口字段完整",
+          all(s.get("key") and s.get("label") and s.get("path") for s in shortcuts),
+          str(shortcuts[:1]))
+    check("快捷入口不重复",
+          len({s["key"] for s in shortcuts}) == len(shortcuts),
+          str([s["key"] for s in shortcuts]))
     check("待审池数量可从概览读到", isinstance(overview["pendingKnowledge"], int),
           str(overview["pendingKnowledge"]))
 
