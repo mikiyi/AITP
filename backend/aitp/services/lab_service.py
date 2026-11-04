@@ -353,6 +353,17 @@ def stream_capability(
     return stream_with_fallback(plan.candidates, plan.messages), plan
 
 
+def optional_variables_of(prompt_code: str) -> tuple[str, ...]:
+    """提示词里可选的变量名；用于判断这次请求缺了哪些可选信息。"""
+    if not prompt_code:
+        return ()
+    try:
+        template = get_registry().get(prompt_code)
+    except Exception:  # noqa: BLE001 - 自定义提示词可能不存在，缺项判定不该阻断落库
+        return ()
+    return tuple(template.optional)
+
+
 # ---------------- 提示词优化 ----------------
 
 def optimize_prompt(capability: str, raw_text: str) -> dict[str, Any]:

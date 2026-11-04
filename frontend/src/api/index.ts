@@ -3,6 +3,8 @@ import type {
   AdoptCaseItem,
   AiModelInfo,
   AiProfile,
+  AiRecord,
+  AiRecordPage,
   AiSession,
   AiStatus,
   AiTask,
@@ -31,6 +33,7 @@ import type {
   Requirement,
   RestoreResult,
   RouteResponse,
+  SearchResult,
   SelfCheckResult,
   SystemConfigItem,
   TestCase,
@@ -243,6 +246,24 @@ export const aiApi = {
       egressWarning: string
       contextFound: boolean
     }>('/ai/ask', { question }),
+}
+
+/** AI 执行记录：证据、缺项、风险点与人工复核结论。 */
+export const recordApi = {
+  list: (query: Record<string, unknown> = {}) =>
+    get<AiRecordPage>('/ai-records', query as never),
+  get: (id: number) => get<AiRecord>(`/ai-records/${id}`),
+  review: (id: number, status: 'approved' | 'rejected', note = '') =>
+    post<{ id: number; reviewStatus: string; reviewNote: string; reviewedAt: string }>(
+      `/ai-records/${id}/review`,
+      { status, note },
+    ),
+}
+
+/** 全局搜索：一次检索需求、用例、缺陷、知识。 */
+export const searchApi = {
+  query: (params: { q: string; types?: string; projectId?: number; limit?: number }) =>
+    get<SearchResult>('/search', params as never),
 }
 
 /** 设置：AI 档案、系统配置、枚举。 */

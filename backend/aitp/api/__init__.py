@@ -7,6 +7,7 @@ from flask import Flask
 
 def register_blueprints(app: Flask) -> None:
     from .ai import bp as ai_bp
+    from .ai_records import bp as ai_records_bp
     from .bugs import bp as bugs_bp
     from .cases import bp as cases_bp
     from .knowledge import bp as knowledge_bp
@@ -16,6 +17,7 @@ def register_blueprints(app: Flask) -> None:
     from .projects import bp as projects_bp
     from .reports import bp as reports_bp
     from .requirements import bp as requirements_bp
+    from .search import bp as search_bp
     from .settings import bp as settings_bp
     from .workbench import bp as workbench_bp
 
@@ -23,6 +25,8 @@ def register_blueprints(app: Flask) -> None:
         (workbench_bp, "/api/v1/workbench"),
         (lab_bp, "/api/v1/lab"),
         (ai_bp, "/api/v1/ai"),
+        (ai_records_bp, "/api/v1/ai-records"),
+        (search_bp, "/api/v1/search"),
         (projects_bp, "/api/v1/projects"),
         (requirements_bp, "/api/v1/requirements"),
         (modules_bp, "/api/v1/modules"),

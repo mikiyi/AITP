@@ -36,6 +36,10 @@
           <el-icon><ChatDotRound /></el-icon>
           <template #title>会话记录</template>
         </el-menu-item>
+        <el-menu-item index="/lab/records">
+          <el-icon><DocumentChecked /></el-icon>
+          <template #title>执行记录</template>
+        </el-menu-item>
         <el-menu-item index="/settings">
           <el-icon><Setting /></el-icon>
           <template #title>设置</template>
@@ -53,6 +57,7 @@
           </el-breadcrumb>
         </div>
         <div class="aitp-header-right">
+          <GlobalSearch />
           <el-select
             v-if="appStore.projects.length"
             :model-value="appStore.currentProjectId"
@@ -106,6 +111,7 @@ import { Expand, Fold } from '@element-plus/icons-vue'
 import { get } from '@/api/request'
 import { settingsApi } from '@/api'
 import type { AiStatus } from '@/api/types'
+import GlobalSearch from '@/components/GlobalSearch.vue'
 import { useAppStore } from '@/stores/app'
 
 const route = useRoute()
@@ -146,7 +152,13 @@ const aiCandidateText = computed(() =>
 
 const activePath = computed(() => {
   const path = route.path
-  if (path.startsWith('/lab/') && path !== '/lab/sessions') {
+  if (path.startsWith('/lab/records')) {
+    return '/lab/records'
+  }
+  if (path.startsWith('/lab/sessions')) {
+    return '/lab/sessions'
+  }
+  if (path.startsWith('/lab/')) {
     return '/lab'
   }
   if (path.startsWith('/settings')) {

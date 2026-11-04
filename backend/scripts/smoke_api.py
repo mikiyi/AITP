@@ -1016,6 +1016,67 @@ def check_bulk_and_export(api: Api, project_id: int) -> None:
                ErrorCode.PARAM_ERROR)
 
 
+def check_ai_records_and_search(api: Api, project_id: int) -> None:
+    """AI 执行记录（证据/缺项/复核）与全局搜索。"""
+    records = api.data("GET", "/api/v1/ai-records?pageSize=100")
+    items = records.get("list") or []
+    check("执行记录列表有数据", len(items) > 0, str(len(items)))
+    check("执行记录带复核统计",
+          all(k in records.get("stats") or {} for k in ("pending", "approved", "rejected")),
+          str(records.get("stats")))
+    if items:
+        item = items[0]
+        check("执行记录含风险等级与复核标记",
+              "riskLevel" in item and "reviewRequired" in item, str(sorted(item.keys())))
+        detail = api.data("GET", f"/api/v1/ai-records/{item['id']}")
+        check("执行记录详情含证据/缺项/风险三段",
+              all(k in detail for k in ("evidence", "missing", "risks")), str(sorted(detail.keys())))
+
+    api.expect("执行记录不存在返回 140100", "GET", "/api/v1/ai-records/999999",
+               ErrorCode.RESOURCE_NOT_FOUND)
+    api.expect("复核不存在的记录返回 140100", "POST", "/api/v1/ai-records/999999/review",
+               ErrorCode.RESOURCE_NOT_FOUND, {"status": "approved"})
+
+    if items:
+        record_id = int(items[0]["id"])
+        api.expect("复核状态非法返回 100100", "POST",
+                   f"/api/v1/ai-records/{record_id}/review", ErrorCode.PARAM_ERROR,
+                   {"status": "not-a-status"})
+        reviewed = api.data("POST", f"/api/v1/ai-records/{record_id}/review",
+                            {"status": "approved", "note": "冒烟复核通过"})
+        check("复核写回成功", bool(reviewed.get("reviewedAt")) or
+              reviewed.get("reviewStatus") == "approved", str(reviewed)[:200])
+        after = api.data("GET", f"/api/v1/ai-records/{record_id}")
+        check("复核后状态为已采纳", after.get("reviewStatus") == "approved", str(after)[:200])
+        check("复核备注已落库", after.get("reviewNote") == "冒烟复核通过", str(after)[:200])
+
+    # 复核是写操作，应留下审计
+    audits = api.data("GET", "/api/v1/settings/audit-logs?pageSize=100")
+    actions = [str(item.get("action")) for item in audits.get("list") or []]
+    check("复核写入审计", "review" in actions, str(actions[:10]))
+
+    # 全局搜索
+    keyword = "冒烟检索关键词"
+    api.data("POST", "/api/v1/requirements",
+             {"projectId": project_id, "title": f"{keyword}-登录改造"})
+    found = api.data("GET", f"/api/v1/search?q={keyword}")
+    groups = found.get("groups") or []
+    check("搜索命中需求分组", any(g.get("type") == "requirement" for g in groups), str(groups)[:200])
+    hit = next((g for g in groups if g.get("type") == "requirement"), None)
+    check("搜索结果含标题片段", bool(hit and hit.get("list")), str(hit)[:200])
+    check("搜索返回总命中数", isinstance(found.get("total"), int) and found["total"] >= 1,
+          str(found.get("total")))
+
+    typed = api.data("GET", f"/api/v1/search?q={keyword}&types=requirement")
+    check("搜索类型过滤生效",
+          all(g.get("type") == "requirement" for g in typed.get("groups") or []),
+          str(typed.get("groups"))[:200])
+
+    api.expect("搜索未知类型被拒", "GET", "/api/v1/search?q=x&types=unknown", ErrorCode.PARAM_ERROR)
+    api.expect("搜索空关键词被拒", "GET", "/api/v1/search?q=", ErrorCode.PARAM_ERROR)
+    api.expect("搜索缺少关键词被拒", "GET", "/api/v1/search", ErrorCode.PARAM_ERROR)
+
+
 def main() -> int:
     workdir = pathlib.Path(tempfile.mkdtemp(prefix="aitp-smoke-"))
     try:
@@ -1038,6 +1099,7 @@ def main() -> int:
         check_meta(api)
         check_bulk_and_export(api, project_id)
         check_backups(api, project_id)
+        check_ai_records_and_search(api, project_id)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 

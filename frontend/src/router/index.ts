@@ -36,6 +36,18 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '会话详情', hidden: true },
   },
   {
+    path: '/lab/records',
+    name: 'lab-records',
+    component: () => import('@/views/lab/RecordListView.vue'),
+    meta: { title: '执行记录', icon: 'Tickets' },
+  },
+  {
+    path: '/lab/records/:id',
+    name: 'lab-record-detail',
+    component: () => import('@/views/lab/RecordDetailView.vue'),
+    meta: { title: '执行记录详情', hidden: true },
+  },
+  {
     path: '/projects',
     name: 'projects',
     component: () => import('@/views/projects/ProjectListView.vue'),

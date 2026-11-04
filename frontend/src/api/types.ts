@@ -586,4 +586,84 @@ export interface RestoreResult {
   appliedMigrations: number[]
 }
 
+/** AI 执行记录里的一条证据：产出物引用到的条目，已回库核对。 */
+export interface AiRecordEvidence {
+  kind: string
+  ref: string
+  title: string
+  verified: boolean
+  detail: string
+}
+
+/** 执行记录里的缺项：模型自述信息不足，或本次没填的可选变量。 */
+export interface AiRecordMissing {
+  kind: string
+  label: string
+  detail: string
+}
+
+/** 执行记录里的风险点：命中行为安全规则的条目。 */
+export interface AiRecordRisk {
+  rule: string
+  level: string
+  title: string
+  detail: string
+}
+
+/** 一次 AI 能力执行的结构化记录。 */
+export interface AiRecord {
+  id: Id
+  taskId: Id | null
+  sessionId: Id | null
+  capability: string
+  capabilityLabel: string
+  model: string
+  summary: string
+  evidence: AiRecordEvidence[]
+  missing: AiRecordMissing[]
+  risks: AiRecordRisk[]
+  riskLevel: string
+  reviewRequired: boolean
+  reviewStatus: string
+  reviewNote: string | null
+  reviewedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+/** 执行记录列表载荷，附带各复核状态的计数。 */
+export interface AiRecordPage extends PagePayload<AiRecord> {
+  stats: {
+    pending: number
+    approved: number
+    rejected: number
+  }
+}
+
+/** 全局搜索命中的一条结果。 */
+export interface SearchHit {
+  id: Id
+  type: string
+  typeLabel: string
+  title: string
+  no: string
+  snippet: string
+  updatedAt: string
+  route: string
+}
+
+/** 全局搜索按实体类型分组的命中列表。 */
+export interface SearchGroup {
+  type: string
+  typeLabel: string
+  list: SearchHit[]
+}
+
+/** 全局搜索结果。 */
+export interface SearchResult {
+  keyword: string
+  groups: SearchGroup[]
+  total: number
+}
+
 export type { PagePayload }

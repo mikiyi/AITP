@@ -1,0 +1,350 @@
+"""AI 执行记录：把一次能力执行的结构化结论落库。
+
+一次 AI 执行只留一段原文，没法回答三个问题：它引用的是不是真东西、缺了什么信息、
+谁来拍板。这里把结论拆成三份结构化数据写进库：
+
+- **证据**：产出物里引用的知识条目、缺陷编号、用例编号，逐条回库核对是否真实存在。
+  编号对不上就是编造，直接标成未验证，并计入风险点。
+- **缺项**：模型自述的信息不足处，以及本次请求里没填的可选变量。
+- **复核结论**：是否需要人工复核，以及人工复核后的结论（采纳 / 驳回 + 备注）。
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import sqlite3
+from typing import Any, cast
+
+from ..ai.capability_codes import label_of
+from ..common.time_utils import utcnow_iso
+from ..errors import AppError, ErrorCode
+
+# ---- 风险等级 ----
+RISK_NONE = "none"
+RISK_LOW = "low"
+RISK_HIGH = "high"
+
+# ---- 复核状态 ----
+REVIEW_PENDING = "pending"
+REVIEW_APPROVED = "approved"
+REVIEW_REJECTED = "rejected"
+REVIEW_STATUSES = (REVIEW_PENDING, REVIEW_APPROVED, REVIEW_REJECTED)
+
+#: 引用标记：[K1] 指向本次知识库检索结果
+_K_MARKER_RE = re.compile(r"\[K(\d+)\]")
+#: 业务编号
+_BUG_NO_RE = re.compile(r"\bBUG-\d+\b", re.IGNORECASE)
+_CASE_NO_RE = re.compile(r"\b(?:FT|IT|BT|ST|UIT|ET)-\d+\b", re.IGNORECASE)
+_REQ_NO_RE = re.compile(r"\bREQ-\d+\b", re.IGNORECASE)
+
+#: 模型自述缺项的说法
+_INSUFFICIENT_RE = re.compile(
+    r"(现有信息不足[^。；\n]*|信息不足[^。；\n]*|无法判断[^。；\n]*|无法确认[^。；\n]*"
+    r"|还需要[^。；\n]{0,40}|请(?:补充|提供)[^。；\n]{0,40}|缺少[^。；\n]{0,40})"
+)
+#: 批准性结论：AI 不得替人做上线决策
+_APPROVAL_RE = re.compile(
+    r"(可以上线|建议上线|批准上线|可以发布|建议发布|已通过验收|可以验收通过|可以合并|建议合并)"
+)
+#: 高风险关键词
+_HIGH_RISK_RE = re.compile(r"\bP[01]\b")
+#: Prompt 测试结果
+_PROMPT_TEST_RE = re.compile(r"(提示词|prompt|指令)\s*(测试|回归|评测)", re.IGNORECASE)
+
+_MAX_ITEMS = 20
+_MAX_EXCERPT = 200
+
+
+def _excerpt(text: str, limit: int = _MAX_EXCERPT) -> str:
+    clean = re.sub(r"\s+", " ", text).strip()
+    return clean[:limit]
+
+
+def _short_summary(output: str) -> str:
+    """取产出物的第一行有效内容作为一句话摘要。"""
+    for line in (output or "").splitlines():
+        clean = line.strip().lstrip("#").strip()
+        if clean:
+            return _excerpt(clean, 160)
+    return ""
+
+
+# ---------------- 证据 ----------------
+
+def _exists(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...]) -> bool:
+    return conn.execute(sql, params).fetchone() is not None
+
+
+def extract_evidence(
+    conn: sqlite3.Connection,
+    output: str,
+    refs: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """从产出物里抽出引用，并回库核对是否真实存在。"""
+    evidence: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(kind: str, ref: str, title: str, verified: bool, detail: str) -> None:
+        key = (kind, ref)
+        if key in seen or len(evidence) >= _MAX_ITEMS:
+            return
+        seen.add(key)
+        evidence.append({
+            "kind": kind,
+            "ref": ref,
+            "title": title,
+            "verified": verified,
+            "detail": detail,
+        })
+
+    text = output or ""
+
+    # 知识引用：必须能在本次检索结果里对上，对不上就是编造
+    ref_map = {
+        str(item.get("marker")): item
+        for item in (refs or [])
+        if item.get("marker")
+    }
+    for match in _K_MARKER_RE.finditer(text):
+        marker = f"K{match.group(1)}"
+        hit = ref_map.get(marker)
+        if hit:
+            add("knowledge", marker, str(hit.get("title") or ""), True, "命中本次知识库检索结果")
+        else:
+            add("knowledge", marker, "", False, "引用标记在本次检索结果中不存在")
+
+    # 缺陷编号：回库核对
+    for raw in dict.fromkeys(_BUG_NO_RE.findall(text)):
+        no = raw.upper()
+        row = conn.execute(
+            "SELECT title FROM biz_bug WHERE bug_no = ? AND is_deleted = 0", (no,)
+        ).fetchone()
+        if row:
+            add("bug", no, str(row["title"]), True, "缺陷编号真实存在")
+        else:
+            add("bug", no, "", False, "库里没有这个缺陷编号")
+
+    # 用例编号：回库核对
+    for raw in dict.fromkeys(_CASE_NO_RE.findall(text)):
+        no = raw.upper()
+        row = conn.execute(
+            "SELECT title FROM biz_test_case WHERE case_no = ? AND is_deleted = 0", (no,)
+        ).fetchone()
+        if row:
+            add("case", no, str(row["title"]), True, "用例编号真实存在")
+        else:
+            add("case", no, "", False, "库里没有这个用例编号")
+
+    # 需求编号：回库核对
+    for raw in dict.fromkeys(_REQ_NO_RE.findall(text)):
+        no = raw.upper()
+        row = conn.execute(
+            "SELECT title FROM biz_requirement WHERE req_no = ? AND is_deleted = 0", (no,)
+        ).fetchone()
+        if row:
+            add("requirement", no, str(row["title"]), True, "需求编号真实存在")
+        else:
+            add("requirement", no, "", False, "库里没有这个需求编号")
+
+    return evidence
+
+
+# ---------------- 缺项 ----------------
+
+def extract_missing(
+    output: str,
+    variables: dict[str, Any] | None = None,
+    optional_names: tuple[str, ...] = (),
+) -> list[dict[str, Any]]:
+    """模型自述的缺项 + 本次没填的可选变量。"""
+    missing: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for match in _INSUFFICIENT_RE.finditer(output or ""):
+        detail = _excerpt(match.group(0))
+        if not detail or detail in seen:
+            continue
+        seen.add(detail)
+        missing.append({"kind": "model", "label": "信息不足", "detail": detail})
+        if len(missing) >= _MAX_ITEMS:
+            break
+
+    provided = variables or {}
+    for name in optional_names:
+        if str(provided.get(name, "") or "").strip():
+            continue
+        label = f"未提供 {name}"
+        if label in seen:
+            continue
+        seen.add(label)
+        missing.append({"kind": "input", "label": label, "detail": "该可选信息本次没有提供，结论可能受限"})
+
+    return missing[:_MAX_ITEMS]
+
+
+# ---------------- 风险点 ----------------
+
+def detect_risks(
+    output: str,
+    evidence: list[dict[str, Any]],
+    missing: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """按行为安全规则逐条判定命中情况。"""
+    risks: list[dict[str, Any]] = []
+    text = output or ""
+
+    approval = _APPROVAL_RE.search(text)
+    if approval:
+        risks.append({
+            "rule": "approval",
+            "level": RISK_HIGH,
+            "title": "出现批准性结论",
+            "detail": f"产出物含「{approval.group(0)}」，AI 不得代替人工做上线决策",
+        })
+
+    if _HIGH_RISK_RE.search(text):
+        risks.append({
+            "rule": "high_risk",
+            "level": RISK_HIGH,
+            "title": "涉及 P0/P1",
+            "detail": "涉及 P0/P1 场景，必须人工复核",
+        })
+
+    if _PROMPT_TEST_RE.search(text):
+        risks.append({
+            "rule": "prompt_test",
+            "level": RISK_HIGH,
+            "title": "Prompt 测试结果",
+            "detail": "提示词测试结果必须人工复核",
+        })
+
+    fabricated = [item for item in evidence if not item.get("verified")]
+    if fabricated:
+        risks.append({
+            "rule": "fabrication",
+            "level": RISK_HIGH,
+            "title": "引用无法核实",
+            "detail": "引用了库里不存在的条目："
+                      + "、".join(str(item.get("ref")) for item in fabricated[:5]),
+        })
+
+    if missing:
+        risks.append({
+            "rule": "insufficient",
+            "level": RISK_LOW,
+            "title": "信息不足",
+            "detail": f"共 {len(missing)} 处信息不足或未提供",
+        })
+
+    return risks
+
+
+def risk_level_of(risks: list[dict[str, Any]]) -> str:
+    if any(item.get("level") == RISK_HIGH for item in risks):
+        return RISK_HIGH
+    if risks:
+        return RISK_LOW
+    return RISK_NONE
+
+
+# ---------------- 组装与落库 ----------------
+
+def build_record(
+    conn: sqlite3.Connection,
+    *,
+    capability: str,
+    output: str,
+    variables: dict[str, Any] | None = None,
+    refs: list[dict[str, Any]] | None = None,
+    review_required: bool = False,
+    model: str = "",
+    task_id: int | None = None,
+    session_id: int | None = None,
+    optional_names: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """组装一条结构化执行记录（尚未落库）。"""
+    evidence = extract_evidence(conn, output, refs)
+    missing = extract_missing(output, variables, optional_names)
+    risks = detect_risks(output, evidence, missing)
+    level = risk_level_of(risks)
+    # 高风险一定需要人工复核；模型输出已带复核标记时也保留
+    need_review = bool(review_required) or level == RISK_HIGH
+    return {
+        "taskId": task_id,
+        "sessionId": session_id,
+        "capability": capability,
+        "capabilityLabel": label_of(capability),
+        "model": model,
+        "summary": _short_summary(output),
+        "evidence": evidence,
+        "missing": missing,
+        "risks": risks,
+        "riskLevel": level,
+        "reviewRequired": need_review,
+    }
+
+
+def create_record(conn: sqlite3.Connection, record: dict[str, Any]) -> int:
+    """把结构化记录写进库，返回记录 id。"""
+    now = utcnow_iso()
+    payload: dict[str, Any] = {
+        "task_id": record.get("taskId"),
+        "session_id": record.get("sessionId"),
+        "capability": str(record.get("capability") or ""),
+        "capability_label": str(record.get("capabilityLabel") or ""),
+        "model": str(record.get("model") or ""),
+        "summary": str(record.get("summary") or ""),
+        "evidence_json": _dump(record.get("evidence") or []),
+        "missing_json": _dump(record.get("missing") or []),
+        "risk_json": _dump(record.get("risks") or []),
+        "risk_level": str(record.get("riskLevel") or RISK_NONE),
+        "review_required": 1 if record.get("reviewRequired") else 0,
+        "review_status": REVIEW_PENDING,
+        "created_at": now,
+        "updated_at": now,
+    }
+    payload = {key: value for key, value in payload.items() if value is not None}
+    cursor = conn.execute(
+        "INSERT INTO biz_ai_record (task_id, session_id, capability, capability_label, model,"
+        " summary, evidence_json, missing_json, risk_json, risk_level, review_required,"
+        " review_status, created_at, updated_at)"
+        " VALUES (:task_id, :session_id, :capability, :capability_label, :model,"
+        " :summary, :evidence_json, :missing_json, :risk_json, :risk_level, :review_required,"
+        " :review_status, :created_at, :updated_at)",
+        payload,
+    )
+    return int(cast(int, cursor.lastrowid))
+
+
+def _dump(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def apply_review(
+    conn: sqlite3.Connection,
+    record_id: int,
+    status: str,
+    note: str = "",
+) -> dict[str, Any]:
+    """写入人工复核结论。"""
+    if status not in REVIEW_STATUSES or status == REVIEW_PENDING:
+        raise AppError(ErrorCode.PARAM_ERROR, "复核结论只能是 approved 或 rejected")
+    row = conn.execute(
+        "SELECT id, capability, review_status FROM biz_ai_record WHERE id = ? AND is_deleted = 0",
+        (record_id,),
+    ).fetchone()
+    if row is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "执行记录不存在")
+    now = utcnow_iso()
+    conn.execute(
+        "UPDATE biz_ai_record SET review_status = ?, review_note = ?, reviewed_at = ?,"
+        " updated_at = ? WHERE id = ?",
+        (status, note, now, now, record_id),
+    )
+    return {
+        "id": record_id,
+        "reviewStatus": status,
+        "reviewNote": note,
+        "reviewedAt": now,
+    }

@@ -153,8 +153,10 @@ def chat_with_fallback(
         degrade = DegradeInfo(attempts=attempts)
         if index > 0:
             degrade.degraded = True
-            degrade.reason = attempts[-2]["reason"] if attempts else DEGRADE_UNREACHABLE
-            degrade.from_config = attempts[-2]["config"]
+            # 最后一次失败就是本次降级的原因；attempts 里只记失败的候选
+            last_failed = attempts[-1] if attempts else None
+            degrade.reason = str(last_failed["reason"]) if last_failed else DEGRADE_UNREACHABLE
+            degrade.from_config = str(last_failed["config"]) if last_failed else ""
             degrade.to_config = _label(config)
             degrade.message = (
                 f"首选模型不可用（{degrade.reason}），已按优先级自动降级到 {degrade.to_config}。"

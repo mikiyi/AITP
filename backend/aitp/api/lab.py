@@ -24,7 +24,7 @@ from ..errors import AppError, ErrorCode
 from ..prompts.registry import list_templates
 from ..repositories.ai_session_repo import AISessionRepository, AITaskRepository
 from ..repositories.base import dumps
-from ..services import audit_service, lab_service
+from ..services import ai_record_service, audit_service, lab_service
 from .helpers import audit, body, commit, db, page_args, page_payload
 from .sse import (
     FRAME_DELTA,
@@ -148,6 +148,50 @@ def _save_assistant_message(
     )
 
 
+def _write_record(
+    conn: sqlite3.Connection,
+    *,
+    capability: str,
+    output: str,
+    variables: dict[str, Any],
+    refs: list[dict[str, Any]],
+    review_required: bool,
+    model: str,
+    task_id: int,
+    session_id: int,
+    prompt_code: str,
+) -> int:
+    """把这次执行的结构化结论落库：证据、缺项、风险点。"""
+    record = ai_record_service.build_record(
+        conn,
+        capability=capability,
+        output=output,
+        variables=variables,
+        refs=refs,
+        review_required=review_required,
+        model=model,
+        task_id=task_id,
+        session_id=session_id,
+        optional_names=lab_service.optional_variables_of(prompt_code),
+    )
+    return ai_record_service.create_record(conn, record)
+
+
+def _write_record_standalone(db_path: Path, **kwargs: Any) -> int:
+    """流式路径上用独立连接落库，避免依赖可能已关闭的请求连接。"""
+    from ..db.connection import get_standalone_conn
+
+    conn = get_standalone_conn(db_path)
+    try:
+        record_id = _write_record(conn, **kwargs)
+        conn.commit()
+        return record_id
+    except Exception:  # pragma: no cover - 落库失败不应影响已返回的响应
+        return 0
+    finally:
+        conn.close()
+
+
 # ---------------- 目录 ----------------
 
 @bp.get("/capabilities")
@@ -211,7 +255,20 @@ def run_capability(capability: str) -> Response:
         conn, session_id, result.output,
         prompt_code=result.prompt_code, model=result.model, usage=result.usage,
     )
+    record_id = _write_record(
+        conn,
+        capability=capability,
+        output=result.output,
+        variables=variables,
+        refs=result.refs,
+        review_required=result.review_required,
+        model=result.model,
+        task_id=task_id,
+        session_id=session_id,
+        prompt_code=result.prompt_code,
+    )
     commit(conn)
+    payload["recordId"] = record_id
     audit(conn, audit_service.AUDIT_ACTION_GENERATE, audit_service.RESOURCE_AI_TASK, task_id,
           spec.label, {"capability": capability, "moduleId": module_id, "latencyMs": result.latency_ms})
     return ok(payload)
@@ -334,6 +391,19 @@ def stream_capability(capability: str) -> Response:
                 error_message=error_message,
             )
             _record_message(db_path, session_id, output, prompt_code, model, usage, status)
+            if status == "success" and output:
+                _write_record_standalone(
+                    db_path,
+                    capability=capability,
+                    output=output,
+                    variables=variables,
+                    refs=plan.refs,
+                    review_required=needs_human_review(output),
+                    model=model,
+                    task_id=task_id,
+                    session_id=session_id,
+                    prompt_code=prompt_code,
+                )
 
     response = Response(stream_with_context(generate()), mimetype=SSE_MIME)
     response.headers["Cache-Control"] = "no-cache"
