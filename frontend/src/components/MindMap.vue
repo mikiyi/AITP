@@ -117,7 +117,7 @@ onBeforeUnmount(() => {
   width: 100%;
   border: 1px solid var(--aitp-border);
   border-radius: var(--aitp-radius);
-  background: #fff;
+  background: var(--aitp-panel);
   overflow: hidden;
 }
 

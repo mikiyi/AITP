@@ -813,7 +813,7 @@ onMounted(async () => {
   align-items: center;
   gap: 8px;
   padding: 8px 14px;
-  background: #fff;
+  background: var(--aitp-panel);
   border: 1px solid var(--aitp-border);
   border-radius: var(--aitp-radius);
   box-shadow: var(--aitp-shadow);
@@ -878,7 +878,7 @@ onMounted(async () => {
 }
 
 .todo-rail__item.is-active {
-  background: rgba(47, 111, 237, 0.1);
+  background: var(--aitp-primary-soft);
   color: var(--aitp-primary);
   font-weight: 600;
 }
@@ -943,11 +943,11 @@ onMounted(async () => {
 }
 
 .todo-row:hover {
-  background: #fafbfd;
+  background: var(--aitp-hover);
 }
 
 .todo-row.is-active {
-  background: rgba(47, 111, 237, 0.06);
+  background: var(--aitp-primary-soft);
 }
 
 .todo-row__bar {
@@ -982,7 +982,7 @@ onMounted(async () => {
 }
 
 .todo-children {
-  background: #fbfcfe;
+  background: var(--aitp-hover);
   border-bottom: 1px solid var(--el-border-color-lighter);
 }
 

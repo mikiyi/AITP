@@ -1164,7 +1164,7 @@ watch(
   padding: 1px 6px;
   border: 1px solid var(--aitp-border);
   border-radius: 4px;
-  background: #f6f8fa;
+  background: var(--aitp-subtle);
 }
 
 .cap-field-label {
@@ -1294,7 +1294,7 @@ watch(
 }
 
 .cap-output__json {
-  background: #f6f8fa;
+  background: var(--aitp-subtle);
   border: 1px solid var(--aitp-border);
   border-radius: 6px;
   padding: 12px;

@@ -158,7 +158,7 @@ onMounted(load)
 }
 
 .prompt-card {
-  background: #fff;
+  background: var(--aitp-panel);
   border: 1px solid var(--aitp-border);
   border-radius: var(--aitp-radius);
   box-shadow: var(--aitp-shadow);
@@ -207,7 +207,7 @@ onMounted(load)
 }
 
 .prompt-body {
-  background: #f6f8fa;
+  background: var(--aitp-subtle);
   border: 1px solid var(--aitp-border);
   border-radius: 6px;
   padding: 12px;

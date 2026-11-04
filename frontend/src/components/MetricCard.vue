@@ -53,7 +53,7 @@ const display = computed(() => {
   align-items: center;
   gap: 12px;
   padding: 14px 16px;
-  background: #fff;
+  background: var(--aitp-panel);
   border: 1px solid var(--aitp-border);
   border-radius: var(--aitp-radius);
   box-shadow: var(--aitp-shadow);
@@ -66,8 +66,8 @@ const display = computed(() => {
   width: 40px;
   height: 40px;
   border-radius: 10px;
-  background: rgba(47, 111, 237, 0.1);
-  color: #2f6fed;
+  background: var(--aitp-primary-soft);
+  color: var(--el-color-primary);
   flex-shrink: 0;
 }
 

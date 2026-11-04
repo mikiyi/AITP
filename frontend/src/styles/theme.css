@@ -1,0 +1,205 @@
+/*
+ * 六套皮肤。
+ *
+ * 结构：main.css 的 :root 是默认（白色）皮肤，这里只放另外五套的覆盖规则；
+ * 皮肤编号写在 <html data-theme="..."> 上，由 stores/theme.ts 维护并记到 localStorage。
+ *
+ * 每套皮肤都要给足对比度：底色、卡片色、正文色、描边色四者互不接近，
+ * 深色皮肤额外把 Element Plus 的文字、填充、遮罩一并换成深色版，
+ * 免得弹框、输入框、下拉面板在黑底上还是白底。
+ */
+
+html[data-theme='blue'] {
+  --aitp-bg: #eef3fd;
+  --aitp-panel: #ffffff;
+  --aitp-border: #d5dff5;
+  --aitp-text: #1f2937;
+  --aitp-text-weak: #6b7a99;
+  --aitp-primary: #1a56db;
+  --aitp-subtle: #f2f6fe;
+  --aitp-primary-soft: #e4ecfd;
+  --aitp-hover: #eaf1fd;
+  --el-color-primary-light-3: #6383e3;
+  --el-color-primary-light-5: #8ba6ec;
+  --el-color-primary-light-7: #b8c9f4;
+  --el-color-primary-light-8: #cbd9f8;
+  --el-color-primary-light-9: #e7eefc;
+  --el-color-primary-dark-2: #1547b5;
+}
+
+html[data-theme='red'] {
+  --aitp-bg: #fdf1f1;
+  --aitp-panel: #ffffff;
+  --aitp-border: #f3d5d6;
+  --aitp-text: #2b2020;
+  --aitp-text-weak: #96666a;
+  --aitp-primary: #d9363e;
+  --aitp-subtle: #fdf4f4;
+  --aitp-primary-soft: #fdeaea;
+  --aitp-hover: #fdecec;
+  --el-color-primary-light-3: #e66e73;
+  --el-color-primary-light-5: #ee989c;
+  --el-color-primary-light-7: #f6c2c4;
+  --el-color-primary-light-8: #f9d3d5;
+  --el-color-primary-light-9: #fcebec;
+  --el-color-primary-dark-2: #b12d33;
+}
+
+html[data-theme='pink'] {
+  --aitp-bg: #fdf0f6;
+  --aitp-panel: #ffffff;
+  --aitp-border: #f4d4e5;
+  --aitp-text: #2c2129;
+  --aitp-text-weak: #96687c;
+  --aitp-primary: #d63384;
+  --aitp-subtle: #fdf5f9;
+  --aitp-primary-soft: #fce9f2;
+  --aitp-hover: #fcebf3;
+  --el-color-primary-light-3: #e473a6;
+  --el-color-primary-light-5: #ec9cc2;
+  --el-color-primary-light-7: #f4c5da;
+  --el-color-primary-light-8: #f8d6e5;
+  --el-color-primary-light-9: #fcecf4;
+  --el-color-primary-dark-2: #ae296c;
+}
+
+html[data-theme='orange'] {
+  --aitp-bg: #fff6ec;
+  --aitp-panel: #ffffff;
+  --aitp-border: #f5ddc2;
+  --aitp-text: #2f2620;
+  --aitp-text-weak: #96795c;
+  --aitp-primary: #e0761b;
+  --aitp-subtle: #fff8f0;
+  --aitp-primary-soft: #fdeedd;
+  --aitp-hover: #fdf0e0;
+  --el-color-primary-light-3: #e99461;
+  --el-color-primary-light-5: #efb48e;
+  --el-color-primary-light-7: #f6d3ba;
+  --el-color-primary-light-8: #f8e2ce;
+  --el-color-primary-light-9: #fbeddf;
+  --el-color-primary-dark-2: #b45e14;
+}
+
+/* 黑色皮肤：唯一的深色方案，Element Plus 的中性色全部换成深色版 */
+html[data-theme='black'] {
+  --aitp-bg: #14161a;
+  --aitp-panel: #1d2026;
+  --aitp-border: #32363f;
+  --aitp-text: #e8eaed;
+  --aitp-text-weak: #9aa0a8;
+  --aitp-primary: #4d8bff;
+  --aitp-subtle: #23262d;
+  --aitp-primary-soft: rgba(77, 139, 255, 0.16);
+  --aitp-hover: #242830;
+  --aitp-scrollbar: #454b57;
+  --aitp-scrollbar-hover: #565d6b;
+  --aitp-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px rgba(0, 0, 0, 0.45);
+
+  --el-color-primary: #4d8bff;
+  --el-color-primary-light-3: #3f79e6;
+  --el-color-primary-light-5: #6b9bec;
+  --el-color-primary-light-7: #9bbcf4;
+  --el-color-primary-light-8: #b3cdf7;
+  --el-color-primary-light-9: #ccdffa;
+  --el-color-primary-dark-2: #3a75e6;
+
+  --el-bg-color: #1d2026;
+  --el-bg-color-page: #14161a;
+  --el-bg-color-overlay: #23262d;
+  --el-text-color-primary: #e8eaed;
+  --el-text-color-regular: #c9cdd4;
+  --el-text-color-secondary: #9aa0a8;
+  --el-text-color-placeholder: #6b727c;
+  --el-text-color-disabled: #5b616b;
+  --el-border-color: #32363f;
+  --el-border-color-light: #2c3038;
+  --el-border-color-lighter: #262a31;
+  --el-border-color-extra-light: #212429;
+  --el-border-color-dark: #3d434e;
+  --el-border-color-darker: #454c58;
+  --el-fill-color: #23262d;
+  --el-fill-color-light: #2a2e35;
+  --el-fill-color-lighter: #212429;
+  --el-fill-color-blank: #1d2026;
+  --el-fill-color-dark: #2f333b;
+  --el-fill-color-darker: #363a43;
+  --el-disabled-bg-color: #23262d;
+  --el-disabled-text-color: #6b727c;
+  --el-disabled-border-color: #32363f;
+  --el-mask-color: rgba(0, 0, 0, 0.72);
+  --el-box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+  --el-box-shadow-light: 0 0 12px rgba(0, 0, 0, 0.45);
+  --el-box-shadow-lighter: 0 0 6px rgba(0, 0, 0, 0.35);
+}
+
+/* 深色皮肤下，Element Plus 的表格与输入框默认还是白底，这里统一压暗 */
+html[data-theme='black'] .el-table,
+html[data-theme='black'] .el-table tr,
+html[data-theme='black'] .el-table th.el-table__cell,
+html[data-theme='black'] .el-table td.el-table__cell,
+html[data-theme='black'] .el-table--enable-row-hover .el-table__body tr:hover > td.el-table__cell {
+  background-color: var(--aitp-panel);
+  border-color: var(--aitp-border);
+}
+
+html[data-theme='black'] .el-table th.el-table__cell {
+  background-color: var(--aitp-subtle);
+}
+
+html[data-theme='black'] .el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
+  background-color: var(--aitp-subtle);
+}
+
+html[data-theme='black'] .el-table__empty-block,
+html[data-theme='black'] .el-table__empty-text {
+  background-color: var(--aitp-panel);
+  color: var(--aitp-text-weak);
+}
+
+html[data-theme='black'] .el-table .el-table__cell {
+  color: var(--aitp-text);
+}
+
+/* 分隔线与滚动条在深色下要跟着变浅，否则基本看不见 */
+html[data-theme='black'] ::-webkit-scrollbar-thumb {
+  background: #454b57;
+}
+
+html[data-theme='black'] ::-webkit-scrollbar-thumb:hover {
+  background: #565d6b;
+}
+
+/* 深色皮肤下的次级代码块 */
+html[data-theme='black'] .markdown-body pre,
+html[data-theme='black'] .markdown-body code {
+  background: var(--aitp-subtle);
+  border-color: var(--aitp-border);
+}
+
+/*
+ * 皮肤下拉菜单。
+ * el-dropdown 的面板被 teleport 到 body，scoped 样式够不着，这里放全局规则。
+ */
+.theme-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 132px;
+}
+
+.theme-menu__swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: 1px solid;
+  flex-shrink: 0;
+}
+
+.theme-menu__label {
+  flex: 1;
+}
+
+.theme-menu__check {
+  color: var(--el-color-primary);
+}

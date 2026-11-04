@@ -82,7 +82,7 @@ onMounted(async () => {
 }
 
 .session-message__pre {
-  background: #f6f8fa;
+  background: var(--aitp-subtle);
   border: 1px solid var(--aitp-border);
   border-radius: 6px;
   padding: 10px;

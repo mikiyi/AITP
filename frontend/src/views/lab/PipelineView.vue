@@ -492,7 +492,7 @@ onMounted(async () => {
   border-radius: 8px;
   padding: 10px 12px;
   margin-bottom: 12px;
-  background: #fbfcfe;
+  background: var(--aitp-hover);
 }
 
 .preflight-box__head {
@@ -534,7 +534,7 @@ onMounted(async () => {
   border: 1px solid var(--aitp-border);
   border-radius: 8px;
   margin-bottom: 10px;
-  background: #fff;
+  background: var(--aitp-panel);
 }
 
 .step-card__head {
@@ -565,7 +565,7 @@ onMounted(async () => {
 }
 
 .output-pre {
-  background: #f6f8fa;
+  background: var(--aitp-subtle);
   border: 1px solid var(--aitp-border);
   border-radius: 6px;
   padding: 12px;

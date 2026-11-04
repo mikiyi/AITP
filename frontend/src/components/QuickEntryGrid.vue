@@ -44,15 +44,15 @@ function go(path: string): void {
   margin: 0;
   border: 1px solid var(--aitp-border);
   border-radius: var(--aitp-radius);
-  background: #fff;
+  background: var(--aitp-panel);
   color: var(--aitp-text);
   transition: all 0.15s;
 }
 
 .quick-entry-item:hover {
-  border-color: #2f6fed;
-  color: #2f6fed;
-  background: #f7faff;
+  border-color: var(--el-color-primary);
+  color: var(--el-color-primary);
+  background: var(--aitp-hover);
 }
 
 .quick-entry-label {

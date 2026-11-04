@@ -164,10 +164,12 @@ import SmartEntry from '@/components/SmartEntry.vue'
 import { moduleApi, workbenchApi } from '@/api'
 import type { ModuleNode, QuickEntry, WorkbenchOverview } from '@/api/types'
 import { useEchart } from '@/composables/useEchart'
+import { useChartTheme } from '@/composables/useChartTheme'
 import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
 const appStore = useAppStore()
+const { panel, text, weak } = useChartTheme()
 
 const loading = ref(false)
 const errorMessage = ref('')
@@ -188,8 +190,9 @@ const caseOption = computed<EChartsOption>(() => {
   const source = overview.value?.caseStatus ?? {}
   const data = Object.entries(source).map(([name, value]) => ({ name, value }))
   return {
+    textStyle: { color: text.value },
     tooltip: { trigger: 'item' },
-    legend: { bottom: 0, type: 'scroll' },
+    legend: { bottom: 0, type: 'scroll', textStyle: { color: weak.value } },
     series: [
       {
         name: '用例状态',
@@ -197,8 +200,8 @@ const caseOption = computed<EChartsOption>(() => {
         radius: ['45%', '68%'],
         center: ['50%', '45%'],
         avoidLabelOverlap: true,
-        itemStyle: { borderRadius: 4, borderColor: '#fff', borderWidth: 2 },
-        label: { formatter: '{b}: {c}' },
+        itemStyle: { borderRadius: 4, borderColor: panel.value, borderWidth: 2 },
+        label: { formatter: '{b}: {c}', color: text.value },
         data,
       },
     ],
@@ -209,16 +212,17 @@ const bugOption = computed<EChartsOption>(() => {
   const source = overview.value?.bugStatus ?? {}
   const data = Object.entries(source).map(([name, value]) => ({ name, value }))
   return {
+    textStyle: { color: text.value },
     tooltip: { trigger: 'item' },
-    legend: { bottom: 0, type: 'scroll' },
+    legend: { bottom: 0, type: 'scroll', textStyle: { color: weak.value } },
     series: [
       {
         name: '缺陷状态',
         type: 'pie',
         radius: ['45%', '68%'],
         center: ['50%', '45%'],
-        itemStyle: { borderRadius: 4, borderColor: '#fff', borderWidth: 2 },
-        label: { formatter: '{b}: {c}' },
+        itemStyle: { borderRadius: 4, borderColor: panel.value, borderWidth: 2 },
+        label: { formatter: '{b}: {c}', color: text.value },
         data,
       },
     ],

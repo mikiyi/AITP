@@ -281,7 +281,7 @@ defineExpose({ route, text })
   padding: 8px 12px;
   border: 1px solid var(--aitp-border);
   border-radius: 8px;
-  background: #fbfcfe;
+  background: var(--aitp-hover);
   cursor: pointer;
   text-align: left;
   font: inherit;
@@ -313,7 +313,7 @@ defineExpose({ route, text })
   padding: 10px 12px;
   border: 1px solid var(--aitp-border);
   border-radius: 8px;
-  background: #fbfcfe;
+  background: var(--aitp-hover);
 }
 
 .preflight__bar {

@@ -5,8 +5,33 @@
   --aitp-text: #303133;
   --aitp-text-weak: #909399;
   --aitp-primary: #2f6fed;
+  /* 代码块、次级信息块的底色 */
+  --aitp-subtle: #f6f8fa;
+  /* 卡片悬停底色 */
+  --aitp-hover: #f7faff;
+  /* 主色的浅色底，图标底板用 */
+  --aitp-primary-soft: #eef3fe;
   --aitp-radius: 10px;
   --aitp-shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 16px rgba(16, 24, 40, 0.06);
+  /* 滚动条滑块，深色皮肤要换成浅色才看得见 */
+  --aitp-scrollbar: #c6ccd6;
+  --aitp-scrollbar-hover: #a4abb6;
+
+  /*
+   * Element Plus 的主题色跟随 --aitp-primary，
+   * 这样换皮肤时按钮、标签、勾选框等控件整体跟着变，不用逐个组件改样式。
+   */
+  --el-color-primary: var(--aitp-primary);
+  --el-color-primary-light-3: #7aa4f4;
+  --el-color-primary-light-5: #a7c3f7;
+  --el-color-primary-light-7: #d5e2fb;
+  --el-color-primary-light-8: #e2ecfc;
+  --el-color-primary-light-9: #eff5fe;
+  --el-color-primary-dark-2: #2560d6;
+  --el-bg-color: var(--aitp-panel);
+  --el-bg-color-page: var(--aitp-bg);
+  --el-text-color-primary: var(--aitp-text);
+  --el-border-color: var(--aitp-border);
 }
 
 * {
@@ -86,7 +111,7 @@ body {
 }
 
 .markdown-body pre {
-  background: #f6f8fa;
+  background: var(--aitp-subtle);
   border: 1px solid var(--aitp-border);
   border-radius: 6px;
   padding: 10px 12px;
@@ -94,7 +119,7 @@ body {
 }
 
 .markdown-body code {
-  background: #f6f8fa;
+  background: var(--aitp-subtle);
   border-radius: 4px;
   padding: 1px 5px;
   font-family: 'Cascadia Mono', Consolas, monospace;

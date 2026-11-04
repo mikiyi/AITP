@@ -147,7 +147,7 @@ onUnmounted(() => {
   max-height: 460px;
   overflow-y: auto;
   padding: 8px;
-  background: #ffffff;
+  background: var(--aitp-panel);
   border: 1px solid var(--aitp-border);
   border-radius: 4px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);

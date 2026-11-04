@@ -30,8 +30,11 @@ import { computed, ref } from 'vue'
 import type { EChartsOption } from 'echarts'
 import type { ReportStats } from '@/api/types'
 import { useEchart } from '@/composables/useEchart'
+import { useChartTheme } from '@/composables/useChartTheme'
 
 const props = defineProps<{ stats: ReportStats | null }>()
+
+const { panel, text, weak, primary, border } = useChartTheme()
 
 const CASE_STATUS_LABEL: Record<string, string> = {
   not_executed: '未执行',
@@ -76,49 +79,62 @@ function pairs(
 }
 
 const caseStatusOption = computed<EChartsOption>(() => ({
+  textStyle: { color: text.value },
   tooltip: { trigger: 'item' },
-  legend: { bottom: 0, type: 'scroll' },
+  legend: { bottom: 0, type: 'scroll', textStyle: { color: weak.value } },
   series: [
     {
       name: '用例状态',
       type: 'pie',
       radius: ['42%', '66%'],
       center: ['50%', '44%'],
-      itemStyle: { borderRadius: 4, borderColor: '#fff', borderWidth: 2 },
-      label: { formatter: '{b}: {c}' },
+      itemStyle: { borderRadius: 4, borderColor: panel.value, borderWidth: 2 },
+      label: { formatter: '{b}: {c}', color: text.value },
       data: pairs(props.stats?.caseStatus, CASE_STATUS_LABEL),
     },
   ],
 }))
 
 const casePriorityOption = computed<EChartsOption>(() => ({
+  textStyle: { color: text.value },
   tooltip: { trigger: 'axis' },
   grid: { left: 40, right: 16, top: 24, bottom: 28 },
-  xAxis: { type: 'category', data: Object.keys(props.stats?.casePriority ?? {}) },
-  yAxis: { type: 'value', minInterval: 1 },
+  xAxis: {
+    type: 'category',
+    data: Object.keys(props.stats?.casePriority ?? {}),
+    axisLabel: { color: weak.value },
+    axisLine: { lineStyle: { color: border.value } },
+  },
+  yAxis: {
+    type: 'value',
+    minInterval: 1,
+    axisLabel: { color: weak.value },
+    splitLine: { lineStyle: { color: border.value } },
+  },
   series: [
     {
       name: '用例数',
       type: 'bar',
       barMaxWidth: 36,
-      itemStyle: { color: '#409eff', borderRadius: [4, 4, 0, 0] },
-      label: { show: true, position: 'top' },
+      itemStyle: { color: primary.value, borderRadius: [4, 4, 0, 0] },
+      label: { show: true, position: 'top', color: text.value },
       data: Object.values(props.stats?.casePriority ?? {}).map((value) => Number(value ?? 0)),
     },
   ],
 }))
 
 const caseTypeOption = computed<EChartsOption>(() => ({
+  textStyle: { color: text.value },
   tooltip: { trigger: 'item' },
-  legend: { bottom: 0, type: 'scroll' },
+  legend: { bottom: 0, type: 'scroll', textStyle: { color: weak.value } },
   series: [
     {
       name: '用例类型',
       type: 'pie',
       radius: '62%',
       center: ['50%', '44%'],
-      itemStyle: { borderRadius: 4, borderColor: '#fff', borderWidth: 2 },
-      label: { formatter: '{b}: {c}' },
+      itemStyle: { borderRadius: 4, borderColor: panel.value, borderWidth: 2 },
+      label: { formatter: '{b}: {c}', color: text.value },
       data: pairs(props.stats?.caseType, CASE_TYPE_LABEL),
     },
   ],
@@ -127,20 +143,28 @@ const caseTypeOption = computed<EChartsOption>(() => ({
 const bugStatusOption = computed<EChartsOption>(() => {
   const entries = Object.entries(props.stats?.bugStatus ?? {})
   return {
+    textStyle: { color: text.value },
     tooltip: { trigger: 'axis' },
     grid: { left: 40, right: 16, top: 24, bottom: 28 },
     xAxis: {
       type: 'category',
       data: entries.map(([key]) => BUG_STATUS_LABEL[key] ?? key),
+      axisLabel: { color: weak.value },
+      axisLine: { lineStyle: { color: border.value } },
     },
-    yAxis: { type: 'value', minInterval: 1 },
+    yAxis: {
+      type: 'value',
+      minInterval: 1,
+      axisLabel: { color: weak.value },
+      splitLine: { lineStyle: { color: border.value } },
+    },
     series: [
       {
         name: '缺陷数',
         type: 'bar',
         barMaxWidth: 36,
         itemStyle: { color: '#e6a23c', borderRadius: [4, 4, 0, 0] },
-        label: { show: true, position: 'top' },
+        label: { show: true, position: 'top', color: text.value },
         data: entries.map(([, value]) => Number(value ?? 0)),
       },
     ],
@@ -148,16 +172,17 @@ const bugStatusOption = computed<EChartsOption>(() => {
 })
 
 const bugSeverityOption = computed<EChartsOption>(() => ({
+  textStyle: { color: text.value },
   tooltip: { trigger: 'item' },
-  legend: { bottom: 0, type: 'scroll' },
+  legend: { bottom: 0, type: 'scroll', textStyle: { color: weak.value } },
   series: [
     {
       name: '缺陷级别',
       type: 'pie',
       radius: ['42%', '66%'],
       center: ['50%', '44%'],
-      itemStyle: { borderRadius: 4, borderColor: '#fff', borderWidth: 2 },
-      label: { formatter: '{b}: {c}' },
+      itemStyle: { borderRadius: 4, borderColor: panel.value, borderWidth: 2 },
+      label: { formatter: '{b}: {c}', color: text.value },
       data: pairs(props.stats?.bugSeverity),
     },
   ],

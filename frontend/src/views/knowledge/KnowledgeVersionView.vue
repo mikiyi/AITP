@@ -150,7 +150,7 @@ onMounted(() => {
 }
 
 .diff-view {
-  background: #f7f9fc;
+  background: var(--aitp-subtle);
   border: 1px solid var(--aitp-border);
   border-radius: 6px;
   padding: 10px 12px;

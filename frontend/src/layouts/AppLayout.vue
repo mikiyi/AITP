@@ -2,7 +2,7 @@
   <el-container class="aitp-layout" :style="viewportStyle">
     <el-aside :width="appStore.sidebarCollapsed ? '64px' : '216px'" class="aitp-aside">
       <div class="aitp-brand">
-        <el-icon :size="20" color="#2f6fed"><Promotion /></el-icon>
+        <el-icon :size="20" color="var(--el-color-primary)"><Promotion /></el-icon>
         <span v-show="!appStore.sidebarCollapsed" class="aitp-brand-text">
           <BrandName />
         </span>
@@ -65,6 +65,39 @@
         </div>
         <div class="aitp-header-right">
           <GlobalSearch />
+          <el-dropdown trigger="click" @command="onThemeChange">
+            <button type="button" class="theme-switch" :title="`皮肤：${themeStore.current.label}`">
+              <span
+                class="theme-switch__swatch"
+                :style="{
+                  background: themeStore.current.swatch.bg,
+                  borderColor: themeStore.current.swatch.border,
+                }"
+              />
+              <span class="theme-switch__text">{{ themeStore.current.label }}</span>
+              <el-icon><ArrowDown /></el-icon>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu class="theme-menu">
+                <el-dropdown-item
+                  v-for="item in themeStore.themes"
+                  :key="item.key"
+                  :command="item.key"
+                  class="theme-menu__item"
+                >
+                  <span
+                    class="theme-menu__swatch"
+                    :style="{
+                      background: item.swatch.bg,
+                      borderColor: item.swatch.border,
+                    }"
+                  />
+                  <span class="theme-menu__label">{{ item.label }}</span>
+                  <el-icon v-if="item.key === themeStore.theme" class="theme-menu__check"><Check /></el-icon>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
           <el-select
             v-if="appStore.projects.length"
             :model-value="appStore.currentProjectId"
@@ -115,17 +148,19 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, RouterLink } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Expand, Fold } from '@element-plus/icons-vue'
+import { ArrowDown, Check, Expand, Fold } from '@element-plus/icons-vue'
 import { get } from '@/api/request'
 import { settingsApi } from '@/api'
 import type { AiStatus } from '@/api/types'
 import GlobalSearch from '@/components/GlobalSearch.vue'
 import BrandName from '@/components/BrandName.vue'
 import { useAppStore } from '@/stores/app'
+import { useThemeStore, type ThemeKey } from '@/stores/theme'
 import { MENU_NODES, isGroupActive, matchMenu } from '@/router/menu'
 
 const route = useRoute()
 const appStore = useAppStore()
+const themeStore = useThemeStore()
 const online = ref(true)
 const aiStatus = ref<AiStatus | null>(null)
 let timer: number | undefined
@@ -256,6 +291,11 @@ const routeKey = computed(() => route.path)
 
 function onProjectChange(id: number): void {
   appStore.selectProject(id)
+}
+
+/** 切换皮肤：写入 <html data-theme>，并持久化到本地存储。 */
+function onThemeChange(key: ThemeKey): void {
+  themeStore.apply(key)
 }
 
 async function ping(): Promise<void> {
@@ -431,7 +471,7 @@ onUnmounted(() => {
 }
 
 .aitp-aside {
-  background: #ffffff;
+  background: var(--aitp-panel);
   border-right: 1px solid var(--aitp-border);
   transition: width 0.2s;
   /* 侧栏本身不滚动：品牌栏固定，菜单区自己滚动，导航全部展开时也能滚到底 */
@@ -464,7 +504,7 @@ onUnmounted(() => {
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: #c6ccd6 transparent;
+  scrollbar-color: var(--aitp-scrollbar) transparent;
 
   /*
    * 层级对齐（Element Plus 按 base + 层级 × levelPadding 算缩进）：
@@ -486,27 +526,27 @@ onUnmounted(() => {
 }
 
 .aitp-menu::-webkit-scrollbar-thumb {
-  background: #c6ccd6;
+  background: var(--aitp-scrollbar);
   border-radius: 4px;
 }
 
 .aitp-menu::-webkit-scrollbar-thumb:hover {
-  background: #a4abb6;
+  background: var(--aitp-scrollbar-hover);
 }
 
 /* 选中的入口：颜色比默认的浅蓝加深一档，并加粗，一眼能看出当前在哪 */
 .aitp-menu :deep(.el-menu-item.is-active) {
-  color: #1d4ed8;
+  color: var(--el-color-primary);
   font-weight: 700;
 }
 
 .aitp-menu :deep(.el-menu-item.is-active .el-icon) {
-  color: #1d4ed8;
+  color: var(--el-color-primary);
 }
 
 /* 选中项所在的分组标题跟着高亮，层级关系看得清楚 */
 .aitp-menu :deep(.el-sub-menu__title .is-active-group) {
-  color: #1d4ed8;
+  color: var(--el-color-primary);
   font-weight: 700;
 }
 
@@ -516,7 +556,7 @@ onUnmounted(() => {
   justify-content: space-between;
   height: 56px;
   padding: 0 16px;
-  background: #ffffff;
+  background: var(--aitp-panel);
   border-bottom: 1px solid var(--aitp-border);
 }
 
@@ -581,6 +621,38 @@ onUnmounted(() => {
 
 .aitp-project-select {
   width: 180px;
+}
+
+/* 皮肤切换按钮：色块 + 名称，和搜索框、项目下拉保持同一行高 */
+.theme-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 13px;
+  color: var(--aitp-text);
+  background: var(--aitp-panel);
+  border: 1px solid var(--aitp-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.theme-switch:hover {
+  border-color: var(--el-color-primary);
+  color: var(--el-color-primary);
+}
+
+.theme-switch__swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid;
+  flex-shrink: 0;
+}
+
+.theme-switch__text {
+  white-space: nowrap;
 }
 
 .ai-chip {
