@@ -7,7 +7,7 @@
       @click="go(item)"
     >
       <span class="quick-entry-label">{{ item.label }}</span>
-      <span class="quick-entry-group">（{{ item.group }}）</span>
+      <span class="quick-entry-group">({{ item.group }})</span>
     </el-button>
   </div>
 </template>
@@ -42,7 +42,7 @@ function go(item: QuickEntry): void {
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
-  height: 62px;
+  min-height: 62px;
   padding: 10px 14px;
   margin: 0;
   border: 1px solid var(--aitp-border);
@@ -50,6 +50,15 @@ function go(item: QuickEntry): void {
   background: var(--aitp-panel);
   color: var(--aitp-text);
   transition: all 0.15s;
+}
+
+/* el-button 会把插槽包进一层 span，真正排版的是这一层；窄卡片里放不下就让小字换到第二行 */
+.quick-entry-item > :deep(span) {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  align-items: baseline;
+  gap: 2px 4px;
+  max-width: 100%;
 }
 
 .quick-entry-item:hover {
@@ -61,10 +70,12 @@ function go(item: QuickEntry): void {
 .quick-entry-label {
   font-size: 14px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .quick-entry-group {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--aitp-text-weak);
+  white-space: nowrap;
 }
 </style>
