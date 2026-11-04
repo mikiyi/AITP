@@ -140,7 +140,7 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
     ),
     CAP_BUG_ANALYSIS: CapabilitySpec(
         CAP_BUG_ANALYSIS, "Bug 分析", "定位缺陷根因并给出修复建议",
-        ("bug", "缺陷", "报错", "异常", "复现", "根因", "defect",
+        ("bug", "缺陷", "报错", "异常", "复现", "根因", "defect", "缺陷分析",
          "失败", "不对", "错误", "翻倍", "重复", "崩溃", "无法"),
         prompt_code="bug-analysis",
         variables=(
@@ -150,7 +150,7 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
     ),
     CAP_LOG_ANALYSIS: CapabilitySpec(
         CAP_LOG_ANALYSIS, "日志排查", "从日志中定位异常原因",
-        ("日志", "log", "堆栈", "stacktrace", "排查", "traceback", "exception", "报错信息"),
+        ("日志", "log", "堆栈", "stacktrace", "排查", "traceback", "exception", "报错信息", "日志分析"),
         prompt_code="log-analysis",
         variables=("logContent", "errorType", "context"),
     ),
@@ -162,7 +162,7 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
     ),
     CAP_REGRESSION_GENERATION: CapabilitySpec(
         CAP_REGRESSION_GENERATION, "回归清单", "按变更范围生成回归测试清单",
-        ("回归", "regression", "变更影响", "回归范围", "影响范围", "回归测试"),
+        ("回归", "regression", "变更影响", "回归范围", "影响范围", "回归测试", "回归清单"),
         prompt_code="regression-generation",
         variables=("changeScope", "affectedModules", "projectName"),
         output_format=OUTPUT_JSON,
@@ -170,7 +170,7 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
     ),
     CAP_REPORT_GENERATION: CapabilitySpec(
         CAP_REPORT_GENERATION, "报告生成", "生成测试报告",
-        ("报告", "report", "测试总结", "质量报告", "周报", "月报"),
+        ("报告", "report", "测试总结", "测试报告", "生成报告", "质量报告", "周报", "月报"),
         prompt_code="report-generation",
         variables=(
             "projectName", "reportType", "periodStart", "periodEnd",
@@ -179,7 +179,7 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
     ),
     CAP_PROJECT_PROGRESS_BOARD: CapabilitySpec(
         CAP_PROJECT_PROGRESS_BOARD, "进度看板", "生成项目进度看板",
-        ("进度", "看板", "里程碑", "progress", "board", "周进度", "项目进展"),
+        ("进度", "看板", "里程碑", "progress", "board", "周进度", "项目进展", "进度看板"),
         prompt_code="project-progress-board",
         variables=("projectName", "progressData", "period", "milestones"),
     ),
@@ -191,7 +191,7 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
     ),
     CAP_PROMPT_OPTIMIZE: CapabilitySpec(
         CAP_PROMPT_OPTIMIZE, "提示词优化", "改写用户输入为更清晰的提示词",
-        ("优化", "改写", "润色", "prompt"),
+        ("优化", "改写", "润色", "prompt", "提示词", "提示词优化", "优化提示词"),
         prompt_code="prompt-optimizer",
         variables=("capability", "capabilityGoal", "rawText"),
     ),
@@ -209,7 +209,8 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
     ),
     CAP_CASE_REVIEW: CapabilitySpec(
         CAP_CASE_REVIEW, "用例评审", "评审用例覆盖率与质量并给出修改建议",
-        ("用例评审", "评审用例", "覆盖分析", "用例质量", "覆盖矩阵", "casereview"),
+        ("用例评审", "评审用例", "覆盖分析", "用例质量", "覆盖矩阵", "casereview",
+         "评审", "覆盖度", "覆盖率"),
         prompt_code="case-review",
         variables=("requirement", "criteria", "cases"),
     ),

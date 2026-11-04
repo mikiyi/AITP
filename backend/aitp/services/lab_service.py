@@ -507,20 +507,70 @@ def capability_catalog() -> list[dict[str, Any]]:
     ]
 
 
+#: 引号包起来的内容通常是「被处理的对象」，不是用户想做的事，
+#: 比如「帮我对…『从需求拆解测试点…』做提示词优化」——引号里的词不该抢走意图。
+_QUOTED_RE = re.compile(r"“[^”]*”|\"[^\"]*\"|「[^」]*」|『[^』]*』|`[^`]*`|'[^']*'")
+
+
+def _strip_quoted(text: str) -> str:
+    return _QUOTED_RE.sub(" ", text)
+
+
 def score_capabilities(text: str, top_k: int) -> list[dict[str, Any]]:
-    """离线兜底：按关键词命中数打分。"""
+    """按「能力名 > 正文关键词 > 引号内关键词」的顺序给能力打分。
+
+    - 正文里直接出现能力名（如「提示词优化」）视为强命中，给 0.9；
+    - 正文命中关键词每条 +0.15；只出现在引号里的关键词权重打四折；
+    - 只提到能力名但整体在引号里（在描述别的产出物）只给 0.6。
+    """
     lowered = text.lower()
+    unquoted_text = _strip_quoted(text)
+    unquoted = unquoted_text.lower()
+    # 冒号前是「要做什么」，冒号后往往是「处理对象」，对象命中的关键词只算参考
+    separators = ["：", ":", chr(10)]
+    instruction = unquoted_text
+    for separator in separators:
+        if separator in instruction:
+            instruction = instruction.split(separator)[0]
+            break
+    instruction = instruction.lower()
     scored: list[dict[str, Any]] = []
     for spec in CAPABILITIES.values():
         hits = [kw for kw in spec.keywords if kw and kw.lower() in lowered]
-        if not hits:
+        unquoted_hits = [kw for kw in hits if kw.lower() in unquoted]
+        quoted_only = len(hits) - len(unquoted_hits)
+        label = spec.label.lower()
+        label_hit = bool(label) and label in unquoted
+        label_quoted = bool(label) and not label_hit and label in lowered
+        if not hits and not label_hit and not label_quoted:
             continue
-        score = min(0.95, 0.35 + 0.15 * len(hits))
+
+        weighted = len(unquoted_hits) + 0.4 * quoted_only
+        score = 0.35 + 0.15 * weighted
+        core_hits = [kw for kw in unquoted_hits if kw.lower() in instruction]
+        if core_hits:
+            # 「帮我优化提示词：……」这类指令口吻，命中指令段越多越可信；
+            # 只命中一个泛词（如「脚本」）不该盖过命中两个词的能力
+            score = max(score, min(0.85, 0.55 + 0.15 * len(core_hits)))
+        if label_hit:
+            score = max(score, 0.9)
+            detail = f"命中能力名称「{spec.label}」"
+            if unquoted_hits:
+                detail += f"；关键词：{'、'.join(unquoted_hits[:3])}"
+        elif label_quoted:
+            score = max(score, 0.6)
+            detail = f"引号内提到能力「{spec.label}」"
+        elif core_hits:
+            detail = f"指令提到：{'、'.join(core_hits[:3])}"
+        else:
+            shown = unquoted_hits or hits
+            detail = f"文本包含关键词：{'、'.join(shown[:3])}"
+
         scored.append({
             "capability": spec.code,
             "label": spec.label,
-            "score": round(score, 3),
-            "reason": f"文本包含关键词：{'、'.join(hits[:3])}",
+            "score": round(min(0.95, score), 3),
+            "reason": detail,
             "source": "fallback",
         })
     scored.sort(key=lambda item: item["score"], reverse=True)
