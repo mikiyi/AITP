@@ -9,7 +9,7 @@ from typing import Any
 
 from flask import Blueprint, Response, request
 
-from ..common.validators import require_str
+from ..common.validators import optional_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.validation_case_repo import (
@@ -17,7 +17,7 @@ from ..repositories.validation_case_repo import (
     case_summary,
 )
 from ..services import audit_service, validation_service
-from .helpers import audit, body, commit, db
+from .helpers import audit, body, commit, db, page_args, path_int
 
 bp = Blueprint("validation", __name__)
 
@@ -31,14 +31,20 @@ def list_cases() -> Response:
     if status:
         filters["status"] = status
     keyword = str(request.args.get("keyword") or "").strip()
-    page = repo.list_detail(filters, keyword or None, page_num=1, page_size=200)
-    return ok({"list": [case_summary(row) for row in page.list], "total": page.total})
+    page_num, page_size = page_args()
+    page = repo.list_detail(filters, keyword or None, page_num=page_num, page_size=page_size)
+    return ok({
+        "list": [case_summary(row) for row in page.list],
+        "total": page.total,
+        "pageNum": page_num,
+        "pageSize": page_size,
+    })
 
 
 @bp.get("/cases/<pk>")
 def get_case(pk: str) -> Response:
     conn = db()
-    detail = ValidationCaseRepository(conn).get_detail(int(pk))
+    detail = ValidationCaseRepository(conn).get_detail(path_int(pk))
     if not detail:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "验证案例不存在")
     return ok(case_summary(detail))
@@ -70,7 +76,7 @@ def create_case() -> Response:
 @bp.put("/cases/<pk>")
 def update_case(pk: str) -> Response:
     conn = db()
-    target = int(pk)
+    target = path_int(pk)
     data = body()
     detail = validation_service.update_case(conn, target, data)
     commit(conn)
@@ -82,7 +88,7 @@ def update_case(pk: str) -> Response:
 @bp.delete("/cases/<pk>")
 def delete_case(pk: str) -> Response:
     conn = db()
-    target = int(pk)
+    target = path_int(pk)
     repo = ValidationCaseRepository(conn)
     row = repo.get(target)
     if not row:
@@ -99,18 +105,19 @@ def run_case(pk: str) -> Response:
     """跑一个案例并回写比对结果。"""
     conn = db()
     data = body()
-    project_id = data.get("projectId")
-    profile_id = data.get("profileId")
+    project_id = optional_int(data.get("projectId"), "projectId")
+    profile_id = optional_int(data.get("profileId"), "profileId")
+    target = path_int(pk)
     result = validation_service.run_case(
         conn,
-        int(pk),
-        project_id=int(project_id) if project_id else None,
-        profile_id=int(profile_id) if profile_id else None,
+        target,
+        project_id=project_id,
+        profile_id=profile_id,
         run_capability=bool(data.get("runCapability", True)),
     )
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_GENERATE, audit_service.RESOURCE_VALIDATION_CASE,
-          int(pk), "", {"passed": result.get("passed"), "errors": result.get("errors")})
+          target, "", {"passed": result.get("passed"), "errors": result.get("errors")})
     return ok(result)
 
 
@@ -119,12 +126,12 @@ def run_all() -> Response:
     """跑一遍全部启用的案例，返回通过率。"""
     conn = db()
     data = body()
-    project_id = data.get("projectId")
-    profile_id = data.get("profileId")
+    project_id = optional_int(data.get("projectId"), "projectId")
+    profile_id = optional_int(data.get("profileId"), "profileId")
     result = validation_service.run_all(
         conn,
-        project_id=int(project_id) if project_id else None,
-        profile_id=int(profile_id) if profile_id else None,
+        project_id=project_id,
+        profile_id=profile_id,
     )
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_GENERATE, audit_service.RESOURCE_VALIDATION_CASE,

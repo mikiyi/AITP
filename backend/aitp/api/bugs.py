@@ -12,6 +12,7 @@ from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.base import dumps, loads
 from ..repositories.bug_repo import BugRepository
+from ..repositories.test_case_repo import TestCaseRepository
 from ..services import audit_service, tabular_export
 from .helpers import (
     audit,
@@ -24,6 +25,7 @@ from .helpers import (
     keyword_of,
     page_args,
     page_payload,
+    path_int,
     query_filters,
     tabular_format_of,
 )
@@ -147,12 +149,12 @@ def export_bugs() -> Response:
 def get_bug(pk: str) -> Response:
     conn = db()
     repo = BugRepository(conn)
-    row = repo.get_detail(int(pk))
+    row = repo.get_detail(path_int(pk))
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "缺陷不存在")
     payload = _to_public(row)
-    payload["linkedCaseIds"] = repo.linked_case_ids(int(pk))
-    payload["logs"] = repo.list_logs(int(pk))
+    payload["linkedCaseIds"] = repo.linked_case_ids(path_int(pk))
+    payload["logs"] = repo.list_logs(path_int(pk))
     return ok(payload)
 
 
@@ -194,7 +196,7 @@ def create_bug() -> Response:
 def update_bug(pk: str) -> Response:
     conn = db()
     repo = BugRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     row = repo.get_detail(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "缺陷不存在")
@@ -217,7 +219,7 @@ def update_bug(pk: str) -> Response:
 def delete_bug(pk: str) -> Response:
     conn = db()
     repo = BugRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     row = repo.get(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "缺陷不存在")
@@ -240,7 +242,7 @@ def batch_delete_bugs() -> Response:
 def transition_bug(pk: str) -> Response:
     conn = db()
     repo = BugRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     row = repo.get(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "缺陷不存在")
@@ -260,7 +262,7 @@ def transition_bug(pk: str) -> Response:
 @bp.get("/<pk>/logs")
 def bug_logs(pk: str) -> Response:
     conn = db()
-    target = int(pk)
+    target = path_int(pk)
     if not BugRepository(conn).get(target):
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "缺陷不存在")
     return ok(BugRepository(conn).list_logs(target))
@@ -270,7 +272,7 @@ def bug_logs(pk: str) -> Response:
 def link_bug_cases(pk: str) -> Response:
     conn = db()
     repo = BugRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     if not repo.get(target):
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "缺陷不存在")
     data = body()
@@ -279,6 +281,12 @@ def link_bug_cases(pk: str) -> Response:
         raise AppError(ErrorCode.PARAM_ERROR, "caseIds 必须是数组")
     ids = [require_int(c, "caseIds[]") for c in case_ids]
     relation = check_choice(data.get("relationType"), BUG_RELATION, "relationType", "related") or "related"
+    missing = sorted(set(ids) - TestCaseRepository(conn).existing_ids(ids))
+    if missing:
+        raise AppError(
+            ErrorCode.RESOURCE_NOT_FOUND,
+            f"用例不存在：{ '、'.join(str(i) for i in missing) }",
+        )
     linked = repo.link_cases(target, ids, relation)
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_BUG, target, "",
@@ -290,7 +298,7 @@ def link_bug_cases(pk: str) -> Response:
 def unlink_bug_cases(pk: str) -> Response:
     conn = db()
     repo = BugRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     if not repo.get(target):
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "缺陷不存在")
     data = body()

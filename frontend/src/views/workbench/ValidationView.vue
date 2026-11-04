@@ -285,7 +285,7 @@ function splitList(text: string): string[] {
 async function load(): Promise<void> {
   loading.value = true
   try {
-    const data = await validationApi.cases({})
+    const data = await validationApi.cases({ pageSize: 100 })
     cases.value = data.list ?? []
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载失败')

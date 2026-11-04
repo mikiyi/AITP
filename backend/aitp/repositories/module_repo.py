@@ -1,6 +1,7 @@
 """四级模块树仓储：项目 → 模块 → 子模块 → 功能。
 
-层级用邻接表 + 派生 depth 实现，不硬编码层数；node_type 只标记语义角色。
+层级用邻接表 + 派生 depth 实现；node_type 只标记语义角色，
+深度按 MAX_MODULE_LEVELS 限制在三层，保证功能点是叶子节点。
 """
 
 from __future__ import annotations
@@ -16,6 +17,9 @@ NODE_TYPE_SUBMODULE = "submodule"
 NODE_TYPE_FEATURE = "feature"
 
 NODE_TYPES = (NODE_TYPE_MODULE, NODE_TYPE_SUBMODULE, NODE_TYPE_FEATURE)
+
+#: 模块树自身的层数上限；加上项目层就是产品文档里的「四级」
+MAX_MODULE_LEVELS = len(NODE_TYPES)
 
 
 class ModuleRepository(BaseRepository):
@@ -135,6 +139,7 @@ class ModuleRepository(BaseRepository):
                 raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "父节点不存在")
             if parent["project_id"] != project_id:
                 raise AppError(ErrorCode.PARAM_ERROR, "父节点不属于该项目")
+            self._check_depth(parent_id, 1)
         max_order = int(self.conn.execute(
             "SELECT COALESCE(MAX(sort_order), 0) FROM biz_module"
             " WHERE project_id = ? AND parent_id IS ?",
@@ -151,6 +156,30 @@ class ModuleRepository(BaseRepository):
             "status": "active",
         })
 
+    def _subtree_height(self, pk: int) -> int:
+        """子树高度：自身算 1，每往下一层加 1；visited 防脏数据成环。"""
+        visited: set[int] = set()
+
+        def walk(node_id: int) -> int:
+            visited.add(node_id)
+            rows = self.conn.execute(
+                "SELECT id FROM biz_module WHERE parent_id = ? AND is_deleted = 0", (node_id,)
+            ).fetchall()
+            heights = [walk(int(r["id"])) for r in rows if int(r["id"]) not in visited]
+            return 1 + max(heights) if heights else 1
+
+        return walk(pk)
+
+    def _check_depth(self, parent_id: int, subtree_height: int) -> None:
+        """产品口径是四级树（项目 → 模块 → 子模块 → 功能），功能点即叶子。"""
+        parent_level = len(self.path_of(parent_id))
+        if parent_level + subtree_height > MAX_MODULE_LEVELS:
+            raise AppError(
+                ErrorCode.ILLEGAL_OPERATION,
+                f"模块树最多 {MAX_MODULE_LEVELS + 1} 级（项目 → 模块 → 子模块 → 功能），"
+                "功能点下面不能再挂子节点",
+            )
+
     def move_node(self, pk: int, new_parent_id: int | None) -> None:
         if new_parent_id is not None:
             if new_parent_id == pk:
@@ -163,6 +192,7 @@ class ModuleRepository(BaseRepository):
             current = cast("RowDict", self.get_node(pk))
             if parent["project_id"] != current["project_id"]:
                 raise AppError(ErrorCode.PARAM_ERROR, "不能跨项目移动节点")
+            self._check_depth(new_parent_id, self._subtree_height(pk))
         self.update(pk, {"parent_id": new_parent_id})
 
     def delete_node(self, pk: int) -> bool:

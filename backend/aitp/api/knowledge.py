@@ -113,7 +113,7 @@ def create_category() -> Response:
     name = require_str(data.get("name"), "name", 20)
     repo = KnowledgeCategoryRepository(conn)
     if repo.find_by_name(name):
-        raise AppError(ErrorCode.PARAM_ERROR, "该分类已存在")
+        raise AppError(ErrorCode.UNIQUE_CONFLICT, "该分类已存在")
     row_id = repo.insert({
         "name": name,
         "sort_order": repo.next_sort_order(),
@@ -295,7 +295,7 @@ def create_draft() -> Response:
 def update_draft(pk: str) -> Response:
     conn = db()
     repo = KnowledgeDraftRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     row = repo.get(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "待审条目不存在")
@@ -324,7 +324,7 @@ def update_draft(pk: str) -> Response:
 def review_draft(pk: str) -> Response:
     conn = db()
     repo = KnowledgeDraftRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     data = body()
     action = check_choice(data.get("action"), ("approve", "reject"), "action")
     if not action:
@@ -409,17 +409,17 @@ def export_articles() -> Response:
 def get_article(pk: str) -> Response:
     conn = db()
     repo = KnowledgeRepository(conn)
-    row = repo.get(int(pk))
+    row = repo.get(path_int(pk))
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "知识条目不存在")
-    repo.increment_views(int(pk))
+    repo.increment_views(path_int(pk))
     commit(conn)
-    payload = _article_public(repo.get(int(pk)) or {})
+    payload = _article_public(repo.get(path_int(pk)) or {})
     payload["pendingVersions"] = [
-        _version_public(row) for row in KnowledgeVersionRepository(conn).pending_versions(int(pk))
+        _version_public(row) for row in KnowledgeVersionRepository(conn).pending_versions(path_int(pk))
     ]
-    payload["refs"] = KnowledgeRefRepository(conn).list_refs(int(pk))
-    file_info = knowledge_storage.file_status(conn, repo.get(int(pk)) or {})
+    payload["refs"] = KnowledgeRefRepository(conn).list_refs(path_int(pk))
+    file_info = knowledge_storage.file_status(conn, repo.get(path_int(pk)) or {})
     payload["fileChanged"] = bool(file_info.get("changed"))
     payload["fileExists"] = bool(file_info.get("exists"))
     payload["fileMode"] = file_info.get("mode")
@@ -431,7 +431,7 @@ def update_article(pk: str) -> Response:
     """编辑已发布条目 → 产生待审新版本，当前正文与索引保持不变。"""
     conn = db()
     repo = KnowledgeRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     row = repo.get(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "知识条目不存在")
@@ -458,7 +458,7 @@ def update_article(pk: str) -> Response:
 def delete_article(pk: str) -> Response:
     conn = db()
     repo = KnowledgeRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     row = repo.get(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "知识条目不存在")
@@ -476,7 +476,7 @@ def delete_article(pk: str) -> Response:
 def revoke_article(pk: str) -> Response:
     conn = db()
     repo = KnowledgeRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     data = body()
     operator = optional_str(data.get("operator"), "operator", 64)
     result = repo.revoke(target, operator=operator)
@@ -493,7 +493,7 @@ def revoke_article(pk: str) -> Response:
 def restore_article(pk: str) -> Response:
     conn = db()
     repo = KnowledgeRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     result = repo.restore(target)
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_KNOWLEDGE_ARTICLE, target, "",
@@ -506,7 +506,7 @@ def restore_article(pk: str) -> Response:
 @bp.get("/articles/<pk>/versions")
 def list_versions(pk: str) -> Response:
     conn = db()
-    target = int(pk)
+    target = path_int(pk)
     if not KnowledgeRepository(conn).get(target):
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "知识条目不存在")
     versions = KnowledgeVersionRepository(conn).list_versions(target)
@@ -516,8 +516,8 @@ def list_versions(pk: str) -> Response:
 @bp.get("/articles/<pk>/versions/<version>")
 def get_version(pk: str, version: str) -> Response:
     conn = db()
-    target = int(pk)
-    snapshot = KnowledgeVersionRepository(conn).get_version(target, int(version))
+    target = path_int(pk)
+    snapshot = KnowledgeVersionRepository(conn).get_version(target, path_int(version))
     if not snapshot:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "版本不存在")
     return ok(_version_public(snapshot))
@@ -526,7 +526,7 @@ def get_version(pk: str, version: str) -> Response:
 @bp.get("/articles/<pk>/diff")
 def diff_versions(pk: str) -> Response:
     conn = db()
-    target = int(pk)
+    target = path_int(pk)
     from_version = require_int(request.args.get("from"), "from")
     to_version = require_int(request.args.get("to"), "to")
     return ok(KnowledgeVersionRepository(conn).diff(target, from_version, to_version))
@@ -535,7 +535,7 @@ def diff_versions(pk: str) -> Response:
 @bp.post("/articles/<pk>/versions/<version>/review")
 def review_version(pk: str, version: str) -> Response:
     conn = db()
-    target = int(pk)
+    target = path_int(pk)
     data = body()
     action = check_choice(data.get("action"), ("approve", "reject"), "action")
     if not action:
@@ -544,15 +544,15 @@ def review_version(pk: str, version: str) -> Response:
     comment = optional_str(data.get("comment"), "comment", 2000)
     repo = KnowledgeVersionRepository(conn)
     if action == "approve":
-        result = repo.apply_version(target, int(version), reviewer=reviewer, review_comment=comment)
+        result = repo.apply_version(target, path_int(version), reviewer=reviewer, review_comment=comment)
         commit(conn)
         _sync_file(conn, target)
         commit(conn)
     else:
-        result = repo.reject_version(target, int(version), reviewer=reviewer, review_comment=comment)
+        result = repo.reject_version(target, path_int(version), reviewer=reviewer, review_comment=comment)
         commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_REVIEW, audit_service.RESOURCE_KNOWLEDGE_VERSION,
-          result.get("id"), "", {"action": action, "articleId": target, "version": int(version)})
+          result.get("id"), "", {"action": action, "articleId": target, "version": path_int(version)})
     return ok(_version_public(result))
 
 
@@ -561,7 +561,7 @@ def review_version(pk: str, version: str) -> Response:
 @bp.get("/articles/<pk>/refs")
 def list_refs(pk: str) -> Response:
     conn = db()
-    target = int(pk)
+    target = path_int(pk)
     if not KnowledgeRepository(conn).get(target):
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "知识条目不存在")
     return ok(KnowledgeRefRepository(conn).list_refs(target))

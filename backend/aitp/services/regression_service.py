@@ -12,6 +12,7 @@ from typing import Any
 
 from ..ai.capability_codes import CAP_REGRESSION_GENERATION
 from ..common.time_utils import utcnow_iso
+from ..common.validators import require_int
 from ..errors import AppError, ErrorCode
 from ..repositories.project_repo import ProjectRepository
 from ..repositories.regression_repo import (
@@ -259,7 +260,9 @@ def execute_items(
     updated: list[int] = []
     skipped: list[int] = []
     for item in results:
-        item_id = int(item.get("itemId") or 0)
+        if not isinstance(item, dict):
+            raise AppError(ErrorCode.PARAM_ERROR, "results 元素必须是对象")
+        item_id = require_int(item.get("itemId"), "results[].itemId")
         row = item_repo.get(item_id)
         if row is None or int(row.get("regression_id") or 0) != pk:
             skipped.append(item_id)

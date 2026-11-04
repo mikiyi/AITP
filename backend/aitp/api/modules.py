@@ -18,7 +18,7 @@ from ..repositories.module_repo import (
 )
 from ..repositories.project_repo import ProjectRepository
 from ..services import audit_service
-from .helpers import audit, body, commit, db
+from .helpers import audit, body, commit, db, path_int
 
 bp = Blueprint("modules", __name__)
 
@@ -80,7 +80,7 @@ def module_options() -> Response:
 def get_module(pk: str) -> Response:
     conn = db()
     repo = ModuleRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     node = repo.get_node(target)
     if not node:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "模块节点不存在")
@@ -126,7 +126,7 @@ def create_module() -> Response:
 def update_module(pk: str) -> Response:
     conn = db()
     repo = ModuleRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     node = repo.get_node(target)
     if not node:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "模块节点不存在")
@@ -153,7 +153,7 @@ def update_module(pk: str) -> Response:
 def move_module(pk: str) -> Response:
     conn = db()
     repo = ModuleRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     if not repo.get_node(target):
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "模块节点不存在")
     data = body()
@@ -172,7 +172,7 @@ def move_module(pk: str) -> Response:
 def delete_module(pk: str) -> Response:
     conn = db()
     repo = ModuleRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     node = repo.get_node(target)
     if not node:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "模块节点不存在")
@@ -187,7 +187,7 @@ def delete_module(pk: str) -> Response:
 def get_capabilities(pk: str) -> Response:
     conn = db()
     repo = ModuleRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     if not repo.get_node(target):
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "模块节点不存在")
     bindings = ModuleCapabilityRepository(conn).list_by_module(target)
@@ -210,7 +210,7 @@ def get_capabilities(pk: str) -> Response:
 def set_capabilities(pk: str) -> Response:
     conn = db()
     module_repo = ModuleRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     if not module_repo.get_node(target):
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "模块节点不存在")
 

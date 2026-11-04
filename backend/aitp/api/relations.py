@@ -19,7 +19,7 @@ from ..repositories.relation_repo import (
     relation_summary,
 )
 from ..services import audit_service, relation_service
-from .helpers import audit, body, commit, db, keyword_of, page_args, page_payload
+from .helpers import audit, body, commit, db, keyword_of, page_args, page_payload, path_int
 
 bp = Blueprint("relations", __name__)
 
@@ -81,8 +81,8 @@ def create_relation() -> Response:
 @bp.delete("/<pk>")
 def delete_relation(pk: str) -> Response:
     conn = db()
-    result = relation_service.delete_relation(conn, int(pk))
+    result = relation_service.delete_relation(conn, path_int(pk))
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_ENTITY_RELATION,
-          int(pk), "", {})
+          path_int(pk), "", {})
     return ok(result)

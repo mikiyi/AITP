@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from flask import Blueprint, Response
 
+from ..common.validators import require_int
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..services import nav_badge_service
@@ -34,10 +35,9 @@ def list_badges() -> Response:
 def increase_badge(section: str) -> Response:
     conn = db()
     data = body()
-    try:
-        count = int(data.get("count") or 1)
-    except (TypeError, ValueError):
-        raise AppError(ErrorCode.PARAM_ERROR, "count 必须是整数") from None
+    count = require_int(data.get("count", 1), "count", 1)
+    if count < 0:
+        raise AppError(ErrorCode.PARAM_ERROR, "count 不能为负数")
     unread = nav_badge_service.increase(conn, _section(section), count)
     commit(conn)
     return ok({"section": section, "unread": unread})

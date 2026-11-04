@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from flask import Blueprint, Response, request
 
-from ..common.validators import require_str
+from ..common.validators import optional_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.ai_record_repo import AIRecordRepository
@@ -35,7 +35,7 @@ def list_records() -> Response:
         value = request.args.get(key)
         if value in (None, ""):
             continue
-        filters[column] = int(value) if column in ("session_id", "task_id") else value
+        filters[column] = optional_int(value, key) if column in ("session_id", "task_id") else value
     page = repo.list(filters, keyword_of() or None, page_num=page_num, page_size=page_size)
     payload = page_payload(page)
     payload["list"] = [repo.decorate(row) for row in payload["list"]]

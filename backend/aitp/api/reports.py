@@ -227,12 +227,12 @@ def list_reports() -> Response:
 def get_report(pk: str) -> Response:
     conn = db()
     repo = ReportRepository(conn)
-    row = repo.get_detail(int(pk))
+    row = repo.get_detail(path_int(pk))
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "报告不存在")
     payload = _to_public(row)
-    payload["items"] = repo.list_items(int(pk))
-    payload["knowledgeRefs"] = _knowledge_refs(conn, int(pk))
+    payload["items"] = repo.list_items(path_int(pk))
+    payload["knowledgeRefs"] = _knowledge_refs(conn, path_int(pk))
     return ok(payload)
 
 
@@ -269,7 +269,7 @@ def create_report() -> Response:
 def update_report(pk: str) -> Response:
     conn = db()
     repo = ReportRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     row = repo.get_detail(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "报告不存在")
@@ -298,7 +298,7 @@ def update_report(pk: str) -> Response:
 def delete_report(pk: str) -> Response:
     conn = db()
     repo = ReportRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     row = repo.get(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "报告不存在")
@@ -313,7 +313,7 @@ def delete_report(pk: str) -> Response:
 @bp.get("/<pk>/items")
 def list_report_items(pk: str) -> Response:
     conn = db()
-    target = int(pk)
+    target = path_int(pk)
     if not ReportRepository(conn).get(target):
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "报告不存在")
     return ok(ReportRepository(conn).list_items(target))
@@ -323,7 +323,7 @@ def list_report_items(pk: str) -> Response:
 def replace_report_items(pk: str) -> Response:
     conn = db()
     repo = ReportRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     if not repo.get(target):
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "报告不存在")
     data = body()

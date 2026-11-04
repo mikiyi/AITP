@@ -11,11 +11,39 @@ import sqlite3
 from typing import Any
 
 from ..errors import AppError, ErrorCode
+from ..repositories.base import BaseRepository
+from ..repositories.bug_repo import BugRepository
+from ..repositories.knowledge_repo import KnowledgeRepository
+from ..repositories.module_repo import ModuleRepository
+from ..repositories.project_repo import ProjectRepository
+from ..repositories.regression_repo import RegressionRepository
 from ..repositories.relation_repo import (
     ENTITY_TYPES,
     RELATION_TYPES,
     EntityRelationRepository,
 )
+from ..repositories.report_repo import ReportRepository
+from ..repositories.requirement_repo import RequirementRepository
+from ..repositories.test_case_repo import TestCaseRepository
+from ..repositories.ai_record_repo import AIRecordRepository
+
+
+def _entity_exists(conn: sqlite3.Connection, entity_type: str, entity_id: int) -> bool:
+    """校验被关联的实体真实存在（软删的不算），避免挂出指向空的关系网。"""
+    repos: dict[str, type[BaseRepository]] = {
+        "requirement": RequirementRepository,
+        "module": ModuleRepository,
+        "case": TestCaseRepository,
+        "bug": BugRepository,
+        "knowledge": KnowledgeRepository,
+        "report": ReportRepository,
+        "regression": RegressionRepository,
+        "ai_record": AIRecordRepository,
+    }
+    repo_cls = repos.get(entity_type)
+    if repo_cls is None:
+        return False
+    return repo_cls(conn).get(int(entity_id)) is not None
 
 
 def _check_entity_type(value: Any, field: str) -> str:
@@ -46,6 +74,12 @@ def create_relation(
     source = _check_entity_type(source_type, "sourceType")
     target = _check_entity_type(target_type, "targetType")
     relation = _check_relation_type(relation_type)
+    for role, e_type, e_id in (("source", source, source_id), ("target", target, target_id)):
+        if not _entity_exists(conn, e_type, int(e_id)):
+            raise AppError(
+                ErrorCode.RESOURCE_NOT_FOUND,
+                f"{role} 实体不存在：{e_type} #{e_id}",
+            )
     if source == target and int(source_id) == int(target_id):
         raise AppError(ErrorCode.PARAM_ERROR, "不能把实体关联到它自己")
     if repo.exists(source, int(source_id), relation, target, int(target_id)):
@@ -74,6 +108,7 @@ def delete_relation(conn: sqlite3.Connection, pk: int) -> dict[str, Any]:
 
 def related_of(conn: sqlite3.Connection, entity_type: str, entity_id: int) -> list[dict[str, Any]]:
     """取某个实体关联到的所有实体（双向展开，带方向）。"""
+    _check_entity_type(entity_type, "entityType")
     repo = EntityRelationRepository(conn)
     rows = repo.list_related(entity_type, entity_id)
     result: list[dict[str, Any]] = []

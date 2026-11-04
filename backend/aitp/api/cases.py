@@ -29,6 +29,7 @@ from .helpers import (
     keyword_of,
     page_args,
     page_payload,
+    path_int,
     query_filters,
 )
 
@@ -388,7 +389,7 @@ def import_cases() -> Response:
 @bp.get("/<pk>")
 def get_case(pk: str) -> Response:
     conn = db()
-    row = TestCaseRepository(conn).get_detail(int(pk))
+    row = TestCaseRepository(conn).get_detail(path_int(pk))
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "测试用例不存在")
     return ok(_to_public(row))
@@ -433,7 +434,7 @@ def create_case() -> Response:
 def update_case(pk: str) -> Response:
     conn = db()
     repo = TestCaseRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     row = repo.get_detail(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "测试用例不存在")
@@ -460,7 +461,7 @@ def update_case(pk: str) -> Response:
 def delete_case(pk: str) -> Response:
     conn = db()
     repo = TestCaseRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     row = repo.get(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "测试用例不存在")
@@ -538,7 +539,7 @@ def adopt_cases() -> Response:
 def execute_case(pk: str) -> Response:
     conn = db()
     repo = TestCaseRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     row = repo.get(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "测试用例不存在")

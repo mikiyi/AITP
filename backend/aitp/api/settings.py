@@ -9,7 +9,7 @@ from flask import Blueprint, Response, current_app, request, send_file
 
 from ..common.constants import AI_DEFAULT_TIMEOUT, PROVIDERS
 from ..common.env_scope import normalize_scope
-from ..common.validators import optional_str, require_int, require_str
+from ..common.validators import optional_str, require_float, require_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.ai_profile_repo import AIProfileRepository
@@ -17,7 +17,7 @@ from ..repositories.audit_log_repo import AuditLogRepository
 from ..repositories.base import dumps, loads
 from ..repositories.sys_config_repo import SysConfigRepository
 from ..services import ai_check, audit_service, backup_service
-from .helpers import audit, body, commit, db, keyword_of, page_args, page_payload, query_filters
+from .helpers import audit, body, commit, db, keyword_of, page_args, page_payload, path_int, query_filters
 
 bp = Blueprint("settings", __name__)
 
@@ -156,7 +156,7 @@ def list_providers() -> Response:
 @bp.get("/ai/profiles/<pk>")
 def get_profile(pk: str) -> Response:
     conn = db()
-    row = AIProfileRepository(conn).get_by_id(int(pk))
+    row = AIProfileRepository(conn).get_by_id(path_int(pk))
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "AI 档案不存在")
     return ok(AIProfileRepository.to_public(row))
@@ -185,13 +185,13 @@ def create_profile() -> Response:
         "model": model,
         "api_key_masked": "",
         "extra_json": dumps(data.get("extra") or {}),
-        "temperature": float(data.get("temperature", 0.7)),
-        "max_tokens": int(data.get("maxTokens", 4096)),
-        "timeout": float(data.get("timeout", _default_timeout(conn))),
+        "temperature": require_float(data.get("temperature"), "temperature", 0.7),
+        "max_tokens": require_int(data.get("maxTokens"), "maxTokens", 4096),
+        "timeout": require_float(data.get("timeout"), "timeout", _default_timeout(conn)),
         "is_default": 1 if data.get("isDefault") else 0,
         "is_active": 1 if data.get("isActive", True) else 0,
-        "sort_order": int(data.get("sortOrder", 0)),
-        "priority": int(data.get("priority", 0)),
+        "sort_order": require_int(data.get("sortOrder"), "sortOrder", 0),
+        "priority": require_int(data.get("priority"), "priority", 0),
         "is_local": 1 if (data.get("isLocal") if data.get("isLocal") is not None
                           else (spec.name == "ollama" if spec else False)) else 0,
         **_local_key_rule(spec, _env_key_columns(data)),
@@ -211,7 +211,7 @@ def create_profile() -> Response:
 def update_profile(pk: str) -> Response:
     conn = db()
     repo = AIProfileRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     row = repo.get_by_id(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "AI 档案不存在")
@@ -226,11 +226,14 @@ def update_profile(pk: str) -> Response:
             payload[key] = data[camel]
     for key in ("temperature", "timeout"):
         if key in data:
-            payload[key] = float(data[key])
+            payload[key] = require_float(data[key], key)
     if "max_tokens" in data:
-        payload["max_tokens"] = int(data["max_tokens"])
+        payload["max_tokens"] = require_int(data["max_tokens"], "max_tokens")
     elif "maxTokens" in data:
-        payload["max_tokens"] = int(data["maxTokens"])
+        payload["max_tokens"] = require_int(data["maxTokens"], "maxTokens")
+    for key in ("sort_order", "priority"):
+        if key in payload:
+            payload[key] = require_int(payload[key], key)
     for key in ("is_default", "is_active", "is_local"):
         camel = _camel_of(key)
         if key in data:
@@ -258,7 +261,7 @@ def update_profile(pk: str) -> Response:
 def delete_profile(pk: str) -> Response:
     conn = db()
     repo = AIProfileRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     row = repo.get_by_id(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "AI 档案不存在")
@@ -274,7 +277,7 @@ def set_profile_api_key(pk: str) -> Response:
     """保存 API Key 到系统密钥库；数据库只留掩码与引用。"""
     conn = db()
     repo = AIProfileRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     row = repo.get_by_id(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "AI 档案不存在")

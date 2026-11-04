@@ -20,6 +20,27 @@ def require_int(value: Any, field: str, default: int | None = None) -> int:
         raise AppError(ErrorCode.PARAM_ERROR, f"参数 {field} 必须是整数") from None
 
 
+def require_float(value: Any, field: str, default: float | None = None) -> float:
+    if value in (None, ""):
+        if default is None:
+            raise AppError(ErrorCode.PARAM_ERROR, f"参数 {field} 不能为空")
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise AppError(ErrorCode.PARAM_ERROR, f"参数 {field} 必须是数字") from None
+
+
+def optional_int(value: Any, field: str) -> int | None:
+    """可空的整数：不传就返回 None，传了非法值必须报参数错误而不是内部错误。"""
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise AppError(ErrorCode.PARAM_ERROR, f"参数 {field} 必须是整数") from None
+
+
 def require_str(value: Any, field: str, max_length: int = 2000) -> str:
     if value is None:
         raise AppError(ErrorCode.PARAM_ERROR, f"参数 {field} 不能为空")

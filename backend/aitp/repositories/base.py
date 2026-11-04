@@ -72,6 +72,18 @@ class BaseRepository:
         row = self.conn.execute(f"SELECT * FROM {self.table} WHERE {where}", (pk,)).fetchone()
         return dict(row) if row else None
 
+    def existing_ids(self, ids: Iterable[int]) -> set[int]:
+        """给定主键里哪些真实存在（软删除的不算），用于建关联前的存在性校验。"""
+        values = [int(i) for i in ids]
+        if not values:
+            return set()
+        placeholders = ", ".join("?" for _ in values)
+        where = f"id IN ({placeholders})"
+        if self.soft_delete_enabled:
+            where += " AND is_deleted = 0"
+        rows = self.conn.execute(f"SELECT id FROM {self.table} WHERE {where}", values).fetchall()
+        return {int(r["id"]) for r in rows}
+
     def count(self, filters: dict[str, Any] | None = None, keyword: str | None = None) -> int:
         where, params = self._build_where(filters, keyword)
         row = self.conn.execute(f"SELECT COUNT(*) FROM {self.table} WHERE {where}", params).fetchone()

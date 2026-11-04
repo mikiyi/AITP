@@ -52,7 +52,7 @@ from ..services import (
     tabular_export,
 )
 from ..services import preflight_service
-from .helpers import audit, body, commit, db, download_response, page_args, page_payload
+from .helpers import audit, body, commit, db, download_response, page_args, page_payload, path_int
 from .sse import (
     FRAME_DELTA,
     FRAME_DEGRADE,
@@ -986,7 +986,7 @@ def list_sessions() -> Response:
 @bp.get("/sessions/<pk>")
 def get_session(pk: str) -> Response:
     conn = db()
-    detail = AISessionRepository(conn).get_detail(int(pk))
+    detail = AISessionRepository(conn).get_detail(path_int(pk))
     if not detail:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "会话不存在")
     detail["messages"] = [
@@ -1010,7 +1010,7 @@ def get_session(pk: str) -> Response:
 @bp.get("/tasks/<pk>")
 def get_task(pk: str) -> Response:
     conn = db()
-    detail = AITaskRepository(conn).get_detail(int(pk))
+    detail = AITaskRepository(conn).get_detail(path_int(pk))
     if not detail:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "任务不存在")
     return ok(detail)
@@ -1020,7 +1020,7 @@ def get_task(pk: str) -> Response:
 def get_task_trajectory(pk: str) -> Response:
     """任务轨迹：子任务、逐步状态与关联执行记录。"""
     conn = db()
-    result = composite_service.task_trajectory(conn, int(pk))
+    result = composite_service.task_trajectory(conn, path_int(pk))
     return ok(result)
 
 
@@ -1060,7 +1060,7 @@ def list_tasks() -> Response:
 def cancel_task(pk: str) -> Response:
     conn = db()
     repo = AITaskRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     row = repo.get(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "任务不存在")

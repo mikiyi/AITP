@@ -6,7 +6,7 @@ from typing import Any
 
 from flask import Blueprint, Response, request
 
-from ..common.validators import require_int, require_str
+from ..common.validators import optional_int, require_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.regression_repo import (
@@ -16,7 +16,7 @@ from ..repositories.regression_repo import (
     regression_summary,
 )
 from ..services import audit_service, regression_service
-from .helpers import audit, body, commit, db, keyword_of, page_args, page_payload, query_filters
+from .helpers import audit, body, commit, db, keyword_of, page_args, page_payload, path_int, query_filters
 
 bp = Blueprint("regressions", __name__)
 
@@ -45,12 +45,12 @@ def list_regressions() -> Response:
 def get_regression(pk: str) -> Response:
     conn = db()
     repo = RegressionRepository(conn)
-    detail = repo.get_detail(int(pk))
+    detail = repo.get_detail(path_int(pk))
     if not detail:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "回归清单不存在")
     payload = regression_summary(detail)
     payload["items"] = [item_summary(row) for row in detail.get("items", [])]
-    payload["stats"] = repo.stats_of(int(pk))
+    payload["stats"] = repo.stats_of(path_int(pk))
     return ok(payload)
 
 
@@ -79,7 +79,7 @@ def create_regression() -> Response:
 @bp.put("/<pk>")
 def update_regression(pk: str) -> Response:
     conn = db()
-    target = int(pk)
+    target = path_int(pk)
     data = body()
     detail = regression_service.update_regression(conn, target, data)
     commit(conn)
@@ -91,7 +91,7 @@ def update_regression(pk: str) -> Response:
 @bp.delete("/<pk>")
 def delete_regression(pk: str) -> Response:
     conn = db()
-    target = int(pk)
+    target = path_int(pk)
     repo = RegressionRepository(conn)
     row = repo.get(target)
     if not row:
@@ -108,13 +108,12 @@ def generate_items(pk: str) -> Response:
     """用「回归清单」能力生成条目。"""
     conn = db()
     data = body()
-    profile_id = data.get("profileId")
-    result = regression_service.generate_items(
-        conn, int(pk), profile_id=int(profile_id) if profile_id else None,
-    )
+    target = path_int(pk)
+    profile_id = optional_int(data.get("profileId"), "profileId")
+    result = regression_service.generate_items(conn, target, profile_id=profile_id)
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_GENERATE, audit_service.RESOURCE_REGRESSION,
-          int(pk), "", {"created": result.get("created")})
+          target, "", {"created": result.get("created")})
     return ok(result)
 
 
@@ -122,10 +121,11 @@ def generate_items(pk: str) -> Response:
 def add_item(pk: str) -> Response:
     conn = db()
     data = body()
-    item = regression_service.add_item(conn, int(pk), data)
+    target = path_int(pk)
+    item = regression_service.add_item(conn, target, data)
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_CREATE, audit_service.RESOURCE_REGRESSION,
-          int(pk), str(item.get("title") or ""), {"itemId": item.get("id")})
+          target, str(item.get("title") or ""), {"itemId": item.get("id")})
     return ok(item)
 
 
@@ -133,20 +133,22 @@ def add_item(pk: str) -> Response:
 def update_item(pk: str, item_id: str) -> Response:
     conn = db()
     data = body()
-    item = regression_service.update_item(conn, int(pk), int(item_id), data)
+    target = path_int(pk)
+    item = regression_service.update_item(conn, target, path_int(item_id, "itemId"), data)
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_REGRESSION,
-          int(pk), str(item.get("title") or ""), {"itemId": int(item_id)})
+          target, str(item.get("title") or ""), {"itemId": path_int(item_id, "itemId")})
     return ok(item)
 
 
 @bp.delete("/<pk>/items/<item_id>")
 def delete_item(pk: str, item_id: str) -> Response:
     conn = db()
-    result = regression_service.delete_item(conn, int(pk), int(item_id))
+    target = path_int(pk)
+    result = regression_service.delete_item(conn, target, path_int(item_id, "itemId"))
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_REGRESSION,
-          int(pk), "", {"itemId": int(item_id)})
+          target, "", {"itemId": path_int(item_id, "itemId")})
     return ok(result)
 
 
@@ -158,17 +160,18 @@ def execute_items(pk: str) -> Response:
     results = data.get("results")
     if not isinstance(results, list) or not results:
         raise AppError(ErrorCode.PARAM_ERROR, "参数 results 必须是非空数组")
-    payload = regression_service.execute_items(conn, int(pk), [item for item in results if isinstance(item, dict)])
+    target = path_int(pk)
+    payload = regression_service.execute_items(conn, target, results)
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_REGRESSION,
-          int(pk), "", {"updated": len(payload.get("updated") or [])})
+          target, "", {"updated": len(payload.get("updated") or [])})
     return ok(payload)
 
 
 @bp.get("/<pk>/items")
 def list_items(pk: str) -> Response:
     conn = db()
-    target = int(pk)
+    target = path_int(pk)
     if RegressionRepository(conn).get(target) is None:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "回归清单不存在")
     rows = RegressionItemRepository(conn).list_by_regression(target)

@@ -232,7 +232,7 @@ function splitList(text: string): string[] {
 async function load(): Promise<void> {
   loading.value = true
   try {
-    const data = await workbenchApi.entries({})
+    const data = await workbenchApi.entries({ pageSize: 100 })
     entries.value = data.list ?? []
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载失败')

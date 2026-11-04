@@ -24,6 +24,7 @@ from .helpers import (
     keyword_of,
     page_args,
     page_payload,
+    path_int,
     query_filters,
     tabular_format_of,
 )
@@ -109,7 +110,7 @@ def export_requirements() -> Response:
 @bp.get("/<pk>")
 def get_requirement(pk: str) -> Response:
     conn = db()
-    row = RequirementRepository(conn).get(int(pk))
+    row = RequirementRepository(conn).get(path_int(pk))
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "需求不存在")
     return ok(_to_public(row))
@@ -145,7 +146,7 @@ def create_requirement() -> Response:
 def update_requirement(pk: str) -> Response:
     conn = db()
     repo = RequirementRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     row = repo.get(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "需求不存在")
@@ -164,7 +165,7 @@ def update_requirement(pk: str) -> Response:
 def delete_requirement(pk: str) -> Response:
     conn = db()
     repo = RequirementRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     row = repo.get(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "需求不存在")

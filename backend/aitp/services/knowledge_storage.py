@@ -56,11 +56,25 @@ def storage_root(conn: sqlite3.Connection) -> Path:
 
 
 def set_storage_path(conn: sqlite3.Connection, path: str) -> Path:
-    """写入新的存放目录；目录不存在时自动创建。"""
-    target = Path(path).expanduser().resolve()
-    target.mkdir(parents=True, exist_ok=True)
-    SysConfigRepository(conn).set_value(CONFIG_PATH, str(target), "string", "知识库 Markdown 存放根目录")
-    return target
+    """写入新的存放目录；必须是绝对路径，目录不存在时自动创建。
+
+    知识库会把 Markdown 落到这个根目录下，根目录本身跑偏
+    （相对路径、穿越串）会让后续 safe_join 形同虚设，这里先挡住。
+    """
+    if not isinstance(path, str) or not path.strip():
+        raise AppError(ErrorCode.PARAM_ERROR, "知识库存放目录不能为空")
+    raw = path.strip()
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        raise AppError(ErrorCode.PARAM_ERROR, "知识库存放目录必须是绝对路径")
+    resolved = candidate.resolve()
+    if raw.replace("\\", "/").split("/")[-1] in ("..", ".") or ".." in Path(raw).parts:
+        raise AppError(ErrorCode.PARAM_ERROR, "知识库存放目录不能包含 .. 或 . 段")
+    if resolved == resolved.parent:
+        raise AppError(ErrorCode.PARAM_ERROR, "知识库存放目录不能是盘符根目录")
+    resolved.mkdir(parents=True, exist_ok=True)
+    SysConfigRepository(conn).set_value(CONFIG_PATH, str(resolved), "string", "知识库 Markdown 存放根目录")
+    return resolved
 
 
 # ---------------- 文件名与路径 ----------------

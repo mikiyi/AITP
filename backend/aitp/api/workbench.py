@@ -10,7 +10,7 @@ from flask import Blueprint, Response, request
 from ..ai.capability_codes import CAPABILITIES
 from ..common.enums import BUG_STATUS, CASE_STATUS
 from ..common.time_utils import utcnow_iso
-from ..common.validators import require_str
+from ..common.validators import optional_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.ai_session_repo import AITaskRepository
@@ -28,7 +28,7 @@ from ..repositories.workbench_entry_repo import (
     entry_summary,
 )
 from ..services import audit_service, workbench_service
-from .helpers import audit, body, commit, db
+from .helpers import audit, body, commit, db, page_args, path_int
 
 bp = Blueprint("workbench", __name__)
 
@@ -99,9 +99,9 @@ def record_quick_entry_usage() -> Response:
 @bp.get("/overview")
 def overview() -> Response:
     conn = db()
-    project_id = request.args.get("projectId")
+    project_id = optional_int(request.args.get("projectId"), "projectId")
     scope_sql = " AND project_id = ?" if project_id else ""
-    scope_params: tuple[Any, ...] = (int(project_id),) if project_id else ()
+    scope_params: tuple[Any, ...] = (project_id,) if project_id else ()
 
     case_total = _count(conn, f"SELECT COUNT(*) FROM biz_test_case WHERE is_deleted = 0{scope_sql}", scope_params)
     case_pass = _count(
@@ -110,7 +110,7 @@ def overview() -> Response:
         scope_params,
     )
     bug_total = _count(conn, f"SELECT COUNT(*) FROM biz_bug WHERE is_deleted = 0{scope_sql}", scope_params)
-    bug_open = BugRepository(conn).open_bug_count(int(project_id) if project_id else None)
+    bug_open = BugRepository(conn).open_bug_count(project_id)
     requirement_total = _count(
         conn, f"SELECT COUNT(*) FROM biz_requirement WHERE is_deleted = 0{scope_sql}", scope_params
     )
@@ -189,8 +189,7 @@ def coverage() -> Response:
 @bp.get("/executions")
 def execution_summary() -> Response:
     conn = db()
-    project_id = request.args.get("projectId")
-    pid = int(project_id) if project_id else None
+    pid = optional_int(request.args.get("projectId"), "projectId")
     return ok(CaseExecutionRepository(conn).result_counts(pid))
 
 
@@ -205,14 +204,20 @@ def list_entries() -> Response:
     if status:
         filters["status"] = status
     keyword = str(request.args.get("keyword") or "").strip()
-    rows = repo.list_detail(filters, keyword or None, page_num=1, page_size=200)
-    return ok({"list": [entry_summary(row) for row in rows.list], "total": rows.total})
+    page_num, page_size = page_args()
+    rows = repo.list_detail(filters, keyword or None, page_num=page_num, page_size=page_size)
+    return ok({
+        "list": [entry_summary(row) for row in rows.list],
+        "total": rows.total,
+        "pageNum": page_num,
+        "pageSize": page_size,
+    })
 
 
 @bp.get("/entries/<pk>")
 def get_entry(pk: str) -> Response:
     conn = db()
-    detail = WorkbenchEntryRepository(conn).get_detail(int(pk))
+    detail = WorkbenchEntryRepository(conn).get_detail(path_int(pk))
     if not detail:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "入口不存在")
     payload = entry_summary(detail)
@@ -223,7 +228,7 @@ def get_entry(pk: str) -> Response:
             "status": row.get("status"),
             "createdAt": row.get("created_at"),
         }
-        for row in WorkbenchEntryRepository(conn).versions_of(int(pk))
+        for row in WorkbenchEntryRepository(conn).versions_of(path_int(pk))
     ]
     return ok(payload)
 
@@ -254,7 +259,7 @@ def create_entry() -> Response:
 @bp.put("/entries/<pk>")
 def update_entry(pk: str) -> Response:
     conn = db()
-    target = int(pk)
+    target = path_int(pk)
     data = body()
     detail = workbench_service.update_entry(conn, target, data)
     commit(conn)
@@ -266,7 +271,7 @@ def update_entry(pk: str) -> Response:
 @bp.post("/entries/<pk>/publish")
 def publish_entry(pk: str) -> Response:
     conn = db()
-    target = int(pk)
+    target = path_int(pk)
     detail = workbench_service.publish_entry(conn, target)
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_WORKBENCH_ENTRY,
@@ -278,7 +283,7 @@ def publish_entry(pk: str) -> Response:
 def delete_entry(pk: str) -> Response:
     """删除编排入口：已发布的入口也能删，删除后不能直接跑。"""
     conn = db()
-    target = int(pk)
+    target = path_int(pk)
     repo = WorkbenchEntryRepository(conn)
     row = repo.get(target)
     if not row:
@@ -303,7 +308,7 @@ def run_entry(pk: str) -> Response:
     module_id = data.get("moduleId")
     result = workbench_service.run_entry(
         conn,
-        int(pk),
+        path_int(pk),
         variables=variables,
         session_id=int(session_id) if session_id else None,
         profile_id=int(profile_id) if profile_id else None,
@@ -313,5 +318,5 @@ def run_entry(pk: str) -> Response:
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_GENERATE, audit_service.RESOURCE_AI_TASK,
           int(result.get("parentTaskId") or 0), str(result.get("entryCode") or ""),
-          {"entryId": int(pk), "status": result.get("status")})
+          {"entryId": path_int(pk), "status": result.get("status")})
     return ok(result)

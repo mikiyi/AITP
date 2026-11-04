@@ -12,7 +12,7 @@ from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.project_repo import ProjectRepository
 from ..services import audit_service
-from .helpers import audit, body, commit, db, keyword_of, page_args, page_payload, query_filters
+from .helpers import audit, body, commit, db, keyword_of, page_args, page_payload, path_int, query_filters
 
 bp = Blueprint("projects", __name__)
 
@@ -55,7 +55,7 @@ def project_options() -> Response:
 @bp.get("/<pk>")
 def get_project(pk: str) -> Response:
     conn = db()
-    row = ProjectRepository(conn).get(int(pk))
+    row = ProjectRepository(conn).get(path_int(pk))
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "项目不存在")
     return ok(_to_public(row))
@@ -88,7 +88,7 @@ def create_project() -> Response:
 def update_project(pk: str) -> Response:
     conn = db()
     repo = ProjectRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     row = repo.get(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "项目不存在")
@@ -111,7 +111,7 @@ def update_project(pk: str) -> Response:
 def delete_project(pk: str) -> Response:
     conn = db()
     repo = ProjectRepository(conn)
-    target = int(pk)
+    target = path_int(pk)
     row = repo.get(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "项目不存在")

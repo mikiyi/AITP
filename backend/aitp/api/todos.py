@@ -53,7 +53,12 @@ EXPORT_COLUMNS = (
 
 def _project_scope(filters: dict[str, Any]) -> int | None:
     raw = filters.get("project_id")
-    return int(raw) if raw not in (None, "") else None
+    if raw in (None, ""):
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        raise AppError(ErrorCode.PARAM_ERROR, "参数 projectId 必须是整数") from None
 
 
 @bp.get("")
@@ -193,8 +198,12 @@ def batch_update() -> Response:
 def batch_delete() -> Response:
     conn = db()
     ids = _ids(body())
+    repo = TodoRepository(conn)
     removed: list[int] = []
     for item in ids:
+        if repo.get(item) is None:
+            # 一个失效 id 不该让整批失败，与缺陷/需求的批量删除保持同一套 skipped 语义
+            continue
         result = todo_service.remove_todo(conn, item)
         removed.extend(int(x) for x in result.get("removed") or [])
     commit(conn)
