@@ -17,7 +17,7 @@
 
     <div class="cap-layout">
       <div class="panel panel-pad cap-input">
-        <el-form label-width="96px" label-position="right">
+        <el-form label-width="120px" label-position="right">
           <el-form-item label="功能点">
             <el-select v-model="moduleId" clearable filterable placeholder="选择功能点（可选）">
               <el-option
@@ -32,7 +32,7 @@
           <el-form-item v-for="field in fields" :key="field.name">
             <template #label>
               <span class="cap-field-label">
-                {{ field.label }}
+                <span class="cap-field-label__text">{{ field.label }}</span>
                 <el-tag
                   v-if="isOptionalVariable(field.name)"
                   size="small"
@@ -191,6 +191,26 @@
                 @click="openAdoptReport"
               >
                 采纳为报告
+              </el-button>
+              <el-button
+                v-if="capability === 'performance_script'"
+                type="success"
+                :icon="Odometer"
+                :loading="importingScript"
+                :disabled="!finished || !output"
+                @click="importToAutomation('performance')"
+              >
+                加入性能测试
+              </el-button>
+              <el-button
+                v-if="capability === 'automation_script'"
+                type="success"
+                :icon="FolderAdd"
+                :loading="importingScript"
+                :disabled="!finished || !output"
+                @click="importToAutomation(automationCategory)"
+              >
+                加入{{ automationCategoryLabel }}自动化
               </el-button>
             </div>
           </el-form-item>
@@ -396,7 +416,9 @@ import {
   CopyDocument,
   Document,
   Download,
+  FolderAdd,
   Loading,
+  Odometer,
   Picture,
   Promotion,
   Select,
@@ -405,7 +427,7 @@ import {
 import MarkdownView from '@/components/MarkdownView.vue'
 import MindMap from '@/components/MindMap.vue'
 import PromptOptimizer from '@/components/PromptOptimizer.vue'
-import { caseApi, knowledgeApi, labApi, reportApi, requirementApi } from '@/api'
+import { automationApi, caseApi, knowledgeApi, labApi, reportApi, requirementApi } from '@/api'
 import { streamPost, type DegradeInfo } from '@/api/stream'
 import type {
   AdoptCaseItem,
@@ -1009,6 +1031,71 @@ async function confirmAdoptReport(): Promise<void> {
   }
 }
 
+/** 脚本产出的入库类别：web / app / api 跟随「目标类型」，性能脚本单独入库。 */
+type AutomationCategory = 'web' | 'app' | 'api' | 'performance'
+
+const automationCategory = computed<AutomationCategory>(() => {
+  const target = values.targetType ?? 'web'
+  if (target === 'app' || target === 'api') {
+    return target
+  }
+  return 'web'
+})
+
+const automationCategoryLabel = computed(() => {
+  const labels: Record<AutomationCategory, string> = {
+    web: 'Web',
+    app: 'App',
+    api: '接口',
+    performance: '性能',
+  }
+  return labels[automationCategory.value]
+})
+
+const importingScript = ref(false)
+
+/** 脚本名：优先用场景首行，其次用项目名，避免生成一串无意义的名字。 */
+function scriptNameOf(category: AutomationCategory): string {
+  const scenario = (values.scenario ?? '').split('\n')[0].trim()
+  const project = (values.projectName ?? '').trim()
+  const fallback = category === 'performance' ? '性能脚本' : '自动化脚本'
+  return (scenario || project || fallback).slice(0, 60)
+}
+
+/**
+ * 一键入库：把产出的代码块存成脚本资产，并跳到对应管理页。
+ * 后端会按类别从产出里挑代码块（性能取 xml、其余取 python），前端只管传原文。
+ */
+async function importToAutomation(category: AutomationCategory): Promise<void> {
+  if (!output.value.trim()) {
+    ElMessage.warning('暂无产出')
+    return
+  }
+  importingScript.value = true
+  try {
+    const script = await automationApi.createFromOutput({
+      output: output.value,
+      category,
+      name: scriptNameOf(category),
+      projectId: appStore.currentProjectId ?? undefined,
+      moduleId: moduleId.value ?? undefined,
+      description: values.scenario ?? '',
+      framework: category === 'performance' ? 'jmeter' : values.framework ?? '',
+      language: category === 'performance' ? 'xml' : 'python',
+      appPlatforms:
+        category === 'app' ? (multiValues.appPlatforms ?? []).join(',') : '',
+      targetType: category === 'performance' ? 'performance' : category,
+      source: 'ai',
+    })
+    ElMessage.success(`已入库：${script.scriptNo}`)
+    await router.push(`/automation/${category}`)
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '入库失败')
+  } finally {
+    importingScript.value = false
+  }
+}
+
 watch(
   () => route.query.text,
   () => {
@@ -1081,13 +1168,23 @@ watch(
 }
 
 .cap-field-label {
-  display: inline-flex;
+  /* 标签列窄，"选填"标记放不下时整体换到下一行，别把标签文字拆散 */
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  justify-content: flex-end;
+  gap: 2px 6px;
+  width: 100%;
+}
+
+.cap-field-label__text {
+  white-space: nowrap;
 }
 
 .cap-field-optional {
-  transform: scale(0.9);
+  font-size: 11px;
+  height: 18px;
+  padding: 0 4px;
 }
 
 .cap-field-select {

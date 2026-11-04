@@ -2,25 +2,35 @@ import type { Component } from 'vue'
 import {
   ChatDotRound,
   CircleCheck,
+  Collection,
   Connection,
+  Cpu,
   DataAnalysis,
+  DataLine,
   Document,
   Files,
   Finished,
   Folder,
   Grid,
   HomeFilled,
+  Iphone,
+  Link,
   List,
   MagicStick,
+  Menu,
+  Monitor,
   Notebook,
   Odometer,
   Operation,
   Reading,
   Refresh,
+  SetUp,
   Setting,
   Share,
   Sort,
+  Stopwatch,
   Tickets,
+  TrendCharts,
   Warning,
 } from '@element-plus/icons-vue'
 
@@ -60,6 +70,8 @@ export type MenuNode = MenuItemNode | MenuGroupNode
  * 文件夹=项目、文档=需求、对勾=用例、分叉=用例树、警告三角=缺陷、
  * 书本=知识库、循环箭头=回归、图表=报告、九宫格=编排入口、
  * 对勾圆=验证沙箱、连接=实体关联。
+ * 自动化四类：显示器=Web、手机=App、链接=接口、秒表=性能；
+ * 设置六项：CPU=AI、收藏夹=知识库、菜单=模块树、装配=自动化、趋势图=性能测试。
  */
 export const MENU_NODES: MenuNode[] = [
   { type: 'item', path: '/', title: '首页', icon: HomeFilled },
@@ -91,6 +103,10 @@ export const MENU_NODES: MenuNode[] = [
       { path: '/knowledge', title: '知识库', icon: Reading },
       { path: '/regressions', title: '回归清单', icon: Refresh },
       { path: '/reports', title: '测试报告', icon: DataAnalysis },
+      { path: '/automation/web', title: 'Web 自动化管理', icon: Monitor },
+      { path: '/automation/app', title: 'App 自动化管理', icon: Iphone },
+      { path: '/automation/api', title: '接口自动化管理', icon: Link },
+      { path: '/automation/performance', title: '性能测试管理', icon: Stopwatch },
     ],
   },
   {
@@ -104,7 +120,20 @@ export const MENU_NODES: MenuNode[] = [
       { path: '/workbench/relations', title: '实体关联', icon: Connection },
     ],
   },
-  { type: 'item', path: '/settings', title: '设置', icon: Setting },
+  {
+    type: 'group',
+    key: 'settings',
+    title: '设置',
+    icon: Setting,
+    children: [
+      { path: '/settings', title: '设置总览', icon: DataLine },
+      { path: '/settings/ai', title: 'AI 设置', icon: Cpu },
+      { path: '/settings/knowledge', title: '知识库设置', icon: Collection },
+      { path: '/settings/modules', title: '模块树设置', icon: Menu },
+      { path: '/settings/automation', title: '自动化管理设置', icon: SetUp },
+      { path: '/settings/performance', title: '性能测试管理设置', icon: TrendCharts },
+    ],
+  },
 ]
 
 /** 所有可点击的导航路径（含分组内的子入口），按路径长度倒序便于前缀匹配。 */
@@ -120,6 +149,26 @@ export interface MenuMatch {
   path: string
   /** 所属分组的标题；不在任何分组里时为空串。 */
   group: string
+  /** 命中入口的标题；没命中时为空串。 */
+  title: string
+  /** 是否精确命中该入口；详情页（/test-cases/42）命中的是上级入口，为 false。 */
+  exact: boolean
+}
+
+function titleOf(path: string): string {
+  for (const node of MENU_NODES) {
+    if (node.type === 'item') {
+      if (node.path === path) {
+        return node.title
+      }
+      continue
+    }
+    const hit = node.children.find((child) => child.path === path)
+    if (hit) {
+      return hit.title
+    }
+  }
+  return ''
 }
 
 /**
@@ -127,15 +176,15 @@ export interface MenuMatch {
  * （详情页如 /test-cases/42 归到 /test-cases）。
  */
 export function matchMenu(path: string): MenuMatch {
-  const hit = MENU_PATHS.find((item) => item === path)
-    ?? MENU_PATHS.find((item) => path.startsWith(`${item}/`))
+  const exact = MENU_PATHS.find((item) => item === path)
+  const hit = exact ?? MENU_PATHS.find((item) => path.startsWith(`${item}/`))
   if (!hit) {
-    return { path: '', group: '' }
+    return { path: '', group: '', title: '', exact: false }
   }
   const group = MENU_NODES.find(
     (node): node is MenuGroupNode => node.type === 'group' && node.children.some((child) => child.path === hit),
   )
-  return { path: hit, group: group ? group.title : '' }
+  return { path: hit, group: group ? group.title : '', title: titleOf(hit), exact: Boolean(exact) }
 }
 
 /** 分组是否包含当前选中的入口，用于给分组标题做同样的高亮。 */

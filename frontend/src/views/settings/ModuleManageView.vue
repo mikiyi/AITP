@@ -1,7 +1,7 @@
 <template>
   <div class="page">
     <div class="page-header">
-      <h2 class="page-title">模块树管理</h2>
+      <h2 class="page-title">模块树设置</h2>
       <div class="toolbar" style="margin: 0">
         <el-select v-model="projectId" placeholder="选择项目" style="width: 200px" @change="loadTree">
           <el-option v-for="item in appStore.projects" :key="item.id" :label="item.name" :value="item.id" />

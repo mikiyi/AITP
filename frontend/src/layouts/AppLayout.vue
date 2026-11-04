@@ -220,7 +220,17 @@ const menuNodes = MENU_NODES
 const menuMatch = computed(() => matchMenu(route.path))
 const activePath = computed(() => menuMatch.value.path)
 
-const pageTitle = computed(() => (route.meta.title as string | undefined) ?? '')
+/**
+ * 页面标题优先取导航项上的名字，
+ * 这样「/automation/web」这类参数路由显示的是「Web 自动化管理」而不是通用路由名；
+ * 详情页仍用路由自己的标题（如「用例详情」），不跟上级入口混淆。
+ */
+const pageTitle = computed(() => {
+  if (menuMatch.value.exact && menuMatch.value.title) {
+    return menuMatch.value.title
+  }
+  return (route.meta.title as string | undefined) ?? ''
+})
 
 /**
  * 面包屑里的分组标题：像「顺序执行」这类分组内入口要显示成「AI 实验室 / 顺序执行」，

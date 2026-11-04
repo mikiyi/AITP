@@ -961,3 +961,101 @@ export interface TodoPage extends PagePayload<Todo> {
   view: string
   stats: TodoSummary
 }
+
+/** 自动化脚本类别：web / app / api / performance。 */
+export type AutomationCategory = 'web' | 'app' | 'api' | 'performance'
+
+/** 脚本执行方式：直接执行 / pytest / JMeter 命令行。 */
+export type AutomationRunMode = 'script' | 'pytest' | 'jmeter'
+
+/** 执行状态。 */
+export type AutomationRunStatus =
+  | 'running'
+  | 'success'
+  | 'failed'
+  | 'timeout'
+  | 'error'
+
+/** 一条自动化脚本资产。 */
+export interface AutomationScript {
+  id: Id
+  scriptNo: string
+  name: string
+  category: AutomationCategory
+  categoryLabel: string
+  targetType: string
+  framework: string
+  language: string
+  appPlatforms: string
+  projectId: Id | null
+  moduleId: Id | null
+  description: string
+  fileName: string
+  content: string
+  source: string
+  runMode: AutomationRunMode
+  entryCommand: string
+  timeoutSeconds: number | null
+  status: string
+  lastRunStatus: string
+  lastRunAt: string
+  remark: string
+  createdAt?: string
+  updatedAt?: string
+  /** 只有详情接口会带执行历史。 */
+  runs?: AutomationRun[]
+}
+
+/** 一次执行的留痕。 */
+export interface AutomationRun {
+  id: Id
+  runNo: string
+  scriptId: Id
+  scriptNo: string
+  scriptName: string
+  category: AutomationCategory
+  categoryLabel: string
+  status: AutomationRunStatus
+  exitCode: number | null
+  durationMs: number | null
+  commandLine: string
+  stdout: string
+  stderr: string
+  errorMessage: string
+  startedAt?: string
+  finishedAt?: string
+  createdAt?: string
+}
+
+/** 四类目录的说明与统计。 */
+export interface AutomationCategoryInfo {
+  category: AutomationCategory
+  label: string
+  scriptCount: number
+  runStats: { total: number; success: number; failed: number }
+  runner: 'python' | 'jmeter'
+}
+
+/** 运行时体检结果：解释器与 JMeter 是否可用。 */
+export interface AutomationRuntime {
+  pythonInterpreter: string
+  pythonInterpreterConfigured: boolean
+  pythonInterpreterAvailable: boolean
+  pythonTimeout: number
+  pythonVersion: string
+  jmeterHome: string
+  jmeterCommand: string
+  jmeterArgs: string[]
+  jmeterAvailable: boolean
+  platform: string
+}
+
+/** 脚本列表分页，额外带各分类计数。 */
+export interface AutomationScriptPage extends PagePayload<AutomationScript> {
+  categoryCounts: Record<string, number>
+}
+
+/** 执行历史分页，额外带各分类统计。 */
+export interface AutomationRunPage extends PagePayload<AutomationRun> {
+  categoryStats: Record<string, { total: number; success: number; failed: number }>
+}

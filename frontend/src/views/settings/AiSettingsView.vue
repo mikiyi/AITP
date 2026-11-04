@@ -1,7 +1,7 @@
 <template>
   <div class="page">
     <div class="page-header">
-      <h2 class="page-title">AI 配置</h2>
+      <h2 class="page-title">AI 设置</h2>
       <div class="toolbar" style="margin: 0">
         <el-button :icon="Refresh" @click="loadAll">刷新</el-button>
         <el-button type="primary" :icon="Plus" @click="openCreate">新增档案</el-button>

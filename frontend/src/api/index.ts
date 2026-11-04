@@ -9,6 +9,12 @@ import type {
   AiStatus,
   AiTask,
   AuditLog,
+  AutomationCategoryInfo,
+  AutomationRuntime,
+  AutomationRun,
+  AutomationRunPage,
+  AutomationScript,
+  AutomationScriptPage,
   BackupListResult,
   BatchDeleteResult,
   BatchReviewResult,
@@ -423,6 +429,33 @@ export const recordApi = {
 export const searchApi = {
   query: (params: { q: string; types?: string; projectId?: number; limit?: number }) =>
     get<SearchResult>('/search', params as never),
+}
+
+/** 自动化脚本资产：web / app / api / performance 四类共用一套接口。 */
+export const automationApi = {
+  /** 四类目录的说明与统计。 */
+  categories: () => get<AutomationCategoryInfo[]>('/automation/categories'),
+  /** 运行时体检：解释器与 JMeter 是否可用。 */
+  runtime: () => get<AutomationRuntime>('/automation/runtime'),
+  /** 脚本列表。 */
+  list: (query: Record<string, unknown> = {}) =>
+    get<AutomationScriptPage>('/automation/scripts', query as never),
+  /** 脚本详情（含最近 20 次执行历史）。 */
+  detail: (id: number) => get<AutomationScript>(`/automation/scripts/${id}`),
+  create: (body: Record<string, unknown>) => post<AutomationScript>('/automation/scripts', body),
+  update: (id: number, body: Record<string, unknown>) =>
+    put<AutomationScript>(`/automation/scripts/${id}`, body),
+  remove: (id: number) => del(`/automation/scripts/${id}`),
+  /** 执行脚本；失败也返回记录（status=failed）。 */
+  run: (id: number, body: Record<string, unknown> = {}) =>
+    post<AutomationRun>(`/automation/scripts/${id}/run`, body),
+  /** 把 AI 实验室的脚本产出一键存成资产。 */
+  createFromOutput: (body: Record<string, unknown>) =>
+    post<AutomationScript>('/automation/scripts/from-output', body),
+  /** 执行历史。 */
+  runs: (query: Record<string, unknown> = {}) =>
+    get<AutomationRunPage>('/automation/runs', query as never),
+  runDetail: (id: number) => get<AutomationRun>(`/automation/runs/${id}`),
 }
 
 /** 设置：AI 档案、系统配置、枚举。 */

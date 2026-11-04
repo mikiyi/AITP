@@ -162,6 +162,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '报告详情', hidden: true },
   },
   {
+    path: '/automation/:category(web|app|api|performance)',
+    name: 'automation-scripts',
+    component: () => import('@/views/automation/AutomationScriptView.vue'),
+    meta: { title: '自动化脚本', hidden: true },
+  },
+  {
     path: '/settings',
     name: 'settings',
     component: () => import('@/views/settings/SettingsView.vue'),
@@ -171,7 +177,7 @@ const routes: RouteRecordRaw[] = [
     path: '/settings/ai',
     name: 'settings-ai',
     component: () => import('@/views/settings/AiSettingsView.vue'),
-    meta: { title: 'AI 配置', hidden: true },
+    meta: { title: 'AI 设置', hidden: true },
   },
   {
     path: '/settings/knowledge',
@@ -183,7 +189,19 @@ const routes: RouteRecordRaw[] = [
     path: '/settings/modules',
     name: 'settings-modules',
     component: () => import('@/views/settings/ModuleManageView.vue'),
-    meta: { title: '模块树管理', hidden: true },
+    meta: { title: '模块树设置', hidden: true },
+  },
+  {
+    path: '/settings/automation',
+    name: 'settings-automation',
+    component: () => import('@/views/settings/AutomationSettingsView.vue'),
+    meta: { title: '自动化管理设置', hidden: true },
+  },
+  {
+    path: '/settings/performance',
+    name: 'settings-performance',
+    component: () => import('@/views/settings/PerformanceSettingsView.vue'),
+    meta: { title: '性能测试管理设置', hidden: true },
   },
   {
     path: '/:pathMatch(.*)*',

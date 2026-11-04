@@ -6,7 +6,7 @@
 
     <div class="settings-grid">
       <button class="settings-card panel" type="button" @click="router.push('/settings/ai')">
-        <span class="settings-card__title">AI 配置</span>
+        <span class="settings-card__title">AI 设置</span>
         <span class="settings-card__desc">供应商档案、API Key、优先级与降级</span>
       </button>
       <button class="settings-card panel" type="button" @click="router.push('/settings/knowledge')">
@@ -14,8 +14,16 @@
         <span class="settings-card__desc">存储路径、文件模式、索引策略</span>
       </button>
       <button class="settings-card panel" type="button" @click="router.push('/settings/modules')">
-        <span class="settings-card__title">模块树管理</span>
+        <span class="settings-card__title">模块树设置</span>
         <span class="settings-card__desc">四级结构维护与功能点 AI 能力绑定</span>
+      </button>
+      <button class="settings-card panel" type="button" @click="router.push('/settings/automation')">
+        <span class="settings-card__title">自动化管理设置</span>
+        <span class="settings-card__desc">Python 解释器路径与用例执行超时</span>
+      </button>
+      <button class="settings-card panel" type="button" @click="router.push('/settings/performance')">
+        <span class="settings-card__title">性能测试管理设置</span>
+        <span class="settings-card__desc">JMeter 安装目录与启动参数</span>
       </button>
     </div>
 
@@ -97,6 +105,11 @@ import type { DbBackup, SystemConfigItem } from '@/api/types'
 const router = useRouter()
 
 const configs = ref<SystemConfigItem[]>([])
+/**
+ * 自动化与性能相关的配置项有专门的设置卡片（解释器路径、JMeter 目录），
+ * 这里不再重复列出，避免两处入口改同一个键互相覆盖。
+ */
+const DEDICATED_PREFIXES = ['automation.', 'performance.']
 const saving = ref(false)
 
 const auditColumns: ColumnDef[] = [
@@ -131,7 +144,10 @@ const auditSearchFields: SearchField[] = [
 
 async function loadConfig(): Promise<void> {
   try {
-    configs.value = await settingsApi.config()
+    const all = await settingsApi.config()
+    configs.value = all.filter(
+      (item) => !DEDICATED_PREFIXES.some((prefix) => item.key.startsWith(prefix)),
+    )
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载配置失败')
   }
