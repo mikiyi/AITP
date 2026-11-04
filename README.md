@@ -56,7 +56,7 @@ stop.bat          :: Windows
 
 ## 功能地图
 
-前端 23 条路由 / 23 个页面组件，后端 14 个蓝图统一挂在 `/api/v1` 下。
+前端 30 条路由 / 30 个页面组件，后端 17 个蓝图统一挂在 `/api/v1` 下。
 
 ### 工作台首页
 
@@ -84,8 +84,86 @@ stop.bat          :: Windows
 | 提示词优化 | `prompt_optimize` | 把粗略描述改写成结构化提示词 |
 
 - **智能路由**：输入一句话，自动匹配最合适的能力。
+- **执行前预检**：跑之前先体检，列出缺项、完整度、主/辅助任务与执行顺序，不让用户等到模型返回才发现漏填。
 - **会话记录**：每次运行留痕，可回看输入、输出、模型、用量与降级情况。
 - **流式输出**：SSE 增量返回，首选模型失败时先弹降级提示再切模型。
+
+### 执行前预检
+
+`POST /api/v1/lab/preflight` —— 纯本地计算，不调模型，一次说清四件事：
+
+| 内容 | 说明 |
+|---|---|
+| 缺项 | 哪些必填变量没给、哪些可选变量没给（判定口径与提示词渲染完全一致） |
+| 完整度 | 必填信息填了几成，结论会被削到多细 |
+| 主/辅助任务 | 谁是主任务、谁是辅助任务 |
+| 执行顺序 | 建议的流水线顺序 |
+
+- 能力入口页（`/lab`）点「智能匹配」后自动带出预检面板。
+- **顺序执行前也会跑同一套校验**：能力不存在、必填变量缺一个，直接在开跑前拦下，不留半截流水线。
+- 没有可用模型时如实标为阻断项，不静默放行。
+
+### 多入口顺序执行
+
+页面：**AI 实验室 → 顺序执行**（`/lab/pipeline`）。多个能力排成一条流水线：
+
+- 父任务（`composite`）串起整条流水线，子任务代表每个入口，步骤轨迹逐条落库（表 `biz_ai_step`）。
+- 每一步都真实调用模型，记录输入摘要、输出摘要、模型、耗时与状态。
+- 任一步失败默认停下并标清失败原因，也可选择继续跑完剩下的步骤。
+- 步骤变量直接按提示词模板渲染，与后端校验用的是同一份变量清单。
+
+接口：`POST /api/v1/lab/composite/run`、`GET /api/v1/lab/tasks/<id>/trajectory`。
+
+### 编排入口
+
+页面：**编排与验证 → 编排入口**（`/workbench/entries`）。把一段固定工作流封装成可复用的资产：
+
+- 入口有编号、名称、触发词、必填信息清单、引用的知识条目，还有一条按顺序执行的能力流水线。
+- 入口可存草稿、发布版本；**发布时版本号 +1**，运行时用哪个版本事后能查。
+- 运行结果带回入口号与版本号，便于回溯「这次跑的是哪一版」。
+
+接口：`GET/POST /api/v1/workbench/entries`、`POST /api/v1/workbench/entries/<id>/publish`、
+`POST /api/v1/workbench/entries/<id>/run`、`DELETE /api/v1/workbench/entries/<id>`。
+
+### 案例验证沙箱
+
+页面：**编排与验证 → 验证沙箱**（`/workbench/validation`）。把「行为不能漂移」变成可执行的夹具：
+
+- 每个案例给一段输入，写清楚期望命中哪些能力、期望出现哪些缺项、期望触发哪些行为安全规则。
+- 跑一次沙箱，实际结果与期望逐条比对，差在哪条直接列进差异清单，结果回写案例表。
+- 支持单个案例运行与全量验证（全量给出通过率）。
+
+接口：`POST /api/v1/validation/cases/<id>/run`、`POST /api/v1/validation/run-all`。
+
+### 回归清单
+
+页面：**测试资产 → 回归清单**（`/regressions`）。清单的来源有两种：手工写，或者让 AI 按变更范围生成。
+
+- 生成的条目落到明细表逐条跟踪状态：每条验证目标对应一个执行结果（通过 / 失败 / 阻塞 / 未执行 + 备注）。
+- 整单状态由明细结果回推，不允许「清单写了但没人跑」。
+- 接口：`POST /api/v1/regressions/<id>/generate`、`POST /api/v1/regressions/<id>/execute`。
+
+### 用例树
+
+页面：**测试资产 → 用例树**（`/test-cases/tree`）。功能点树上挂各自的用例：
+
+- 树上按层级统计用例数，点节点看该节点下的用例；未挂功能点的用例单列一表，不丢件。
+- 接口：`GET /api/v1/test-cases/tree?projectId=…`。
+
+### 实体关联
+
+页面：**编排与验证 → 实体关联**（`/workbench/relations`）。跨实体建立引用关系：
+
+- 关联是双向的：同一条关系在来源侧和目标侧都能查到，并标出方向与对端实体。
+- 支持「按实体查看」与「全量关联」两种视角，关系类型来自代码内白名单。
+- 接口：`GET/POST /api/v1/relations`、`GET /api/v1/relations/of?type=…&id=…`。
+
+### 提示词库
+
+页面：**AI 实验室 → 提示词库**（`/lab/prompts`）。20 个提示词模板可视化：
+
+- 卡片展示标题、说明与变量清单，必填变量与可选变量分开标；点开可看 Markdown 正文。
+- 页面上的变量清单就是后端渲染时校验的那一份，缺一个必填变量后端会回 120102。
 
 ### AI 执行记录
 
@@ -98,7 +176,16 @@ stop.bat          :: Windows
 | 风险点 | 命中行为安全规则的条目：批准性结论、涉及 P0/P1、Prompt 测试结果、引用无法核实、信息不足 |
 | 人工复核 | 待复核 / 已采纳 / 已驳回 + 备注，复核动作写入审计日志 |
 
-- 页面：**AI 实验室 → 执行记录**（`/lab/records`），支持按能力、复核状态、风险等级筛选，筛选与分页同样写进地址栏。
+补四段，把一次执行还原得完整：
+
+| 段落 | 内容 |
+|---|---|
+| 原始输入 | 本次喂给模型的变量原样留档 |
+| 路由命中 | 智能路由给出的候选能力与命中理由 |
+| 步骤轨迹 | 顺序执行时每一步的模型、耗时与产出摘要 |
+| 模型用量 | token 用量等模型侧统计 |
+
+- 页面：**AI 实验室 → 执行记录**（`/lab/records`），支持按能力、复核状态、风险等级筛选，筛选与分页同样写进地址栏；详情页四段分开展示。
 - 高风险记录（涉及 P0/P1、出现「可以上线」这类结论、引用无法核实）**强制标记为需人工复核**。
 - 接口：`GET /api/v1/ai-records`、`GET /api/v1/ai-records/<id>`、`POST /api/v1/ai-records/<id>/review`。
 
@@ -117,10 +204,11 @@ stop.bat          :: Windows
 |---|---|
 | 项目 | 项目增删改查、当前项目切换 |
 | 需求 | 需求维护、关联模块、批量删除、CSV/JSON 导出 |
-| 测试用例 | 用例 CRUD、状态流转、xlsx 导入导出、批量执行与批量删除、CSV/JSON 导出 |
+| 测试用例 | 用例 CRUD、状态流转、xlsx 导入导出、批量执行与批量删除、CSV/JSON 导出、用例树 |
 | 缺陷 | 缺陷 CRUD、状态机流转、关联用例、日志附件、缺陷分析、批量删除、CSV/JSON 导出 |
 | 知识库 | 待审池 → 正式库、版本、审核、引用保护、全文检索、批量通过驳回、CSV/JSON 导出 |
 | 测试报告 | 报告生成/采纳、ECharts 图表、md/html/pdf/print 导出 |
+| 回归清单 | 清单 CRUD、AI 生成回归条目、明细逐条回写执行结果 |
 
 > 列表页的筛选与分页会写进地址栏，链接可直接分享，刷新或粘贴链接都能还原当前视图；
 > 导出走的是列表当前筛选条件，不是全量导出。
@@ -199,10 +287,10 @@ stop.bat          :: Windows
 
 ```bash
 python -m mypy                          # 后端类型门禁（--strict，100 个源文件）
-python backend/scripts/smoke_api.py     # API 冒烟（247 项）
+python backend/scripts/smoke_api.py     # API 冒烟（311 项）
 python backend/scripts/check_security.py     # 密钥/注入/路径安全回归
 python backend/scripts/check_types.py        # mypy 门禁封装
-python backend/scripts/check_walkthrough.py   # 固定走查案例（路由顺序 + 降级 + 安全规则 + 复核闭环）
+python backend/scripts/check_walkthrough.py   # 固定走查案例（路由顺序 + 降级 + 安全规则 + 复核闭环 + 预检/顺序执行/编排/验证沙箱/回归）
 python backend/scripts/check_lab.py          # AI 实验室能力回归
 python backend/scripts/check_prompts.py      # 提示词库校验
 python backend/scripts/check_knowledge_governance.py  # 知识治理回归
@@ -224,13 +312,13 @@ cd frontend && npm run build   # vue-tsc --noEmit && vite build
 ```
 backend/
   aitp/
-    api/          14 个蓝图：workbench/lab/ai/ai-records/search/projects/requirements/modules
-                  test-cases/bugs/knowledge/reports/settings/meta
+    api/          17 个蓝图：workbench/lab/ai/ai-records/search/projects/requirements/modules
+                  test-cases/bugs/knowledge/reports/regressions/relations/validation/settings/meta
     ai/           resolver（优先级解析）、client（降级）、adapters（openai_compat/ollama_native）
     common/       常量、校验、分页、密钥库、安全工具
     db/           连接与迁移
     repositories/ 参数化 SQL 仓储层
-    services/     知识落盘、报告导出、xlsx、xmind、备份恢复、AI 自检
+    services/     知识落盘、报告导出、xlsx、xmind、备份恢复、AI 自检、预检、顺序执行、编排、验证沙箱、回归、关联
     prompts/      提示词模板库
     static/       前端构建产物（由 npm run build 生成）
   prompts/        提示词 YAML
@@ -239,8 +327,8 @@ frontend/
   src/
     api/          统一请求层（仅 request.ts / stream.ts 允许出现 fetch）
     components/   通用组件
-    composables/  useEchart 等
-    views/        23 个页面组件
+    composables/  useEchart、usePromptTemplates 等
+    views/        30 个页面组件
 data/             运行时数据（SQLite、日志、密钥、导出文件）
 data/backups/     数据库备份快照（与 SQLite 同级，恢复前会自动留一份安全备份）
 knowledge/        知识库 Markdown 落盘目录
