@@ -58,7 +58,7 @@
           <span v-else class="muted">未执行</span>
         </template>
         <template #lastRunAt="{ row }">
-          <span :class="{ muted: !row.lastRunAt }">{{ formatTime(row.lastRunAt) }}</span>
+          <span :class="{ muted: !row.lastRunAt }">{{ dateTimeText(row.lastRunAt) }}</span>
         </template>
         <template #status="{ row }">
           <el-tag :type="row.status === 'ready' ? 'success' : 'info'" size="small" effect="plain">
@@ -177,7 +177,7 @@
           <template #default="{ row }">{{ row.durationMs ?? 0 }} ms</template>
         </el-table-column>
         <el-table-column label="开始时间" width="170">
-          <template #default="{ row }">{{ formatTime(row.startedAt) }}</template>
+          <template #default="{ row }">{{ dateTimeText(row.startedAt) }}</template>
         </el-table-column>
         <el-table-column prop="errorMessage" label="说明" min-width="180" show-overflow-tooltip />
       </el-table>
@@ -206,6 +206,7 @@ import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from
 import MetricCard from '@/components/MetricCard.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
 import { automationApi } from '@/api'
+import { dateTimeText } from '@/utils/format'
 import type {
   AutomationCategory,
   AutomationCategoryInfo,
@@ -520,18 +521,6 @@ function runTagType(status: string): 'success' | 'danger' | 'warning' | 'info' {
     return 'warning'
   }
   return 'info'
-}
-
-function formatTime(raw: string): string {
-  if (!raw) {
-    return '-'
-  }
-  const date = new Date(raw)
-  if (Number.isNaN(date.getTime())) {
-    return raw
-  }
-  const pad = (value: number): string => String(value).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
 async function reloadAll(): Promise<void> {

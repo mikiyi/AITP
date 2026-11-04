@@ -29,7 +29,7 @@
           <el-descriptions-item label="需求">{{ detail.requirementId ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="来源">{{ detail.source ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="标签">{{ detail.tags ?? '-' }}</el-descriptions-item>
-          <el-descriptions-item label="创建时间">{{ detail.createdAt ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="创建时间">{{ dateTimeText(detail.createdAt) }}</el-descriptions-item>
         </el-descriptions>
       </div>
 
@@ -59,6 +59,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Back } from '@element-plus/icons-vue'
 import { caseApi } from '@/api'
 import type { TestCase } from '@/api/types'
+import { dateTimeText } from '@/utils/format'
 
 const route = useRoute()
 const router = useRouter()

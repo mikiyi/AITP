@@ -89,7 +89,9 @@
             </template>
           </el-table-column>
           <el-table-column prop="remark" label="备注" min-width="160" show-overflow-tooltip />
-          <el-table-column prop="createdAt" label="创建时间" width="170" />
+          <el-table-column label="创建时间" width="170">
+            <template #default="{ row }">{{ dateTimeText(row.createdAt) }}</template>
+          </el-table-column>
           <el-table-column label="操作" width="90" fixed="right">
             <template #default="scope">
               <el-button link type="danger" @click="remove(scope.row.id)">删除</el-button>
@@ -160,6 +162,7 @@ import { ElMessage } from 'element-plus'
 import { Plus, Refresh, RefreshLeft, Search } from '@element-plus/icons-vue'
 import { relationApi } from '@/api'
 import type { EntityRelation } from '@/api/types'
+import { dateTimeText } from '@/utils/format'
 
 const ENTITY_LABELS: Record<string, string> = {
   requirement: '需求',

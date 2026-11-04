@@ -62,7 +62,9 @@
           <el-table-column prop="toStatus" label="新状态" width="110" />
           <el-table-column prop="operator" label="操作人" width="120" />
           <el-table-column prop="comment" label="说明" min-width="200" />
-          <el-table-column prop="createdAt" label="时间" width="170" />
+          <el-table-column label="时间" width="170">
+            <template #default="{ row }">{{ dateTimeText(row.createdAt) }}</template>
+          </el-table-column>
         </el-table>
       </div>
     </div>
@@ -78,6 +80,7 @@ import { ElMessage } from 'element-plus'
 import { Back } from '@element-plus/icons-vue'
 import { bugApi } from '@/api'
 import type { Bug, BugLog } from '@/api/types'
+import { dateTimeText } from '@/utils/format'
 
 const route = useRoute()
 const router = useRouter()

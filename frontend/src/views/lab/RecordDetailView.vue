@@ -25,8 +25,8 @@
           <el-descriptions-item label="结论摘要" :span="2">
             {{ record.summary || '-' }}
           </el-descriptions-item>
-          <el-descriptions-item label="执行时间">{{ record.createdAt }}</el-descriptions-item>
-          <el-descriptions-item label="最近更新">{{ record.updatedAt }}</el-descriptions-item>
+          <el-descriptions-item label="执行时间">{{ dateTimeText(record.createdAt) }}</el-descriptions-item>
+          <el-descriptions-item label="最近更新">{{ dateTimeText(record.updatedAt) }}</el-descriptions-item>
         </el-descriptions>
       </div>
 
@@ -209,6 +209,7 @@ import { ArrowLeft } from '@element-plus/icons-vue'
 import MarkdownView from '@/components/MarkdownView.vue'
 import { recordApi } from '@/api'
 import type { AiRecord } from '@/api/types'
+import { dateTimeText } from '@/utils/format'
 
 const route = useRoute()
 const router = useRouter()

@@ -16,7 +16,7 @@
             {{ message.role === 'user' ? '用户' : '助手' }}
           </el-tag>
           <span v-if="message.model" class="muted">{{ message.model }}</span>
-          <span v-if="message.createdAt" class="muted">{{ message.createdAt }}</span>
+          <span v-if="message.createdAt" class="muted">{{ dateTimeText(message.createdAt) }}</span>
         </div>
         <MarkdownView :source="message.content" />
         <el-collapse v-if="message.reasoning" class="session-message__reasoning">
@@ -37,6 +37,7 @@ import { Back } from '@element-plus/icons-vue'
 import MarkdownView from '@/components/MarkdownView.vue'
 import { labApi } from '@/api'
 import type { AiMessage, AiSession } from '@/api/types'
+import { dateTimeText } from '@/utils/format'
 
 const route = useRoute()
 const router = useRouter()

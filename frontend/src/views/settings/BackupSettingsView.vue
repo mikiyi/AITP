@@ -16,7 +16,7 @@
         <el-descriptions-item label="数据库文件">{{ dbPath || '-' }}</el-descriptions-item>
         <el-descriptions-item label="备份目录">{{ backupDir || '-' }}</el-descriptions-item>
         <el-descriptions-item label="备份数量">{{ backups.length }} 份</el-descriptions-item>
-        <el-descriptions-item label="最近备份">{{ backups[0]?.createdAt || '暂无' }}</el-descriptions-item>
+        <el-descriptions-item label="最近备份">{{ backups.length ? dateTimeText(backups[0].createdAt) : '暂无' }}</el-descriptions-item>
       </el-descriptions>
       <p class="muted settings-block__hint">
         备份用 SQLite 快照生成单文件，包含项目、需求、用例、缺陷、知识、报告、AI 记录与配置；
@@ -41,7 +41,9 @@
 
       <el-table v-loading="loading" :data="backups" size="small" border max-height="380">
         <el-table-column prop="name" label="备份文件" min-width="240" />
-        <el-table-column prop="createdAt" label="时间" width="170" />
+        <el-table-column label="时间" width="170">
+          <template #default="{ row }">{{ dateTimeText(row.createdAt) }}</template>
+        </el-table-column>
         <el-table-column label="大小" width="100" align="right">
           <template #default="{ row }">{{ formatSize(row.sizeBytes) }}</template>
         </el-table-column>
@@ -95,6 +97,7 @@ import type { UploadRequestOptions } from 'element-plus'
 import { Back, Refresh, Upload } from '@element-plus/icons-vue'
 import { settingsApi } from '@/api'
 import type { DbBackup } from '@/api/types'
+import { dateTimeText } from '@/utils/format'
 
 const router = useRouter()
 

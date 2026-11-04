@@ -99,6 +99,7 @@ import { ElMessage } from 'element-plus'
 import type { TableInstance } from 'element-plus'
 import { Refresh, Search } from '@element-plus/icons-vue'
 import type { PagePayload } from '@/api/request'
+import { dateTimeText } from '@/utils/format'
 
 export interface ColumnDef<T = Record<string, any>> {
   prop: string
@@ -188,7 +189,14 @@ function format(column: ColumnDef, row: T): string {
     return column.formatter(row)
   }
   const value = row[column.prop]
-  return value === null || value === undefined || value === '' ? '-' : String(value)
+  if (value === null || value === undefined || value === '') {
+    return '-'
+  }
+  // 接口字段约定：以 At 结尾的都是时间戳，一律转成「本地时间 年-月-日 时:分:秒」
+  if (column.prop.endsWith('At')) {
+    return dateTimeText(value)
+  }
+  return String(value)
 }
 
 function onRowClick(row: RawRow): void {

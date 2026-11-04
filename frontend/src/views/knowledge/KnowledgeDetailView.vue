@@ -69,7 +69,9 @@
           <el-table-column prop="refType" label="引用类型" width="130" />
           <el-table-column prop="label" label="引用来源" min-width="220" />
           <el-table-column prop="refId" label="标识" width="100" />
-          <el-table-column prop="createdAt" label="时间" width="170" />
+          <el-table-column label="时间" width="170">
+            <template #default="{ row }">{{ dateTimeText(row.createdAt) }}</template>
+          </el-table-column>
         </el-table>
       </div>
     </div>
@@ -92,6 +94,7 @@ import { Back, DocumentCopy, Edit, Remove } from '@element-plus/icons-vue'
 import MarkdownView from '@/components/MarkdownView.vue'
 import { knowledgeApi } from '@/api'
 import type { KnowledgeArticle, KnowledgeRef } from '@/api/types'
+import { dateTimeText } from '@/utils/format'
 import { useReferenceGuard } from '@/composables/useReferenceGuard'
 import ReferenceBlockDialog from '@/components/ReferenceBlockDialog.vue'
 

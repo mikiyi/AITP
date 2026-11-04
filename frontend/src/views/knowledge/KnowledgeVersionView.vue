@@ -23,7 +23,9 @@
           </el-table-column>
           <el-table-column prop="reviewer" label="审核人" width="110" />
           <el-table-column prop="changeLog" label="变更说明" min-width="160" />
-          <el-table-column prop="createdAt" label="时间" width="170" />
+          <el-table-column label="时间" width="170">
+            <template #default="{ row }">{{ dateTimeText(row.createdAt) }}</template>
+          </el-table-column>
           <el-table-column label="操作" width="190">
             <template #default="scope">
               <el-button link type="primary" @click="viewVersion(scope.row.version)">查看</el-button>
@@ -69,6 +71,7 @@ import { Back } from '@element-plus/icons-vue'
 import MarkdownView from '@/components/MarkdownView.vue'
 import { knowledgeApi } from '@/api'
 import type { KnowledgeVersion } from '@/api/types'
+import { dateTimeText } from '@/utils/format'
 
 const route = useRoute()
 const router = useRouter()

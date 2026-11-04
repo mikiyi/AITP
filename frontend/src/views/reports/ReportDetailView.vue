@@ -52,7 +52,7 @@
           <el-descriptions-item label="状态">{{ report.status ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="统计开始">{{ report.periodStart || '-' }}</el-descriptions-item>
           <el-descriptions-item label="统计结束">{{ report.periodEnd || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="更新时间">{{ report.updatedAt ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="更新时间">{{ dateTimeText(report.updatedAt) }}</el-descriptions-item>
         </el-descriptions>
 
         <el-divider />
@@ -129,6 +129,7 @@ import MarkdownView from '@/components/MarkdownView.vue'
 import MetricCard from '@/components/MetricCard.vue'
 import ReportCharts from '@/components/ReportCharts.vue'
 import { reportApi } from '@/api'
+import { dateTimeText } from '@/utils/format'
 import type { Report, ReportItem, ReportStats } from '@/api/types'
 
 const route = useRoute()

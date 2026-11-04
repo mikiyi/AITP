@@ -133,7 +133,9 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="createdAt" label="时间" min-width="160" />
+          <el-table-column label="时间" min-width="170">
+            <template #default="{ row }">{{ dateTimeText(row.createdAt) }}</template>
+          </el-table-column>
         </el-table>
       </div>
 
@@ -162,6 +164,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import type { EChartsOption } from 'echarts'
+import { dateTimeText } from '@/utils/format'
 import MetricCard from '@/components/MetricCard.vue'
 import ModuleTree from '@/components/ModuleTree.vue'
 import QuickEntryGrid from '@/components/QuickEntryGrid.vue'
