@@ -16,7 +16,7 @@
       description="请确认 AITP 后端已启动（默认 http://127.0.0.1:8760），然后点击「刷新」重试。"
     />
 
-    <SmartEntry class="home__entry" />
+    <KnowledgeAssistant compact class="home__assistant" />
 
     <!-- 数据资产卡 -->
     <div class="home__assets">
@@ -108,7 +108,10 @@
 
     <!-- 快捷入口 -->
     <div class="panel panel-pad home__section">
-      <div class="home__section-title">功能快捷入口</div>
+      <div class="home__section-title">
+        功能快捷入口
+        <span class="home__section-hint">只展示常用的 10 个入口，不足时按系统原顺序补位</span>
+      </div>
       <QuickEntryGrid :entries="shortcuts" />
     </div>
 
@@ -160,7 +163,7 @@ import type { EChartsOption } from 'echarts'
 import MetricCard from '@/components/MetricCard.vue'
 import ModuleTree from '@/components/ModuleTree.vue'
 import QuickEntryGrid from '@/components/QuickEntryGrid.vue'
-import SmartEntry from '@/components/SmartEntry.vue'
+import KnowledgeAssistant from '@/components/KnowledgeAssistant.vue'
 import { moduleApi, workbenchApi } from '@/api'
 import type { ModuleNode, QuickEntry, WorkbenchOverview } from '@/api/types'
 import { useEchart } from '@/composables/useEchart'
@@ -303,8 +306,15 @@ onMounted(() => {
   margin-bottom: 12px;
 }
 
-.home__entry {
+.home__assistant {
   margin-bottom: 14px;
+}
+
+.home__section-hint {
+  margin-left: 10px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--aitp-text-weak);
 }
 
 .home__assets,

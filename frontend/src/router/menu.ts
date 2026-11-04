@@ -110,7 +110,16 @@ export const MENU_NODES: MenuNode[] = [
       { path: '/automation/performance', title: '性能测试管理', icon: Stopwatch },
     ],
   },
-  { type: 'item', path: '/knowledge', title: '知识库', icon: Reading },
+  {
+    type: 'group',
+    key: 'knowledge',
+    title: '知识库',
+    icon: Reading,
+    children: [
+      { path: '/knowledge', title: '知识库管理', icon: Collection },
+      { path: '/knowledge/assistant', title: '知识库问答助手', icon: ChatDotRound },
+    ],
+  },
   {
     type: 'group',
     key: 'flow',

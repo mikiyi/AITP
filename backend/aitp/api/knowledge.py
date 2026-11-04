@@ -6,6 +6,9 @@ from typing import Any
 
 from flask import Blueprint, Response, request
 
+from ..ai.client import chat_with_fallback
+from ..ai.safety import needs_human_review
+from ..common.constants import EGRESS_NONE, EGRESS_THIRD_PARTY
 from ..common.validators import check_choice, optional_str, require_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
@@ -29,6 +32,70 @@ bp = Blueprint("knowledge", __name__)
 
 ARTICLE_FILTERS = {"category": "category", "sourceType": "source_type", "moduleId": "module_id"}
 DRAFT_FILTERS = {"reviewStatus": "review_status", "sourceType": "source_type", "moduleId": "module_id"}
+
+
+#: 问答助手的三种回答方式
+ASSISTANT_MODES = ("kb", "llm", "hybrid")
+
+
+@bp.post("/ask")
+def ask_assistant() -> Response:
+    """知识库问答助手：知识库直答 / 纯大模型 / 知识库 + 大模型补强。"""
+    conn = db()
+    data = body()
+    question = require_str(data.get("question"), "question", 2000)
+    mode = check_choice(str(data.get("mode") or "hybrid"), ASSISTANT_MODES, "mode", "hybrid") or "hybrid"
+
+    from ..services import lab_service
+    from ..prompts.registry import get_registry
+
+    context = ""
+    refs: list[dict[str, Any]] = []
+    if mode != "llm":
+        context, refs = lab_service.retrieve_knowledge_context(conn, question)
+
+    if mode == "kb":
+        # 纯本地：直接把检索到的原文交给用户，不调模型
+        if context:
+            answer = "以下内容摘自知识库，未经模型加工：" + chr(10) + chr(10) + context
+        else:
+            answer = "知识库中没有检索到与问题相关的内容。可以换个说法，或先到「知识库管理」补充条目。"
+        return ok({
+            "mode": mode,
+            "answer": answer,
+            "refs": refs,
+            "model": "",
+            "latencyMs": 0,
+            "usage": {},
+            "egress": EGRESS_NONE,
+            "egressWarning": "",
+            "reviewRequired": False,
+        })
+
+    prompt = get_registry().render("knowledge-assistant", {
+        "question": question,
+        "context": context or "（未提供）",
+    })
+    outcome = chat_with_fallback(
+        lab_service.available_candidates(None),
+        lab_service.build_messages(prompt),
+    )
+    answer = (outcome.result.content or "").strip()
+    third_party = outcome.config.egress == EGRESS_THIRD_PARTY
+    return ok({
+        "mode": mode,
+        "answer": answer,
+        "refs": refs,
+        "model": outcome.result.model or outcome.config.model,
+        "latencyMs": outcome.result.latency_ms,
+        "usage": outcome.result.usage.as_dict(),
+        "egress": outcome.config.egress,
+        "egressWarning": (
+            "本次回答会把问题和检索到的知识发送到第三方模型，请注意数据脱敏。" if third_party else ""
+        ),
+        "reviewRequired": needs_human_review(answer),
+        "degrade": outcome.degrade.as_dict(),
+    })
 
 
 @bp.get("/categories")

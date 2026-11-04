@@ -49,6 +49,7 @@ SAMPLES: dict[str, dict[str, Any]] = {
         "projectName": "示例电商", "progressData": "完成 60%", "period": "第 3 周", "milestones": "登录上线",
     },
     "knowledge-qa": {"question": "登录失败怎么排查", "context": "[K1] 验证码 5 分钟有效"},
+    "knowledge-assistant": {"question": "登录失败怎么排查", "context": "[K1] 验证码 5 分钟有效"},
     "prompt-optimizer": {"capability": "用例生成", "capabilityGoal": "生成用例", "rawText": "写点用例"},
     "intent-router": {"rawText": "支付回调重复推送", "capabilityCatalog": "- bug_analysis"},
     "module-router": {"rawText": "支付回调重复推送", "moduleCatalog": "- id=1｜示例电商/交易/支付"},

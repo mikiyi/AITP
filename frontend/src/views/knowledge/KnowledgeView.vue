@@ -1,7 +1,7 @@
 <template>
   <div class="page">
     <div class="page-header">
-      <h2 class="page-title">知识库</h2>
+      <h2 class="page-title">知识库管理</h2>
       <div class="toolbar" style="margin: 0">
         <el-input
           v-model="keyword"

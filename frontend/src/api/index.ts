@@ -28,6 +28,7 @@ import type {
   DocTemplateUpload,
   DocumentAttachment,
   EntityRelation,
+  KnowledgeAnswer,
   KnowledgeArticle,
   KnowledgeCategory,
   KnowledgeDraft,
@@ -281,6 +282,9 @@ export const bugApi = {
 
 /** 知识库：待审池 + 正式库。 */
 export const knowledgeApi = {
+  /** 知识库问答助手：kb 纯本地检索 / llm 纯大模型 / hybrid 检索 + 大模型补强。 */
+  ask: (body: { question: string; mode: 'kb' | 'llm' | 'hybrid' }) =>
+    post<KnowledgeAnswer>('/knowledge/ask', body),
   /** 分类清单：内置中文分类 + 自定义分类。 */
   categories: () => get<{ list: KnowledgeCategory[] }>('/knowledge/categories'),
   createCategory: (name: string) => post<KnowledgeCategory>('/knowledge/categories', { name }),

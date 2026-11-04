@@ -1136,3 +1136,16 @@ export interface SqlAnalysis {
   createdAt?: string
   updatedAt?: string
 }
+
+/** 知识库问答助手的回答。 */
+export interface KnowledgeAnswer {
+  mode: 'kb' | 'llm' | 'hybrid'
+  answer: string
+  refs: Array<{ marker: string; articleId: Id; title: string; category?: string }>
+  model: string
+  latencyMs: number
+  usage: Record<string, unknown>
+  egress: string
+  egressWarning: string
+  reviewRequired: boolean
+}
