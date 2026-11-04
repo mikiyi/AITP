@@ -93,7 +93,7 @@
                   v-model="step.variables[name]"
                   type="textarea"
                   :rows="2"
-                  :placeholder="`必填：${name}`"
+                  :placeholder="textareaHint(`必填：${name}`)"
                 />
               </el-form-item>
               <el-form-item v-for="name in optionalOf(step)" :key="`o-${name}`" :label="name">
@@ -173,7 +173,7 @@
             v-model="preflightText"
             type="textarea"
             :rows="4"
-            placeholder="描述要做的事，例如：支付回调重复推送导致金额翻倍"
+            :placeholder="textareaHint('描述要做的事，例如：支付回调重复推送导致金额翻倍')"
           />
         </el-form-item>
       </el-form>
@@ -199,6 +199,7 @@ import {
 } from '@element-plus/icons-vue'
 import { labApi } from '@/api'
 import { percentText } from '@/utils/format'
+import { textareaHint } from '@/utils/inputHints'
 import { useAiGuardStore } from '@/stores/aiGuard'
 import type { PipelineResult, PreflightResult } from '@/api/types'
 import { usePromptTemplates } from '@/composables/usePromptTemplates'

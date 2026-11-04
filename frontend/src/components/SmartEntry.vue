@@ -6,7 +6,7 @@
         type="textarea"
         :rows="2"
         resize="none"
-        placeholder="描述你要做的事（例：支付回调重复推送导致金额翻倍），自动匹配 AI 能力与功能点"
+        :placeholder="textareaHint('描述你要做的事（例：支付回调重复推送导致金额翻倍），自动匹配 AI 能力与功能点')"
         @keyup.ctrl.enter="route"
       />
       <div class="smart-entry__actions">
@@ -146,6 +146,7 @@ import { labApi } from '@/api'
 import type { ModuleRouteResult, PreflightResult, RouteResponse, RouteResult } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 import { percentText } from '@/utils/format'
+import { textareaHint } from '@/utils/inputHints'
 import { useAiGuardStore } from '@/stores/aiGuard'
 
 const router = useRouter()

@@ -78,7 +78,7 @@
               v-model="values[field.name]"
               type="textarea"
               :rows="field.rows ?? 6"
-              :placeholder="field.placeholder"
+              :placeholder="textareaHint(field.placeholder)"
             />
             <el-input
               v-else-if="field.type === 'number'"
@@ -669,6 +669,7 @@ import { useAiGuardStore } from '@/stores/aiGuard'
 import { useBadgeStore } from '@/stores/badges'
 import { DEFAULT_KNOWLEDGE_CATEGORY, useKnowledgeCategoryStore } from '@/stores/knowledgeCategory'
 import { useLabStore } from '@/stores/lab'
+import { textareaHint } from '@/utils/inputHints'
 import { CAPABILITY_FORMS, optionPromptText, primaryFieldOf, visibleFields, visibleOptions } from './capabilityForms'
 import { findNodeByPath, subtreeText, testpointToMindNodes } from './mindmap'
 

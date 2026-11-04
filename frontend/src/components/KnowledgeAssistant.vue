@@ -68,7 +68,7 @@
         :rows="2"
         maxlength="2000"
         resize="none"
-        placeholder="输入问题，Ctrl + Enter 发送"
+        :placeholder="textareaHint('输入问题，Ctrl + Enter 发送')"
         @keydown.ctrl.enter.prevent="send"
         @keydown.meta.enter.prevent="send"
       />
@@ -94,6 +94,7 @@ import MarkdownView from '@/components/MarkdownView.vue'
 import { knowledgeApi } from '@/api'
 import type { KnowledgeAnswer } from '@/api/types'
 import { useAiGuardStore } from '@/stores/aiGuard'
+import { textareaHint } from '@/utils/inputHints'
 
 withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
 
