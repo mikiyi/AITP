@@ -14,52 +14,21 @@
         router
         class="aitp-menu"
       >
-        <el-menu-item index="/">
-          <el-icon><HomeFilled /></el-icon>
-          <template #title>首页</template>
-        </el-menu-item>
-        <el-menu-item index="/todos">
-          <el-icon><List /></el-icon>
-          <template #title>任务清单</template>
-        </el-menu-item>
-        <el-sub-menu index="lab">
-          <template #title>
-            <el-icon><MagicStick /></el-icon>
-            <span>AI 实验室</span>
-          </template>
-          <el-menu-item index="/lab">能力总览</el-menu-item>
-          <el-menu-item index="/lab/pipeline">顺序执行</el-menu-item>
-          <el-menu-item index="/lab/prompts">提示词库</el-menu-item>
-          <el-menu-item index="/lab/sessions">会话记录</el-menu-item>
-          <el-menu-item index="/lab/records">执行记录</el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="asset">
-          <template #title>
-            <el-icon><Files /></el-icon>
-            <span>测试资产</span>
-          </template>
-          <el-menu-item index="/projects">项目</el-menu-item>
-          <el-menu-item index="/requirements">需求</el-menu-item>
-          <el-menu-item index="/test-cases">测试用例</el-menu-item>
-          <el-menu-item index="/test-cases/tree">用例树</el-menu-item>
-          <el-menu-item index="/bugs">缺陷</el-menu-item>
-          <el-menu-item index="/knowledge">知识库</el-menu-item>
-          <el-menu-item index="/regressions">回归清单</el-menu-item>
-          <el-menu-item index="/reports">测试报告</el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="flow">
-          <template #title>
-            <el-icon><Operation /></el-icon>
-            <span>编排与验证</span>
-          </template>
-          <el-menu-item index="/workbench/entries">编排入口</el-menu-item>
-          <el-menu-item index="/workbench/validation">验证沙箱</el-menu-item>
-          <el-menu-item index="/workbench/relations">实体关联</el-menu-item>
-        </el-sub-menu>
-        <el-menu-item index="/settings">
-          <el-icon><Setting /></el-icon>
-          <template #title>设置</template>
-        </el-menu-item>
+        <template v-for="node in menuNodes" :key="node.type === 'group' ? node.key : node.path">
+          <el-menu-item v-if="node.type === 'item'" :index="node.path">
+            <el-icon><component :is="node.icon" /></el-icon>
+            <template #title>{{ node.title }}</template>
+          </el-menu-item>
+          <el-sub-menu v-else :index="node.key">
+            <template #title>
+              <el-icon><component :is="node.icon" /></el-icon>
+              <span :class="{ 'is-active-group': isGroupActive(node, activePath) }">{{ node.title }}</span>
+            </template>
+            <el-menu-item v-for="child in node.children" :key="child.path" :index="child.path">
+              {{ child.title }}
+            </el-menu-item>
+          </el-sub-menu>
+        </template>
       </el-menu>
     </el-aside>
 
@@ -69,6 +38,7 @@
           <el-button text :icon="appStore.sidebarCollapsed ? Expand : Fold" @click="appStore.toggleSidebar()" />
           <el-breadcrumb separator="/">
             <el-breadcrumb-item :to="{ path: '/' }"><BrandName size="small" /></el-breadcrumb-item>
+            <el-breadcrumb-item v-if="groupTitle" :to="{ path: groupPath }">{{ groupTitle }}</el-breadcrumb-item>
             <el-breadcrumb-item v-if="pageTitle">{{ pageTitle }}</el-breadcrumb-item>
           </el-breadcrumb>
         </div>
@@ -124,13 +94,14 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Expand, Fold, Files, HomeFilled, List, MagicStick, Operation, Setting } from '@element-plus/icons-vue'
+import { Expand, Fold } from '@element-plus/icons-vue'
 import { get } from '@/api/request'
 import { settingsApi } from '@/api'
 import type { AiStatus } from '@/api/types'
 import GlobalSearch from '@/components/GlobalSearch.vue'
 import BrandName from '@/components/BrandName.vue'
 import { useAppStore } from '@/stores/app'
+import { MENU_NODES, isGroupActive, matchMenu } from '@/router/menu'
 
 const route = useRoute()
 const appStore = useAppStore()
@@ -222,33 +193,34 @@ const aiCandidateText = computed(() =>
     .join(' → '),
 )
 
-const activePath = computed(() => {
-  const path = route.path
-  if (path.startsWith('/lab/records')) {
-    return '/lab/records'
-  }
-  if (path.startsWith('/lab/sessions')) {
-    return '/lab/sessions'
-  }
-  if (path.startsWith('/lab/pipeline')) {
-    return '/lab/pipeline'
-  }
-  if (path.startsWith('/lab/prompts')) {
-    return '/lab/prompts'
-  }
-  if (path.startsWith('/lab/')) {
-    return '/lab'
-  }
-  if (path.startsWith('/workbench/')) {
-    return path
-  }
-  if (path.startsWith('/settings')) {
-    return '/settings'
-  }
-  return path
-})
+const menuNodes = MENU_NODES
+
+/** 当前路由命中的导航项，用来驱动侧栏高亮。 */
+const menuMatch = computed(() => matchMenu(route.path))
+const activePath = computed(() => menuMatch.value.path)
 
 const pageTitle = computed(() => (route.meta.title as string | undefined) ?? '')
+
+/**
+ * 面包屑里的分组标题：像「顺序执行」这类分组内入口要显示成「AI 实验室 / 顺序执行」，
+ * 分组标题与页面标题相同时（能力总览本身就是 AI 实验室首页）只保留一层。
+ */
+const groupTitle = computed(() => {
+  const group = menuMatch.value.group
+  if (!group || group === pageTitle.value) {
+    return ''
+  }
+  return group
+})
+
+/** 分组面包屑指向该分组的第一个入口。 */
+const groupPath = computed(() => {
+  const node = MENU_NODES.find(
+    (item) => item.type === 'group' && item.title === menuMatch.value.group,
+  )
+  return node && node.type === 'group' && node.children.length ? node.children[0].path : '/'
+})
+
 const routeKey = computed(() => route.path)
 
 function onProjectChange(id: number): void {
@@ -480,6 +452,22 @@ onUnmounted(() => {
 
 .aitp-menu::-webkit-scrollbar-thumb:hover {
   background: #a4abb6;
+}
+
+/* 选中的入口：颜色比默认的浅蓝加深一档，并加粗，一眼能看出当前在哪 */
+.aitp-menu :deep(.el-menu-item.is-active) {
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.aitp-menu :deep(.el-menu-item.is-active .el-icon) {
+  color: #1d4ed8;
+}
+
+/* 选中项所在的分组标题跟着高亮，层级关系看得清楚 */
+.aitp-menu :deep(.el-sub-menu__title .is-active-group) {
+  color: #1d4ed8;
+  font-weight: 700;
 }
 
 .aitp-header {
