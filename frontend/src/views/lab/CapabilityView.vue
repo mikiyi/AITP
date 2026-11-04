@@ -154,6 +154,36 @@
             </div>
           </el-form-item>
 
+          <el-form-item v-if="templateKind" label="产出物模板">
+            <div class="cap-template">
+              <el-switch v-model="useTemplate" @change="onTemplateToggle" />
+              <template v-if="useTemplate">
+                <el-select
+                  v-model="templateId"
+                  class="cap-template__select"
+                  placeholder="选择同类模板"
+                  :loading="templateLoading"
+                >
+                  <el-option
+                    v-for="item in templateOptions"
+                    :key="item.id"
+                    :label="item.name"
+                    :value="item.id"
+                  >
+                    <span>{{ item.name }}</span>
+                    <span class="cap-template__kind">{{ item.kindLabel }}</span>
+                  </el-option>
+                </el-select>
+                <el-button link type="primary" @click="router.push('/settings/templates')">
+                  管理模板
+                </el-button>
+              </template>
+              <span class="cap-template__hint">
+                开启后 AI 按模板的文档风格、格式与字号输出，产出可直接导出
+              </span>
+            </div>
+          </el-form-item>
+
           <PromptOptimizer
             v-model="values[primaryField]"
             :capability="capability"
@@ -171,6 +201,15 @@
               </el-button>
               <el-button :icon="CopyDocument" @click="copyOutput">复制</el-button>
               <el-button :icon="Download" @click="download">下载</el-button>
+              <el-button
+                v-if="excelCapable"
+                :icon="Grid"
+                :loading="exportingExcel"
+                :disabled="!finished || !output"
+                @click="exportExcel"
+              >
+                导出 Excel
+              </el-button>
               <el-button :icon="Collection" :disabled="!finished || !output" @click="saveToKnowledge">
                 加入知识库
               </el-button>
@@ -236,51 +275,142 @@
 
       <div class="panel panel-pad cap-output">
         <div class="cap-output__head">
-          <span class="cap-output__title">产出</span>
-          <span v-if="model" class="muted">模型：{{ model }}</span>
-          <span v-if="latencyMs" class="muted">耗时 {{ latencyMs }} ms</span>
-          <el-button v-if="reasoning" link type="primary" @click="reasoningVisible = true">
-            查看推理过程
-          </el-button>
+          <el-radio-group v-model="outputTab" size="small">
+            <el-radio-button value="current">本次产出</el-radio-button>
+            <el-radio-button value="history">历史产出（{{ historyTotal }}）</el-radio-button>
+          </el-radio-group>
+
+          <template v-if="outputTab === 'current'">
+            <span v-if="model" class="muted">模型：{{ model }}</span>
+            <span v-if="latencyMs" class="muted">耗时 {{ latencyMs }} ms</span>
+            <el-button v-if="reasoning" link type="primary" @click="reasoningVisible = true">
+              查看推理过程
+            </el-button>
+          </template>
+          <template v-else>
+            <span class="muted">每次执行的原文都留在这里，可回看、复制、下载</span>
+            <el-button link :icon="Refresh" :loading="historyLoading" @click="loadHistory(historyPage)">
+              刷新
+            </el-button>
+          </template>
         </div>
 
-        <div v-if="running" class="cap-output__loading">
-          <el-icon class="is-loading"><Loading /></el-icon>
-          <span>模型生成中…</span>
-        </div>
+        <!-- 本次产出 -->
+        <template v-if="outputTab === 'current'">
+          <div v-if="running" class="cap-output__loading">
+            <el-icon class="is-loading"><Loading /></el-icon>
+            <span>模型生成中…</span>
+          </div>
 
-        <template v-if="!running">
-          <MindMap
-            v-if="mindNodes.length"
-            :nodes="mindNodes"
-            :height="460"
-            @node-context="onNodeContext"
-          />
-          <el-alert
-            v-if="mindNodes.length && (capability === 'xmind_to_case' || capability === 'testpoint_generation')"
-            type="info"
-            :closable="false"
-            show-icon
-            title="右键脑图节点可按该节点单独生成用例"
-            class="mindmap-hint"
-          />
-          <MarkdownView v-else-if="output && !isJson" :source="output" />
-          <pre v-else-if="output" class="cap-output__json">{{ prettyJson }}</pre>
-          <el-empty v-if="!output && !mindNodes.length" description="尚无产出" :image-size="80" />
+          <template v-if="!running">
+            <MindMap
+              v-if="mindNodes.length"
+              :nodes="mindNodes"
+              :height="460"
+              @node-context="onNodeContext"
+            />
+            <el-alert
+              v-if="mindNodes.length && (capability === 'xmind_to_case' || capability === 'testpoint_generation')"
+              type="info"
+              :closable="false"
+              show-icon
+              title="右键脑图节点可按该节点单独生成用例"
+              class="mindmap-hint"
+            />
+            <MarkdownView v-else-if="output && !isJson" :source="output" />
+            <pre v-else-if="output" class="cap-output__json">{{ prettyJson }}</pre>
+            <el-empty v-if="!output && !mindNodes.length" :description="emptyDescription" :image-size="80" />
+          </template>
+
+          <div v-if="refs.length" class="cap-refs">
+            <span class="cap-refs__title">参考来源</span>
+            <el-tag
+              v-for="ref in refs"
+              :key="ref.marker"
+              class="cap-refs__item"
+              type="info"
+              effect="plain"
+              @click="router.push(`/knowledge/${ref.articleId}`)"
+            >
+              [{{ ref.marker }}] {{ ref.title }}
+            </el-tag>
+          </div>
         </template>
 
-        <div v-if="refs.length" class="cap-refs">
-          <span class="cap-refs__title">参考来源</span>
-          <el-tag
-            v-for="ref in refs"
-            :key="ref.marker"
-            class="cap-refs__item"
-            type="info"
-            effect="plain"
-            @click="router.push(`/knowledge/${ref.articleId}`)"
-          >
-            [{{ ref.marker }}] {{ ref.title }}
-          </el-tag>
+        <!-- 历史产出：左侧列表 + 右侧原文 -->
+        <div v-else class="cap-history">
+          <div class="cap-history__side">
+            <div v-if="history.length" class="cap-history__list">
+              <button
+                v-for="item in history"
+                :key="item.id"
+                type="button"
+                class="cap-history__item"
+                :class="{ 'is-active': historyDetail?.id === item.id }"
+                @click="openHistory(item)"
+              >
+                <div class="cap-history__item-top">
+                  <span class="cap-history__time">{{ formatRecordTime(item.createdAt) }}</span>
+                  <el-tag size="small" :type="reviewTagType(item)" effect="plain">
+                    {{ reviewText(item) }}
+                  </el-tag>
+                </div>
+                <div class="cap-history__summary">{{ item.summary || '（无摘要）' }}</div>
+                <div class="cap-history__meta">
+                  <span>{{ item.model || '本地规则' }}</span>
+                  <span v-if="item.latencyMs">{{ item.latencyMs }} ms</span>
+                </div>
+              </button>
+            </div>
+            <el-empty
+              v-else-if="!historyLoading"
+              description="还没有历史产出，执行一次后会出现在这里"
+              :image-size="64"
+            />
+
+            <el-pagination
+              v-if="historyTotal > HISTORY_PAGE_SIZE"
+              small
+              layout="prev, pager, next"
+              :total="historyTotal"
+              :page-size="HISTORY_PAGE_SIZE"
+              :current-page="historyPage"
+              class="cap-history__pager"
+              @current-change="loadHistory"
+            />
+          </div>
+
+          <div class="cap-history__view">
+            <template v-if="historyDetail">
+              <div class="cap-history__view-head">
+                <div class="cap-history__view-meta">
+                  <el-tag size="small" type="warning" effect="plain">历史记录</el-tag>
+                  <span class="muted">{{ formatRecordTime(historyDetail.createdAt) }}</span>
+                  <span v-if="historyDetail.model" class="muted">模型：{{ historyDetail.model }}</span>
+                  <span v-if="historyDetail.latencyMs" class="muted">耗时 {{ historyDetail.latencyMs }} ms</span>
+                </div>
+                <div class="cap-history__view-actions">
+                  <el-button link :icon="CopyDocument" @click="copyHistory">复制</el-button>
+                  <el-button link :icon="Download" @click="downloadHistory">下载</el-button>
+                  <el-button link type="primary" @click="router.push(`/lab/records/${historyDetail.id}`)">
+                    执行详情
+                  </el-button>
+                </div>
+              </div>
+
+              <MarkdownView
+                v-if="historyDetail.outputText && !historyIsJson"
+                :source="historyDetail.outputText"
+              />
+              <pre v-else-if="historyDetail.outputText" class="cap-output__json">{{ prettyHistoryJson }}</pre>
+              <el-empty
+                v-else
+                description="这条记录没有保存产出原文（旧版本记录），可查看执行详情"
+                :image-size="80"
+              />
+            </template>
+            <el-empty v-else description="选择左侧一条历史产出查看原文" :image-size="80" />
+          </div>
         </div>
       </div>
     </div>
@@ -417,20 +547,24 @@ import {
   Document,
   Download,
   FolderAdd,
+  Grid,
   Loading,
   Odometer,
   Picture,
   Promotion,
+  Refresh,
   Select,
   Upload,
 } from '@element-plus/icons-vue'
 import MarkdownView from '@/components/MarkdownView.vue'
 import MindMap from '@/components/MindMap.vue'
 import PromptOptimizer from '@/components/PromptOptimizer.vue'
-import { automationApi, caseApi, knowledgeApi, labApi, reportApi, requirementApi } from '@/api'
+import { automationApi, caseApi, knowledgeApi, labApi, recordApi, reportApi, requirementApi, templateApi } from '@/api'
 import { streamPost, type DegradeInfo } from '@/api/stream'
 import type {
   AdoptCaseItem,
+  AiRecord,
+  DocTemplate,
   DocumentAttachment,
   ImageAttachment,
   KnowledgeRef,
@@ -477,6 +611,212 @@ const parsing = ref(false)
 const finished = ref(false)
 /** xmind 解析出来的树，用于脑图展示与按节点生成用例。 */
 const xmindTree = ref<MindNode[]>([])
+
+/* ---- 产出物模板 ---- */
+
+/** 能力 → 可用的模板类别；空表示该能力不支持模板。 */
+const TEMPLATE_KIND: Record<string, 'case' | 'report' | 'mindmap'> = {
+  case_generation: 'case',
+  xmind_to_case: 'case',
+  api_test_design: 'case',
+  report_generation: 'report',
+  testpoint_generation: 'mindmap',
+}
+
+/** 支持导出 Excel 的能力。 */
+const EXCEL_CAPABILITIES = ['case_generation', 'xmind_to_case', 'api_test_design']
+
+const templateKind = computed(() => TEMPLATE_KIND[capability.value] ?? '')
+const excelCapable = computed(() => EXCEL_CAPABILITIES.includes(capability.value))
+
+const useTemplate = ref(false)
+const templateId = ref<number | null>(null)
+const templateOptions = ref<DocTemplate[]>([])
+const templateLoading = ref(false)
+
+async function loadTemplateOptions(): Promise<void> {
+  if (!templateKind.value) {
+    return
+  }
+  templateLoading.value = true
+  try {
+    const result = await templateApi.options(templateKind.value)
+    templateOptions.value = result.list
+    if (!result.list.length) {
+      ElMessage.warning('还没有该类型的测试文档模板，请先到「设置 → 测试文档模板设置」新增')
+      useTemplate.value = false
+      templateId.value = null
+      return
+    }
+    const stillExists = result.list.some((item) => item.id === templateId.value)
+    if (!stillExists) {
+      const preferred = result.list.find((item) => item.isDefault) ?? result.list[0]
+      templateId.value = preferred.id
+    }
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '加载产出物模板失败')
+  } finally {
+    templateLoading.value = false
+  }
+}
+
+function onTemplateToggle(value: string | number | boolean): void {
+  if (value) {
+    void loadTemplateOptions()
+  } else {
+    templateId.value = null
+  }
+}
+
+/* ---- Excel 导出 ---- */
+
+const exportingExcel = ref(false)
+
+async function exportExcel(): Promise<void> {
+  if (!output.value.trim()) {
+    ElMessage.warning('暂无产出')
+    return
+  }
+  exportingExcel.value = true
+  try {
+    const result = await labApi.exportOutput({
+      capability: capability.value,
+      output: output.value,
+      templateId: useTemplate.value && templateId.value ? templateId.value : undefined,
+    })
+    const url = URL.createObjectURL(result.blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = result.filename || `${capability.value}.xlsx`
+    link.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('已导出 Excel')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '导出失败')
+  } finally {
+    exportingExcel.value = false
+  }
+}
+
+/* ---- 历史产出 ---- */
+
+/** 右侧面板的两个页签：本次执行结果 / 该能力的历史执行记录。 */
+const outputTab = ref<'current' | 'history'>('current')
+const HISTORY_PAGE_SIZE = 10
+
+const history = ref<AiRecord[]>([])
+const historyTotal = ref(0)
+const historyPage = ref(1)
+const historyLoading = ref(false)
+const historyDetail = ref<AiRecord | null>(null)
+
+/** 本次还没产出时，引导用户去看已有的历史记录。 */
+const emptyDescription = computed(() =>
+  historyTotal.value > 0
+    ? `尚无产出，可切换到「历史产出」查看 ${historyTotal.value} 条记录`
+    : '尚无产出',
+)
+
+const historyIsJson = computed(() => {
+  const text = historyDetail.value?.outputText ?? ''
+  if (!text.trim()) {
+    return false
+  }
+  try {
+    JSON.parse(text)
+    return true
+  } catch {
+    return false
+  }
+})
+
+const prettyHistoryJson = computed(() => {
+  try {
+    return JSON.stringify(JSON.parse(historyDetail.value?.outputText ?? ''), null, 2)
+  } catch {
+    return historyDetail.value?.outputText ?? ''
+  }
+})
+
+/** 只按能力过滤，不带项目条件：同一能力在不同项目下的产出都值得回看。 */
+async function loadHistory(page = 1): Promise<void> {
+  historyLoading.value = true
+  try {
+    const result = await recordApi.list({
+      capability: capability.value,
+      pageNum: page,
+      pageSize: HISTORY_PAGE_SIZE,
+    })
+    history.value = result.list
+    historyTotal.value = result.total
+    historyPage.value = page
+    if (historyDetail.value && !result.list.some((item) => item.id === historyDetail.value?.id)) {
+      historyDetail.value = null
+    }
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '加载历史产出失败')
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+async function openHistory(item: AiRecord): Promise<void> {
+  try {
+    historyDetail.value = await recordApi.get(Number(item.id))
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '加载历史产出详情失败')
+  }
+}
+
+function copyHistory(): void {
+  const text = historyDetail.value?.outputText ?? ''
+  if (!text) {
+    ElMessage.warning('这条记录没有保存产出原文')
+    return
+  }
+  void navigator.clipboard.writeText(text).then(
+    () => ElMessage.success('已复制到剪贴板'),
+    () => ElMessage.error('复制失败，请手动选择文本'),
+  )
+}
+
+function downloadHistory(): void {
+  const text = historyDetail.value?.outputText ?? ''
+  if (!text) {
+    ElMessage.warning('这条记录没有保存产出原文')
+    return
+  }
+  const stamp = (historyDetail.value?.createdAt ?? '').replace(/[:.]/g, '-').slice(0, 19)
+  downloadText(text, `${capability.value}-${stamp || 'history'}.md`)
+}
+
+/** 执行记录里的时间统一是 UTC ISO，这里转成本地时间给用户看。 */
+function formatRecordTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+  return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+function reviewText(row: AiRecord): string {
+  if (row.reviewStatus === 'approved') return '已采纳'
+  if (row.reviewStatus === 'rejected') return '已驳回'
+  return row.reviewRequired ? '待复核' : '无需复核'
+}
+
+function reviewTagType(row: AiRecord): 'success' | 'danger' | 'warning' | 'info' {
+  if (row.reviewStatus === 'approved') return 'success'
+  if (row.reviewStatus === 'rejected') return 'danger'
+  return row.reviewRequired ? 'warning' : 'info'
+}
+
+watch(outputTab, (tab) => {
+  // 每次切到历史页签都重新拉一次：别的会话/顺序执行也会往同一能力写记录
+  if (tab === 'history') {
+    void loadHistory(historyPage.value)
+  }
+})
 
 const isJson = computed(() => spec.value?.outputFormat === 'json')
 
@@ -754,6 +1094,7 @@ async function run(): Promise<void> {
         variables: buildVariables(),
         moduleId: moduleId.value ?? undefined,
         attachmentIds: images.value.map((item) => item.attachmentId),
+        templateId: useTemplate.value && templateId.value ? templateId.value : undefined,
       },
       {
         onStart: (frame) => {
@@ -783,6 +1124,8 @@ async function run(): Promise<void> {
           finished.value = true
           reviewRequired.value = frame.reviewRequired === true
           latencyMs.value = Date.now() - startedAt
+          // 本次执行已经入库，刷新历史列表，让计数和最新一条马上可见
+          void loadHistory(1)
         },
         onError: (message) => {
           ElMessage.error(message)
@@ -829,11 +1172,15 @@ function download(): void {
     ElMessage.warning('暂无产出')
     return
   }
-  const blob = new Blob([output.value], { type: 'text/markdown;charset=utf-8' })
+  downloadText(output.value, `${capability.value}-${new Date().toISOString().slice(0, 10)}.md`)
+}
+
+function downloadText(text: string, filename: string): void {
+  const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = `${capability.value}-${new Date().toISOString().slice(0, 10)}.md`
+  link.download = filename
   link.click()
   URL.revokeObjectURL(url)
 }
@@ -1110,12 +1457,24 @@ watch(capability, () => {
   reasoning.value = ''
   finished.value = false
   xmindTree.value = []
+  // 换能力就换一套模板：类别不同，已选模板不能再沿用
+  useTemplate.value = false
+  templateId.value = null
+  templateOptions.value = []
+  // 换能力就换一批历史：列表、计数、当前查看的记录都要跟着清掉
+  outputTab.value = 'current'
+  history.value = []
+  historyTotal.value = 0
+  historyPage.value = 1
+  historyDetail.value = null
+  void loadHistory(1)
 })
 
 onMounted(async () => {
   await labStore.loadAllCapabilities()
   await labStore.loadModuleOptions(appStore.currentProjectId ?? undefined)
   resetValues()
+  void loadHistory(1)
   window.addEventListener('paste', onPaste)
 })
 
@@ -1189,6 +1548,30 @@ watch(
 
 .cap-field-select {
   width: 100%;
+}
+
+/* 产出物模板：开关 + 同类模板下拉 */
+.cap-template {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.cap-template__select {
+  width: 240px;
+}
+
+.cap-template__kind {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--aitp-text-weak);
+}
+
+.cap-template__hint {
+  font-size: 12px;
+  color: var(--aitp-text-weak);
 }
 
 /* 附件区：文档导入 + 图片贴入 */
@@ -1276,13 +1659,10 @@ watch(
 
 .cap-output__head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 8px 12px;
   margin-bottom: 10px;
-}
-
-.cap-output__title {
-  font-weight: 600;
 }
 
 .cap-output__loading {
@@ -1291,6 +1671,127 @@ watch(
   gap: 8px;
   color: var(--aitp-text-weak);
   margin-bottom: 10px;
+}
+
+/* ---- 历史产出：左列表 + 右原文 ---- */
+.cap-history {
+  display: grid;
+  grid-template-columns: minmax(200px, 240px) 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.cap-history__side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding-right: 12px;
+  border-right: 1px solid var(--aitp-border);
+}
+
+.cap-history__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: calc(100vh - 340px);
+  min-height: 280px;
+  overflow-y: auto;
+}
+
+.cap-history__item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  font: inherit;
+  color: var(--aitp-text);
+  background: var(--aitp-panel);
+  border: 1px solid var(--aitp-border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cap-history__item:hover {
+  border-color: var(--el-color-primary);
+  background: var(--aitp-hover);
+}
+
+.cap-history__item.is-active {
+  border-color: var(--el-color-primary);
+  background: var(--aitp-primary-soft);
+}
+
+.cap-history__item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cap-history__time {
+  font-size: 12px;
+  color: var(--aitp-text-weak);
+  white-space: nowrap;
+}
+
+.cap-history__summary {
+  font-size: 13px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.cap-history__meta {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--aitp-text-weak);
+}
+
+.cap-history__pager {
+  justify-content: center;
+}
+
+.cap-history__view {
+  min-width: 0;
+  max-height: calc(100vh - 340px);
+  overflow-y: auto;
+}
+
+.cap-history__view-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--aitp-border);
+}
+
+.cap-history__view-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
+.cap-history__view-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.cap-history__view-actions :deep(.el-button + .el-button) {
+  margin-left: 8px;
 }
 
 .cap-output__json {

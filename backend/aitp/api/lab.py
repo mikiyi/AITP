@@ -18,19 +18,34 @@ from ..ai.capability_codes import (
     LAB_CAPABILITIES,
     LAB_EXTENDED_CAPABILITIES,
     OUTPUT_JSON,
+    label_of,
 )
 from ..ai.errors import AIError
 from ..ai.safety import mark_review_required, needs_human_review
 from ..common.constants import EGRESS_NONE, EGRESS_THIRD_PARTY
-from ..common.validators import require_int, require_str
+from ..common.validators import optional_str, require_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..prompts.registry import list_templates
 from ..repositories.ai_session_repo import AISessionRepository, AITaskRepository
-from ..repositories.base import dumps
-from ..services import ai_record_service, attachment_service, audit_service, composite_service, lab_service
+from ..repositories.base import dumps, loads
+from ..repositories.doc_template_repo import (
+    CAPABILITY_KIND,
+    DocTemplateRepository,
+    normalize_columns,
+)
+from ..services import (
+    ai_record_service,
+    attachment_service,
+    audit_service,
+    composite_service,
+    doc_template_service,
+    lab_service,
+    output_exporter,
+    tabular_export,
+)
 from ..services import preflight_service
-from .helpers import audit, body, commit, db, page_args, page_payload
+from .helpers import audit, body, commit, db, download_response, page_args, page_payload
 from .sse import (
     FRAME_DELTA,
     FRAME_DEGRADE,
@@ -46,7 +61,7 @@ from .sse import (
 bp = Blueprint("lab", __name__)
 
 #: 请求体里不是提示词变量的字段
-META_FIELDS = {"variables", "sessionId", "profileId", "moduleId", "title", "attachmentIds"}
+META_FIELDS = {"variables", "sessionId", "profileId", "moduleId", "title", "attachmentIds", "templateId"}
 
 
 # ---------------- 参数解析 ----------------
@@ -408,11 +423,62 @@ def remove_attachment(attachment_id: str) -> Response:
 
 # ---------------- 执行 ----------------
 
+def _apply_output_template(
+    conn: sqlite3.Connection,
+    capability: str,
+    data: dict[str, Any],
+    variables: dict[str, Any],
+) -> None:
+    """选了产出物模板时，把模板正文渲染成 outputTemplate 变量带给模型。"""
+    template_id = _optional_int(data.get("templateId"), "templateId")
+    if template_id is None:
+        return
+    variables["outputTemplate"] = doc_template_service.resolve_for_run(conn, template_id, capability)
+
+
+@bp.post("/output/export")
+def export_capability_output() -> Response:
+    """把能力产出转成 Excel：用例 JSON → 单表，接口设计 Markdown → 分节多表。
+
+    产出原文由前端回传，后端不缓存中间文件；列顺序取模板里的 columns。
+    """
+    from datetime import datetime
+
+    conn = db()
+    data = body()
+    capability = require_str(data.get("capability"), "capability", 60)
+    output = optional_str(data.get("output"), "output", output_exporter.MAX_OUTPUT_CHARS)
+    if not output.strip():
+        raise AppError(ErrorCode.PARAM_ERROR, "暂无产出，无法导出")
+    label = label_of(capability)
+
+    columns: list[str] = []
+    template_id = _optional_int(data.get("templateId"), "templateId")
+    if template_id is not None:
+        row = DocTemplateRepository(conn).get(template_id)
+        if not row:
+            raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "产出物模板不存在")
+        if str(row.get("kind") or "") != CAPABILITY_KIND.get(capability, ""):
+            raise AppError(ErrorCode.PARAM_ERROR, "模板类别与当前能力不匹配")
+        columns = normalize_columns(loads(row.get("columns_json"), []))
+
+    content, count = output_exporter.export_output(
+        capability,
+        output,
+        columns=columns,
+        sheet_name=label,
+    )
+    stamp = datetime.now().strftime("%Y%m%d-%H%M")
+    filename = tabular_export.safe_filename(f"{label}产出-{stamp}", "xlsx")
+    return download_response(content, filename, output_exporter.XLSX_MIME, count)
+
+
 @bp.post("/<capability>/run")
 def run_capability(capability: str) -> Response:
     conn = db()
     data = body()
     variables = _variables_of(data)
+    _apply_output_template(conn, capability, data, variables)
     module_id = _optional_int(data.get("moduleId"), "moduleId")
     profile_id = _optional_int(data.get("profileId"), "profileId")
     session_id = _optional_int(data.get("sessionId"), "sessionId")
@@ -479,6 +545,7 @@ def stream_capability(capability: str) -> Response:
     conn = db()
     data = body()
     variables = _variables_of(data)
+    _apply_output_template(conn, capability, data, variables)
     module_id = _optional_int(data.get("moduleId"), "moduleId")
     profile_id = _optional_int(data.get("profileId"), "profileId")
     session_id = _optional_int(data.get("sessionId"), "sessionId")
@@ -575,6 +642,21 @@ def stream_capability(capability: str) -> Response:
                 # JSON 产出物不能追加复核标记，否则前端无法解析结构化结果
                 if review_required and spec.output_format != OUTPUT_JSON:
                     output = mark_review_required(output)
+                # 记录先落库再发 done 帧：前端收到 done 后会立刻刷新「历史产出」，
+                # 放到 finally 里会晚于 done 帧，列表刷新时还看不到这一条。
+                _write_record_standalone(
+                    db_path,
+                    capability=capability,
+                    output=output,
+                    variables=variables,
+                    refs=plan.refs,
+                    review_required=review_required,
+                    model=model,
+                    task_id=task_id,
+                    session_id=session_id,
+                    prompt_code=prompt_code,
+                    usage=usage,
+                )
                 yield counter.frame(
                     FRAME_DONE,
                     output=output,
@@ -593,20 +675,6 @@ def stream_capability(capability: str) -> Response:
                 error_message=error_message,
             )
             _record_message(db_path, session_id, output, prompt_code, model, usage, status)
-            if status == "success" and output:
-                _write_record_standalone(
-                    db_path,
-                    capability=capability,
-                    output=output,
-                    variables=variables,
-                    refs=plan.refs,
-                    review_required=needs_human_review(output),
-                    model=model,
-                    task_id=task_id,
-                    session_id=session_id,
-                    prompt_code=prompt_code,
-                    usage=usage,
-                )
 
     response = Response(stream_with_context(generate()), mimetype=SSE_MIME)
     response.headers["Cache-Control"] = "no-cache"

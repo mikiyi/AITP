@@ -159,3 +159,59 @@ export function put<T = unknown>(path: string, body?: unknown): Promise<T> {
 export function del<T = unknown>(path: string, body?: unknown): Promise<T> {
   return request<T>(path, { method: 'DELETE', body })
 }
+
+export interface BlobResult {
+  blob: Blob
+  /** 服务端 Content-Disposition 里的文件名（已解码），取不到时为空串。 */
+  filename: string
+}
+
+/** 从 Content-Disposition 里取文件名；后端用 filename*=UTF-8'' 编码中文。 */
+function filenameOf(disposition: string): string {
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded[1])
+    } catch {
+      return encoded[1]
+    }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(disposition)
+  return plain ? plain[1] : ''
+}
+
+/**
+ * POST 下载二进制文件（Excel 等）。
+ * 成功时返回 Blob；失败时后端仍返回 JSON 包封，这里按业务错误抛出。
+ */
+export async function postBlob(path: string, body: unknown): Promise<BlobResult> {
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body ?? {}),
+    })
+  } catch {
+    throw new ApiError('无法连接后端服务，请确认 AITP 已启动', -1, '', true)
+  }
+
+  const contentType = response.headers.get('Content-Type') ?? ''
+  if (contentType.includes('application/json')) {
+    const envelope = await parseBody(response)
+    throw new ApiError(
+      explainCode(envelope.code, envelope.message || '导出失败'),
+      envelope.code,
+      envelope.traceId,
+      false,
+      envelope.data,
+    )
+  }
+  if (!response.ok) {
+    throw new ApiError('导出失败，请稍后重试', -1, '', true)
+  }
+  return {
+    blob: await response.blob(),
+    filename: filenameOf(response.headers.get('Content-Disposition') ?? ''),
+  }
+}

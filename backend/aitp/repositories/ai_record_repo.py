@@ -29,8 +29,12 @@ class AIRecordRepository(BaseRepository):
         row["steps"] = loads(row.pop("steps_json", None), []) or []
         return row
 
-    def decorate(self, row: RowDict) -> dict[str, Any]:
-        """把一行记录转成前端用的结构。"""
+    def decorate(self, row: RowDict, *, full: bool = False) -> dict[str, Any]:
+        """把一行记录转成前端用的结构。
+
+        列表只需要摘要，产出原文可能很长，默认不带；
+        详情页和能力页的历史回看要走 ``full=True``。
+        """
         return {
             "id": row.get("id"),
             "taskId": row.get("task_id"),
@@ -39,6 +43,7 @@ class AIRecordRepository(BaseRepository):
             "capabilityLabel": row.get("capability_label"),
             "model": row.get("model"),
             "summary": row.get("summary"),
+            "outputText": str(row.get("output_text") or "") if full else "",
             "evidence": row.get("evidence") or loads(row.get("evidence_json"), []) or [],
             "missing": row.get("missing") or loads(row.get("missing_json"), []) or [],
             "risks": row.get("risks") or loads(row.get("risk_json"), []) or [],

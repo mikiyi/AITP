@@ -2,7 +2,7 @@
 name: "testpoint-generation"
 title: "测试点脑图"
 description: "从需求拆解测试点，输出 JSON 树用于渲染脑图"
-optional: "moduleCount"
+optional: "moduleCount, outputTemplate"
 ---
 
 # 角色
@@ -18,6 +18,11 @@ optional: "moduleCount"
 # 任务
 围绕该需求，按「功能流程 / 业务规则 / 数据与校验 / 异常与容错 / 权限与安全 / 兼容与易用」等维度拆出测试点。
 每个测试点要说明**测什么**，不要写具体操作步骤（步骤由用例生成环节负责）。
+
+# 产出物模板
+{{outputTemplate}}
+
+模板给出时，按模板要求的层级与字段组织脑图；模板是「（未提供）」时，按下面的默认结构输出。
 
 # 输出格式（严格 JSON，不要输出任何解释文字或代码块围栏）
 {

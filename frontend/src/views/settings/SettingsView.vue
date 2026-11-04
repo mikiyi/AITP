@@ -17,6 +17,10 @@
         <span class="settings-card__title">模块树设置</span>
         <span class="settings-card__desc">四级结构维护与功能点 AI 能力绑定</span>
       </button>
+      <button class="settings-card panel" type="button" @click="router.push('/settings/templates')">
+        <span class="settings-card__title">测试文档模板设置</span>
+        <span class="settings-card__desc">用例 / 报告 / 脑图模板，支持上传模板文件</span>
+      </button>
       <button class="settings-card panel" type="button" @click="router.push('/settings/automation')">
         <span class="settings-card__title">自动化管理设置</span>
         <span class="settings-card__desc">Python 解释器路径与用例执行超时</span>

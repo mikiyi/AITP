@@ -26,9 +26,12 @@ PROMPTS_DIR = ROOT / "backend" / "prompts"
 #: 每个能力的样例变量，用于验证渲染链路
 SAMPLES: dict[str, dict[str, Any]] = {
     "requirement-confirm": {"requirement": "手机号+验证码登录，验证码 5 分钟有效", "projectName": "示例电商"},
-    "testpoint-generation": {"requirement": "手机号+验证码登录", "projectName": "示例电商", "moduleCount": "3"},
-    "case-generation": {"requirement": "手机号+验证码登录", "projectName": "示例电商", "caseTypes": "functional", "count": "5"},
-    "xmind-to-case": {"xmindOutline": "登录\n  验证码\n    超时", "projectName": "示例电商", "caseTypes": "functional"},
+    "testpoint-generation": {"requirement": "手机号+验证码登录", "projectName": "示例电商", "moduleCount": "3",
+                            "outputTemplate": "{\"name\": \"登录\", \"children\": []}"},
+    "case-generation": {"requirement": "手机号+验证码登录", "projectName": "示例电商", "caseTypes": "functional", "count": "5",
+                      "outputTemplate": "| 用例编号 | 用例标题 | 优先级 |"},
+    "xmind-to-case": {"xmindOutline": "登录\n  验证码\n    超时", "projectName": "示例电商", "caseTypes": "functional",
+                      "outputTemplate": "| 用例编号 | 用例标题 | 优先级 |"},
     "bug-analysis": {
         "bugTitle": "支付回调金额翻倍", "bugDescription": "重复推送导致金额翻倍",
         "reproSteps": "1. 下单 2. 重复回调", "expectedResult": "金额只扣一次",
@@ -40,6 +43,7 @@ SAMPLES: dict[str, dict[str, Any]] = {
     "report-generation": {
         "projectName": "示例电商", "reportType": "迭代", "periodStart": "2026-10-01",
         "periodEnd": "2026-10-31", "metricsJson": "{}", "caseSummary": "10 条", "bugSummary": "2 个",
+        "outputTemplate": "## 测试概述\n## 执行情况",
     },
     "project-progress-board": {
         "projectName": "示例电商", "progressData": "完成 60%", "period": "第 3 周", "milestones": "登录上线",
@@ -51,7 +55,8 @@ SAMPLES: dict[str, dict[str, Any]] = {
     "case-review": {"requirement": "登录", "criteria": "覆盖率", "cases": "[]"},
     "bug-classification": {"bugTitle": "空指针", "bugDescription": "NPE", "modulePath": "交易/支付"},
     "test-plan": {"projectName": "示例电商", "period": "第 3 周", "requirementSummary": "登录下单", "modules": "登录"},
-    "api-test-design": {"projectName": "示例电商", "baseUrl": "http://127.0.0.1/api", "apiDescription": "下单接口"},
+    "api-test-design": {"projectName": "示例电商", "baseUrl": "http://127.0.0.1/api", "apiDescription": "下单接口",
+                       "outputTemplate": "## 接口概览\n## 用例清单"},
     "risk-assessment": {"projectName": "示例电商", "changeScope": "支付改造", "metricsJson": "{}"},
     "automation-script": {
         "projectName": "示例电商", "targetType": "web", "framework": "selenium", "language": "python",

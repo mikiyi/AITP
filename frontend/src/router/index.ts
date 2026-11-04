@@ -192,6 +192,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '模块树设置', hidden: true },
   },
   {
+    path: '/settings/templates',
+    name: 'settings-templates',
+    component: () => import('@/views/settings/DocTemplateSettingsView.vue'),
+    meta: { title: '测试文档模板设置', hidden: true },
+  },
+  {
     path: '/settings/automation',
     name: 'settings-automation',
     component: () => import('@/views/settings/AutomationSettingsView.vue'),

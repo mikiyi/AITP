@@ -11,6 +11,7 @@ def register_blueprints(app: Flask) -> None:
     from .automation import bp as automation_bp
     from .bugs import bp as bugs_bp
     from .cases import bp as cases_bp
+    from .doc_templates import bp as doc_templates_bp
     from .knowledge import bp as knowledge_bp
     from .lab import bp as lab_bp
     from .meta import bp as meta_bp
@@ -36,6 +37,7 @@ def register_blueprints(app: Flask) -> None:
         (requirements_bp, "/api/v1/requirements"),
         (modules_bp, "/api/v1/modules"),
         (cases_bp, "/api/v1/test-cases"),
+        (doc_templates_bp, "/api/v1/doc-templates"),
         (bugs_bp, "/api/v1/bugs"),
         (knowledge_bp, "/api/v1/knowledge"),
         (reports_bp, "/api/v1/reports"),

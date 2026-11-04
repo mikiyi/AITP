@@ -2,7 +2,7 @@
 name: "report-generation"
 title: "测试报告生成"
 description: "生成结构化的测试报告（Markdown）"
-optional: "periodStart, periodEnd, caseSummary, bugSummary"
+optional: "periodStart, periodEnd, caseSummary, bugSummary, outputTemplate"
 ---
 
 # 角色
@@ -30,6 +30,11 @@ optional: "periodStart, periodEnd, caseSummary, bugSummary"
 3. **缺陷情况**：新增/修复/遗留缺陷数，按严重级别与状态分布，未闭环缺陷清单
 4. **风险评估**：对发布风险的分级说明
 5. **结论与待办**：明确列出「待人工确认项」与后续动作
+
+# 产出物模板
+{{outputTemplate}}
+
+模板给出时，按模板的章节顺序、表格列与版式（字体、字号）组织报告；模板是「（未提供）」时，按上面的默认章节输出。
 
 # 约束
 - 所有数字必须来自输入的指标数据，不得自行推算或编造

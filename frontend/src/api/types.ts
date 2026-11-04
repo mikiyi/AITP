@@ -654,6 +654,8 @@ export interface AiRecord {
   capabilityLabel: string
   model: string
   summary: string
+  /** 产出原文：仅详情接口返回，列表里为空串。 */
+  outputText: string
   evidence: AiRecordEvidence[]
   missing: AiRecordMissing[]
   risks: AiRecordRisk[]
@@ -1059,3 +1061,40 @@ export interface AutomationScriptPage extends PagePayload<AutomationScript> {
 export interface AutomationRunPage extends PagePayload<AutomationRun> {
   categoryStats: Record<string, { total: number; success: number; failed: number }>
 }
+
+/** 测试文档模板类别：测试用例 / 测试报告 / 测试点脑图。 */
+export type DocTemplateKind = 'case' | 'report' | 'mindmap'
+
+/** 测试文档模板：约束 AI 产出的结构、风格，并决定 Excel 列顺序。 */
+export interface DocTemplate {
+  id: Id
+  name: string
+  kind: DocTemplateKind
+  kindLabel: string
+  description: string
+  /** 导出 Excel 时的列顺序，只有测试用例类模板会用到。 */
+  columns: string[]
+  /** 模板正文，会渲染进提示词的 outputTemplate 变量。 */
+  content: string
+  /** 从上传文件解析出的字体、字号等版式说明。 */
+  styleHint: string
+  fileName: string
+  fileType: string
+  fileSize: number
+  isDefault: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+/** 上传模板文件的解析结果。 */
+export interface DocTemplateUpload {
+  fileName: string
+  fileType: string
+  fileSize: number
+  content: string
+  columns: string[]
+  styleHint: string
+}
+
+/** 模板列表分页。 */
+export type DocTemplatePage = PagePayload<DocTemplate>

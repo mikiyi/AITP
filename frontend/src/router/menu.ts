@@ -130,6 +130,7 @@ export const MENU_NODES: MenuNode[] = [
       { path: '/settings/ai', title: 'AI 设置', icon: Cpu },
       { path: '/settings/knowledge', title: '知识库设置', icon: Collection },
       { path: '/settings/modules', title: '模块树设置', icon: Menu },
+      { path: '/settings/templates', title: '测试文档模板设置', icon: Files },
       { path: '/settings/automation', title: '自动化管理设置', icon: SetUp },
       { path: '/settings/performance', title: '性能测试管理设置', icon: TrendCharts },
     ],

@@ -372,6 +372,10 @@ def stream_capability(
     return stream_with_fallback(plan.candidates, plan.messages), plan
 
 
+#: 属于系统侧的系统变量，不进「信息缺项」：没选模板不代表信息不足
+_SILENT_OPTIONAL = frozenset({"outputTemplate"})
+
+
 def optional_variables_of(prompt_code: str) -> tuple[str, ...]:
     """提示词里可选的变量名；用于判断这次请求缺了哪些可选信息。"""
     if not prompt_code:
@@ -380,7 +384,7 @@ def optional_variables_of(prompt_code: str) -> tuple[str, ...]:
         template = get_registry().get(prompt_code)
     except Exception:  # noqa: BLE001 - 自定义提示词可能不存在，缺项判定不该阻断落库
         return ()
-    return tuple(template.optional)
+    return tuple(name for name in template.optional if name not in _SILENT_OPTIONAL)
 
 
 # ---------------- 提示词优化 ----------------

@@ -51,6 +51,7 @@ RESOURCE_ENTITY_RELATION = "entity_relation"
 RESOURCE_TODO = "todo"
 RESOURCE_AUTOMATION_SCRIPT = "automation_script"
 RESOURCE_AUTOMATION_RUN = "automation_run"
+RESOURCE_DOC_TEMPLATE = "doc_template"
 
 _MAX_DETAIL_CHARS = 2000
 

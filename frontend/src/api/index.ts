@@ -1,4 +1,4 @@
-import { del, get, post, put, request, type PagePayload } from './request'
+import { del, get, post, postBlob, put, request, type BlobResult, type PagePayload } from './request'
 import type {
   AdoptCaseItem,
   AiModelInfo,
@@ -23,6 +23,9 @@ import type {
   CapabilitySpec,
   CaseTreeNode,
   DbBackup,
+  DocTemplate,
+  DocTemplatePage,
+  DocTemplateUpload,
   DocumentAttachment,
   EntityRelation,
   KnowledgeArticle,
@@ -334,6 +337,9 @@ export const labApi = {
   prompts: () => get<PromptTemplate[]>('/lab/prompts'),
   run: (capability: string, body: Record<string, unknown>) =>
     post(`/lab/${capability}/run`, body),
+  /** 把能力产出导出成 Excel（用例类能力）；失败时抛业务错误。 */
+  exportOutput: (body: { capability: string; output: string; templateId?: number }) =>
+    postBlob('/lab/output/export', body) as Promise<BlobResult>,
   route: (body: { text: string; projectId?: number; topK?: number }) =>
     post<RouteResponse>('/lab/route', body),
   parseXmind: (form: FormData) =>
@@ -492,4 +498,20 @@ export const settingsApi = {
   backupDownloadUrl: (name: string) => `/api/v1/settings/backups/${encodeURIComponent(name)}/download`,
   enums: () => get('/meta/enums'),
   capabilities: () => get('/meta/capabilities'),
+}
+
+/** 测试文档模板：按类别（测试用例 / 测试报告 / 测试点脑图）维护产出物模板。 */
+export const templateApi = {
+  list: (query: Record<string, unknown> = {}) =>
+    get<DocTemplatePage>('/doc-templates', query as never),
+  /** 能力页下拉：只返回同类模板。 */
+  options: (kind: string) => get<{ list: DocTemplate[] }>('/doc-templates/options', { kind }),
+  get: (id: number) => get<DocTemplate>(`/doc-templates/${id}`),
+  create: (body: Record<string, unknown>) => post<DocTemplate>('/doc-templates', body),
+  update: (id: number, body: Record<string, unknown>) =>
+    put<DocTemplate>(`/doc-templates/${id}`, body),
+  remove: (id: number) => del(`/doc-templates/${id}`),
+  /** 上传模板文件：解析正文、列名与字体字号，不落库。 */
+  upload: (form: FormData) =>
+    request<DocTemplateUpload>('/doc-templates/upload', { method: 'POST', body: form }),
 }

@@ -100,6 +100,12 @@
       </div>
 
       <div class="panel panel-pad">
+        <h3 class="section-title">产出原文</h3>
+        <MarkdownView v-if="record.outputText" :source="record.outputText" />
+        <p v-else class="muted">这条记录没有保存产出原文（旧版本记录）。</p>
+      </div>
+
+      <div class="panel panel-pad">
         <h3 class="section-title">
           路由命中
           <el-tag size="small" effect="plain">{{ record.route.length }} 条</el-tag>
@@ -200,6 +206,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
+import MarkdownView from '@/components/MarkdownView.vue'
 import { recordApi } from '@/api'
 import type { AiRecord } from '@/api/types'
 

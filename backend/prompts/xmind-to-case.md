@@ -2,7 +2,7 @@
 name: "xmind-to-case"
 title: "XMind 转用例"
 description: "把 xmind 大纲转成结构化测试用例，输出 JSON 数组"
-optional: "caseTypes"
+optional: "caseTypes, outputTemplate"
 ---
 
 # 角色
@@ -18,6 +18,11 @@ optional: "caseTypes"
 # 任务
 按大纲的层级顺序逐条展开：大纲中的一级分支通常对应一个测试场景，叶子节点对应具体测试点。
 把每个叶子节点展开成可执行用例；叶子节点描述过粗时，补齐合理的操作步骤与预期结果，但不要偏离大纲原意。
+
+# 产出物模板
+{{outputTemplate}}
+
+模板给出时，按模板要求的字段与结构组织内容；模板是「（未提供）」时，严格按下面的默认结构输出。
 
 # 输出格式（严格 JSON 数组，不要输出任何解释文字或代码块围栏）
 [

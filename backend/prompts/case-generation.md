@@ -2,7 +2,7 @@
 name: "case-generation"
 title: "用例生成"
 description: "基于需求生成结构化测试用例，输出 JSON 数组"
-optional: "caseTypes, count"
+optional: "caseTypes, count, outputTemplate"
 ---
 
 # 角色
@@ -18,6 +18,11 @@ optional: "caseTypes, count"
 # 任务
 生成 {{count}} 条测试用例，覆盖需求中的正常流程、业务规则、边界值、异常分支与权限场景。
 每条用例必须能被一个没有上下文的测试人员独立执行：步骤要具体到操作对象与输入值，预期结果要可判定。
+
+# 产出物模板
+{{outputTemplate}}
+
+模板给出时，按模板要求的字段与结构组织内容；模板是「（未提供）」时，严格按下面的默认结构输出。
 
 # 输出格式（严格 JSON 数组，不要输出任何解释文字或代码块围栏）
 [

@@ -54,7 +54,7 @@ def get_record(pk: str) -> Response:
     detail = repo.get_detail(path_int(pk))
     if not detail:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "执行记录不存在")
-    return ok(repo.decorate(detail))
+    return ok(repo.decorate(detail, full=True))
 
 
 @bp.post("/<pk>/review")

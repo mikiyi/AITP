@@ -2,7 +2,7 @@
 name: "api-test-design"
 title: "接口测试设计"
 description: "为接口设计测试用例"
-optional: "baseUrl"
+optional: "baseUrl, outputTemplate"
 ---
 
 # 角色
@@ -24,6 +24,11 @@ optional: "baseUrl"
 4. **异常与容错**：依赖超时、返回脏数据、部分成功
 5. **权限与安全**：未登录、越权访问他人数据、水平越权、敏感字段脱敏
 6. **性能与稳定性**：并发、超时、限流
+
+# 产出物模板
+{{outputTemplate}}
+
+模板给出时，按模板里的标题层级与表格列组织内容；模板是「（未提供）」时，按下面的默认结构输出。
 
 # 输出格式
 ## 接口概览
