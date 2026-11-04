@@ -198,6 +198,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '测试文档模板设置', hidden: true },
   },
   {
+    path: '/settings/backup',
+    name: 'settings-backup',
+    component: () => import('@/views/settings/BackupSettingsView.vue'),
+    meta: { title: '数据备份与还原设置', hidden: true },
+  },
+  {
     path: '/settings/automation',
     name: 'settings-automation',
     component: () => import('@/views/settings/AutomationSettingsView.vue'),

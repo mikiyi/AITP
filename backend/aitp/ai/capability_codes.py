@@ -42,6 +42,40 @@ OUTPUT_JSON = "json"
 CATEGORY_CORE = "core"
 CATEGORY_EXTENDED = "extended"
 
+#: 支持导出 Excel 的能力（用例 JSON → 单表 / Markdown → 分节表）
+EXPORT_EXCEL_CAPABILITIES = (CAP_CASE_GENERATION, CAP_XMIND_TO_CASE, CAP_API_TEST_DESIGN)
+#: 支持导出 Word 的能力：用例类 + 报告
+EXPORT_WORD_CAPABILITIES = (*EXPORT_EXCEL_CAPABILITIES, CAP_REPORT_GENERATION)
+#: 支持产出物模板的能力
+TEMPLATE_CAPABILITIES = (
+    CAP_CASE_GENERATION, CAP_XMIND_TO_CASE, CAP_API_TEST_DESIGN,
+    CAP_REPORT_GENERATION, CAP_TESTPOINT_GENERATION,
+)
+#: 产物可直接并入自动化资产的能力
+AUTOMATION_CAPABILITIES = (CAP_AUTOMATION_SCRIPT, CAP_PERFORMANCE_SCRIPT)
+
+
+def features_of(code: str, spec: "CapabilitySpec") -> list[dict[str, str]]:
+    """卡片上展示的能力特性；只列真实支持的功能，避免文案与实际不符。"""
+    items: list[dict[str, str]] = []
+    if code in EXPORT_EXCEL_CAPABILITIES:
+        items.append({"key": "excel", "label": "导出 Excel"})
+    if code in EXPORT_WORD_CAPABILITIES:
+        items.append({"key": "word", "label": "导出 Word"})
+    if code in TEMPLATE_CAPABILITIES:
+        items.append({"key": "template", "label": "产出物模板"})
+    if spec.mindmap:
+        items.append({"key": "mindmap", "label": "脑图"})
+    if spec.adoptable:
+        items.append({"key": "adopt", "label": "采纳为用例"})
+    if code == CAP_REPORT_GENERATION:
+        items.append({"key": "adopt_report", "label": "采纳为报告"})
+    if code in AUTOMATION_CAPABILITIES:
+        items.append({"key": "automation", "label": "加入自动化"})
+    items.append({"key": "knowledge", "label": "加入知识库"})
+    items.append({"key": "history", "label": "历史产出"})
+    return items
+
 
 @dataclass(frozen=True, slots=True)
 class CapabilitySpec:
@@ -68,6 +102,7 @@ class CapabilitySpec:
             "mindmap": self.mindmap,
             "adoptable": self.adoptable,
             "category": self.category,
+            "features": features_of(self.code, self),
         }
 
 
@@ -231,7 +266,7 @@ LAB_CAPABILITIES: tuple[str, ...] = (
     CAP_REGRESSION_GENERATION, CAP_REPORT_GENERATION, CAP_PROJECT_PROGRESS_BOARD,
     CAP_API_TEST_DESIGN, CAP_TEST_PLAN,
     CAP_CASE_REVIEW, CAP_BUG_CLASSIFICATION, CAP_RISK_ASSESSMENT,
-    CAP_AUTOMATION_SCRIPT, CAP_PERFORMANCE_SCRIPT,
+    CAP_AUTOMATION_SCRIPT, CAP_PERFORMANCE_SCRIPT, CAP_PROMPT_OPTIMIZE,
 )
 
 #: 扩展能力位：此前提示词库里的补充能力已全部并入核心能力，保留空位以兼容既有引用

@@ -343,8 +343,12 @@ export const labApi = {
   run: (capability: string, body: Record<string, unknown>) =>
     post(`/lab/${capability}/run`, body),
   /** 把能力产出导出成 Excel（用例类能力）；失败时抛业务错误。 */
-  exportOutput: (body: { capability: string; output: string; templateId?: number }) =>
-    postBlob('/lab/output/export', body) as Promise<BlobResult>,
+  exportOutput: (body: {
+    capability: string
+    output: string
+    templateId?: number
+    format?: 'xlsx' | 'docx'
+  }) => postBlob('/lab/output/export', body) as Promise<BlobResult>,
   route: (body: { text: string; projectId?: number; topK?: number }) =>
     post<RouteResponse>('/lab/route', body),
   parseXmind: (form: FormData) =>
@@ -497,6 +501,9 @@ export const settingsApi = {
     get('/settings/audit-logs/resources', { resourceType, resourceId }),
   backups: () => get<BackupListResult>('/settings/backups'),
   createBackup: () => post<DbBackup>('/settings/backups'),
+  /** 上传外部备份文件，校验通过后进入备份列表，可再选择恢复。 */
+  uploadBackup: (form: FormData) =>
+    request<DbBackup>('/settings/backups/upload', { method: 'POST', body: form }),
   restoreBackup: (name: string, confirm: string) =>
     post<RestoreResult>(`/settings/backups/${encodeURIComponent(name)}/restore`, { confirm }),
   deleteBackup: (name: string) => del(`/settings/backups/${encodeURIComponent(name)}`),

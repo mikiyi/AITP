@@ -338,6 +338,19 @@ def create_backup() -> Response:
     return ok(info)
 
 
+@bp.post("/backups/upload")
+def upload_backup() -> Response:
+    """上传外部备份文件用于还原：先收进备份目录并校验，再由用户确认恢复。"""
+    conn = db()
+    uploaded = request.files.get("file")
+    if uploaded is None or not uploaded.filename:
+        raise AppError(ErrorCode.PARAM_ERROR, "请选择要上传的备份文件")
+    info = backup_service.save_upload(uploaded.read(), uploaded.filename)
+    audit(conn, audit_service.AUDIT_ACTION_IMPORT, audit_service.RESOURCE_DB_BACKUP, None,
+          str(info["name"]), {"sizeBytes": info["sizeBytes"]})
+    return ok(info)
+
+
 @bp.get("/backups/<name>/download")
 def download_backup(name: str) -> Response:
     path = backup_service.resolve_existing(name)

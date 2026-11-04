@@ -257,6 +257,15 @@
           >
             导出 Excel
           </el-button>
+          <el-button
+            v-if="wordCapable"
+            :icon="Document"
+            :loading="exportingWord"
+            :disabled="!finished || !output"
+            @click="exportWord"
+          >
+            导出 Word
+          </el-button>
           <el-button :icon="Collection" :disabled="!finished || !output" @click="saveToKnowledge">
             加入知识库
           </el-button>
@@ -651,9 +660,12 @@ const TEMPLATE_KIND: Record<string, 'case' | 'report' | 'mindmap'> = {
 
 /** 支持导出 Excel 的能力。 */
 const EXCEL_CAPABILITIES = ['case_generation', 'xmind_to_case', 'api_test_design']
+/** 支持导出 Word 的能力：用例类 + 报告。 */
+const WORD_CAPABILITIES = [...EXCEL_CAPABILITIES, 'report_generation']
 
 const templateKind = computed(() => TEMPLATE_KIND[capability.value] ?? '')
 const excelCapable = computed(() => EXCEL_CAPABILITIES.includes(capability.value))
+const wordCapable = computed(() => WORD_CAPABILITIES.includes(capability.value))
 
 const useTemplate = ref(false)
 const templateId = ref<number | null>(null)
@@ -762,6 +774,31 @@ async function prepareExcelArtifact(): Promise<void> {
     return
   }
   excelArtifact.value = await buildExcelArtifact(true)
+}
+
+const exportingWord = ref(false)
+
+/** Word 产出：按需生成并立即下载。 */
+async function exportWord(): Promise<void> {
+  if (!output.value.trim()) {
+    ElMessage.warning('暂无产出')
+    return
+  }
+  exportingWord.value = true
+  try {
+    const result = await labApi.exportOutput({
+      capability: capability.value,
+      output: output.value,
+      templateId: useTemplate.value && templateId.value ? templateId.value : undefined,
+      format: 'docx',
+    })
+    saveBlob(result.blob, result.filename || `${capability.value}.docx`)
+    ElMessage.success('已导出 Word')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '导出失败')
+  } finally {
+    exportingWord.value = false
+  }
 }
 
 function downloadExcelArtifact(): void {

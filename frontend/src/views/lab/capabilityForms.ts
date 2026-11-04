@@ -62,6 +62,11 @@ const APP_PLATFORMS: CapabilityOption[] = [
 ]
 
 export const CAPABILITY_FORMS: Record<string, CapabilityField[]> = {
+  prompt_optimize: [
+    { name: 'rawText', label: '原始提示词', type: 'textarea', rows: 10, primary: true, placeholder: '写下你现在的提示词，AI 会改写成结构化、可直接执行的版本' },
+    { name: 'capability', label: '目标能力', type: 'text', placeholder: '例如：用例生成（可选）' },
+    { name: 'capabilityGoal', label: '能力目标', type: 'text', placeholder: '例如：生成可执行测试用例（可选）' },
+  ],
   requirement_confirm: [
     { name: 'requirement', label: '需求原文', type: 'textarea', rows: 10, primary: true, placeholder: '粘贴需求描述' },
     { name: 'projectName', label: '项目名称', type: 'text' },

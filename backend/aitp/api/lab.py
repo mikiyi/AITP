@@ -438,7 +438,7 @@ def _apply_output_template(
 
 @bp.post("/output/export")
 def export_capability_output() -> Response:
-    """把能力产出转成 Excel：用例 JSON → 单表，接口设计 Markdown → 分节多表。
+    """把能力产出转成 Excel / Word：用例 JSON → 单表，Markdown → 分节表格。
 
     产出原文由前端回传，后端不缓存中间文件；列顺序取模板里的 columns。
     """
@@ -450,6 +450,9 @@ def export_capability_output() -> Response:
     output = optional_str(data.get("output"), "output", output_exporter.MAX_OUTPUT_CHARS)
     if not output.strip():
         raise AppError(ErrorCode.PARAM_ERROR, "暂无产出，无法导出")
+    fmt = str(data.get("format") or "xlsx").strip().lower()
+    if fmt not in output_exporter.EXPORT_FORMATS:
+        raise AppError(ErrorCode.PARAM_ERROR, "format 只能是 xlsx / docx")
     label = label_of(capability)
 
     columns: list[str] = []
@@ -462,13 +465,20 @@ def export_capability_output() -> Response:
             raise AppError(ErrorCode.PARAM_ERROR, "模板类别与当前能力不匹配")
         columns = normalize_columns(loads(row.get("columns_json"), []))
 
+    stamp = datetime.now().strftime("%Y%m%d-%H%M")
+    if fmt == "docx":
+        content, count = output_exporter.export_docx(
+            capability, output, columns=columns, title=label,
+        )
+        filename = tabular_export.safe_filename(f"{label}产出-{stamp}", "docx")
+        return download_response(content, filename, output_exporter.DOCX_MIME, count)
+
     content, count = output_exporter.export_output(
         capability,
         output,
         columns=columns,
         sheet_name=label,
     )
-    stamp = datetime.now().strftime("%Y%m%d-%H%M")
     filename = tabular_export.safe_filename(f"{label}产出-{stamp}", "xlsx")
     return download_response(content, filename, output_exporter.XLSX_MIME, count)
 

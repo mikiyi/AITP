@@ -21,9 +21,13 @@ from ..errors import AppError, ErrorCode
 BACKUP_SUBDIR = "backups"
 BACKUP_PREFIX = "aitp"
 SAFETY_PREFIX = "pre-restore"
+UPLOAD_PREFIX = "upload"
 # 备份文件必须是本服务生成的名字，恢复前先确认它是 AITP 自己的库
 TABLE_MARKER = "sys_schema_version"
-NAME_PATTERN = re.compile(r"^(?:aitp|pre-restore)-\d{8}-\d{6}(?:-\d{2})?\.db$")
+NAME_PATTERN = re.compile(r"^(?:aitp|pre-restore|upload)-\d{8}-\d{6}(?:-\d{2})?\.db$")
+#: 允许上传还原的文件后缀与大小上限
+UPLOAD_SUFFIXES = (".db", ".sqlite", ".sqlite3")
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 
 
 def _db_path() -> Path:
@@ -88,6 +92,31 @@ def list_backups() -> list[dict[str, Any]]:
     return sorted(items, key=lambda item: str(item["name"]), reverse=True)
 
 
+def save_upload(data: bytes, filename: str) -> dict[str, Any]:
+    """把用户上传的备份文件收进备份目录并校验，供后续恢复使用。
+
+    先写临时文件再原子改名，校验不过就删掉，不留下半截文件。
+    """
+    suffix = Path(filename).suffix.lower()
+    if suffix not in UPLOAD_SUFFIXES:
+        raise AppError(ErrorCode.PARAM_ERROR, "只支持 .db / .sqlite 备份文件")
+    if not data:
+        raise AppError(ErrorCode.PARAM_ERROR, "备份文件为空")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise AppError(ErrorCode.PARAM_ERROR, "备份文件不能超过 200MB")
+
+    target = _resolve(_new_name(UPLOAD_PREFIX))
+    temp = target.with_name(target.name + ".uploading")
+    temp.write_bytes(data)
+    temp.replace(target)
+    try:
+        _validate(target)
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    return describe(target)
+
+
 def remove(name: str) -> str:
     path = resolve_existing(name)
     try:
@@ -101,14 +130,23 @@ def remove(name: str) -> str:
 def _validate(path: Path) -> None:
     uri = f"file:{path.as_posix()}?mode=ro"
     # with sqlite3.connect(...) 只管事务不管关闭，Windows 上会一直占着备份文件
-    with contextlib.closing(sqlite3.connect(uri, uri=True)) as conn:
-        row = conn.execute("PRAGMA integrity_check").fetchone()
+    try:
+        conn = sqlite3.connect(uri, uri=True)
+    except sqlite3.DatabaseError as exc:
+        raise AppError(ErrorCode.ILLEGAL_OPERATION, "备份文件不是有效的 SQLite 数据库") from exc
+    with contextlib.closing(conn) as conn:
+        try:
+            row = conn.execute("PRAGMA integrity_check").fetchone()
+            tables = {
+                str(item[0])
+                for item in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            }
+        except sqlite3.DatabaseError as exc:
+            raise AppError(
+                ErrorCode.ILLEGAL_OPERATION, "备份文件不是有效的 SQLite 数据库",
+            ) from exc
         if row is None or str(row[0]).lower() != "ok":
             raise AppError(ErrorCode.ILLEGAL_OPERATION, "备份文件完整性校验失败，不能用于恢复")
-        tables = {
-            str(item[0])
-            for item in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-        }
         if TABLE_MARKER not in tables:
             raise AppError(ErrorCode.ILLEGAL_OPERATION, "备份文件不是 AITP 数据库，不能用于恢复")
 

@@ -1,9 +1,10 @@
-"""能力产出转 Excel。
+"""能力产出转 Excel / Word。
 
-三类能力支持导出：
+导出规则对两种格式一致：
 - 用例生成 / XMind 转用例：产出是 JSON 用例数组 → 单表「测试用例」；
-- 接口测试设计：产出是 Markdown → 每个 `##` 小节一张表，小节里的 Markdown 表格原样落格。
+- 接口测试设计 / 报告生成：产出是 Markdown → 每个 `##` 小节一节，表格原样落格。
 
+解析不出 JSON 时按 Markdown 兜底，再不行把原文整段落表，保证任何产出都能导出。
 列顺序两套来源：模板里的 columns（用户可调）优先，缺的列补在末尾；
 没有模板就用默认列。列名对不上已知字段时留空，不报错。
 """
@@ -20,11 +21,16 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from ..errors import AppError, ErrorCode
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 #: 支持导出的能力
 EXPORT_CASE_CAPABILITIES = ("case_generation", "xmind_to_case")
 EXPORT_MARKDOWN_CAPABILITIES = ("api_test_design",)
 EXPORTABLE_CAPABILITIES = EXPORT_CASE_CAPABILITIES + EXPORT_MARKDOWN_CAPABILITIES
+#: 支持导出 Word 的能力：用例类 + 报告
+EXPORT_WORD_CAPABILITIES = EXPORTABLE_CAPABILITIES + ("report_generation",)
+#: 导出格式白名单
+EXPORT_FORMATS = ("xlsx", "docx")
 
 #: 产出原文上限，防止把超大文本塞进导出
 MAX_OUTPUT_CHARS = 200_000
@@ -306,4 +312,138 @@ def _save(workbook: Workbook) -> bytes:
 
     stream = io.BytesIO()
     workbook.save(stream)
+    return stream.getvalue()
+
+
+# ---------------- Word 导出 ----------------
+
+
+def export_docx(
+    capability: str,
+    output: str,
+    *,
+    columns: list[str] | None = None,
+    title: str = "",
+) -> tuple[bytes, int]:
+    """产出原文 → (docx 字节, 导出行数)。规则与 Excel 一致，只是落成 Word 文档。"""
+    if capability not in EXPORT_WORD_CAPABILITIES:
+        raise AppError(ErrorCode.PARAM_ERROR, "该能力暂不支持导出 Word")
+    text = (output or "").strip()
+    if not text:
+        raise AppError(ErrorCode.PARAM_ERROR, "暂无产出，无法导出")
+    if len(text) > MAX_OUTPUT_CHARS:
+        raise AppError(ErrorCode.PARAM_ERROR, f"产出超过 {MAX_OUTPUT_CHARS} 字，无法导出")
+
+    try:
+        from docx import Document
+    except ImportError:
+        raise AppError(ErrorCode.PARAM_ERROR, "本机缺少 python-docx，无法导出 Word") from None
+
+    document = Document()
+    _setup_docx(document)
+
+    if capability in EXPORT_CASE_CAPABILITIES:
+        items = _try_parse_case_json(text)
+        if items:
+            headers = _merge_columns(columns, DEFAULT_CASE_COLUMNS)
+            rows = [[str(value) for value in _case_row(item, headers)] for item in items]
+            document.add_heading(title or "测试用例", level=1)
+            _add_docx_table(document, headers, rows)
+            return _save_docx(document), len(rows)
+
+    document.add_heading(title or "产出", level=1)
+    count = _add_markdown_docx(document, text)
+    return _save_docx(document), count
+
+
+def _setup_docx(document: Any) -> None:
+    """正文用中文字体，避免 Word 打开时字体回退成宋体的默认 12pt。"""
+    from docx.oxml.ns import qn
+    from docx.shared import Pt
+
+    style = document.styles["Normal"]
+    style.font.name = "微软雅黑"
+    style.font.size = Pt(10.5)
+    rpr = style.element.get_or_add_rPr()
+    rfonts = rpr.get_or_add_rFonts()
+    rfonts.set(qn("w:eastAsia"), "微软雅黑")
+
+
+def _add_docx_table(document: Any, headers: list[str], rows: list[list[str]]) -> None:
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+    from docx.shared import Pt
+
+    table = document.add_table(rows=1 + len(rows), cols=max(len(headers), 1))
+    table.style = "Table Grid"
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+    header_cells = table.rows[0].cells
+    for index, name in enumerate(headers):
+        cell = header_cells[index]
+        cell.text = name
+        for paragraph in cell.paragraphs:
+            for run in paragraph.runs:
+                run.bold = True
+                run.font.size = Pt(9)
+
+    for row_index, row in enumerate(rows, start=1):
+        cells = table.rows[row_index].cells
+        for col_index, value in enumerate(row):
+            if col_index >= len(cells):
+                break
+            cell = cells[col_index]
+            cell.text = str(value or "")
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    run.font.size = Pt(9)
+
+
+def _plain_md(text: str) -> str:
+    """去掉 Markdown 行内标记，Word 里按纯文本落。"""
+    return re.sub(r"[*_`]+", "", text).strip()
+
+
+def _flush_md_table(document: Any, lines: list[str]) -> int:
+    rows = _table_rows(lines)
+    if not rows:
+        return 0
+    headers = [_plain_md(cell) for cell in rows[0]]
+    body = [[_plain_md(cell) for cell in row] for row in rows[1:]]
+    _add_docx_table(document, headers, body)
+    return len(body)
+
+
+def _add_markdown_docx(document: Any, text: str) -> int:
+    """Markdown → Word：标题映射成 Heading，表格映射成表格，其余按段落。"""
+    table_buffer: list[str] = []
+    count = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("|"):
+            table_buffer.append(stripped)
+            continue
+        if table_buffer:
+            count += _flush_md_table(document, table_buffer)
+            table_buffer = []
+        if not stripped or stripped.startswith("```"):
+            continue
+        if stripped.startswith("#"):
+            level = len(stripped) - len(stripped.lstrip("#"))
+            document.add_heading(_plain_md(stripped.lstrip("#")), level=min(max(level, 1), 4))
+            continue
+        bullet = re.match(r"^([-*+]|\d+\.)\s+(.*)$", stripped)
+        if bullet:
+            document.add_paragraph(_plain_md(bullet.group(2)), style="List Bullet")
+            continue
+        document.add_paragraph(_plain_md(stripped))
+    if table_buffer:
+        count += _flush_md_table(document, table_buffer)
+    return count
+
+
+def _save_docx(document: Any) -> bytes:
+    import io
+
+    stream = io.BytesIO()
+    document.save(stream)
     return stream.getvalue()

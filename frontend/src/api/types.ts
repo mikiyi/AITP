@@ -330,6 +330,8 @@ export interface CapabilitySpec {
   adoptable: boolean
   /** core=闭环主能力，extended=提示词库里补充的能力 */
   category: string
+  /** 卡片上展示的能力特性：导出 Excel/Word、采纳、入库、模板、历史产出等 */
+  features: Array<{ key: string; label: string }>
   /** 提示词库里的标题 */
   promptTitle: string
   /** 提示词库里的说明 */

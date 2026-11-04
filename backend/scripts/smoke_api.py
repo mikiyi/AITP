@@ -810,9 +810,9 @@ def _check_lab_inner(api: Api, project_id: int, feature_id: int) -> None:
     caps = api.data("GET", "/api/v1/lab/capabilities")
     check("能力目录含 19 项", len(caps) == 19, str(len(caps)))
     main_caps = api.data("GET", "/api/v1/lab/main-capabilities")
-    check("实验室主能力 17 个", len(main_caps) == 17, str(len(main_caps)))
+    check("实验室主能力 18 个", len(main_caps) == 18, str(len(main_caps)))
     check("扩展能力已并入核心能力",
-          sum(1 for item in main_caps if item.get("category") == "core") == 17
+          sum(1 for item in main_caps if item.get("category") == "core") == 18
           and sum(1 for item in main_caps if item.get("category") == "extended") == 0,
           str([item.get("category") for item in main_caps]))
     check("能力目录含提示词编号",

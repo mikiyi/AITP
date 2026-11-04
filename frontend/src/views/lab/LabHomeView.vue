@@ -35,8 +35,6 @@
             >
               扩展
             </el-tag>
-            <el-tag v-if="item.outputFormat === 'json'" size="small" type="warning" effect="plain">JSON</el-tag>
-            <el-tag v-if="item.mindmap" size="small" type="success" effect="plain">脑图</el-tag>
           </div>
 
           <p class="lab-card__goal">{{ item.promptDescription || item.goal }}</p>
@@ -72,13 +70,22 @@
             <span class="lab-card__row-label">输出</span>
             <span class="lab-card__vars">
               <el-tag size="small" effect="plain">{{ outputText(item) }}</el-tag>
-              <el-tag v-if="item.adoptable" size="small" type="success" effect="plain">
-                可采纳为用例
+              <el-tag v-if="item.mindmap" size="small" type="success" effect="plain">脑图</el-tag>
+            </span>
+          </div>
+
+          <div class="lab-card__row">
+            <span class="lab-card__row-label">支持</span>
+            <span class="lab-card__vars">
+              <el-tag
+                v-for="feature in item.features ?? []"
+                :key="feature.key"
+                size="small"
+                :type="featureType(feature.key)"
+                effect="plain"
+              >
+                {{ feature.label }}
               </el-tag>
-              <el-tag v-if="item.code === 'report_generation'" size="small" type="success" effect="plain">
-                可采纳为报告
-              </el-tag>
-              <el-tag size="small" effect="plain">可加入知识库</el-tag>
             </span>
           </div>
 
@@ -141,19 +148,30 @@ const groups = computed<CapabilityGroup[]>(() => {
   ].filter((group) => group.items.length)
 })
 
+/** 产出物模板由页面开关驱动，不算用户要手填的输入，卡片上不列。 */
+const SYSTEM_VARIABLES = new Set(['outputTemplate'])
+
 function requiredVars(item: CapabilitySpec): string[] {
-  return item.requiredVariables ?? []
+  return (item.requiredVariables ?? []).filter((name) => !SYSTEM_VARIABLES.has(name))
 }
 
 function optionalVars(item: CapabilitySpec): string[] {
-  return item.optionalVariables ?? []
+  return (item.optionalVariables ?? []).filter((name) => !SYSTEM_VARIABLES.has(name))
 }
 
 function outputText(item: CapabilitySpec): string {
-  if (item.mindmap) {
-    return '脑图'
-  }
   return item.outputFormat === 'json' ? 'JSON' : 'Markdown'
+}
+
+/** 特性标签配色：导出 = 蓝，采纳 = 绿，其余 = 中性。 */
+function featureType(key: string): 'primary' | 'success' | 'info' {
+  if (key === 'excel' || key === 'word') {
+    return 'primary'
+  }
+  if (key === 'adopt' || key === 'adopt_report') {
+    return 'success'
+  }
+  return 'info'
 }
 
 function open(code: string): void {

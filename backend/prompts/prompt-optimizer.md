@@ -2,6 +2,7 @@
 name: "prompt-optimizer"
 title: "提示词优化"
 description: "把用户的粗略输入改写成结构清晰的提示词，只输出改写结果"
+optional: "capability, capabilityGoal"
 ---
 
 # 角色
@@ -10,6 +11,8 @@ description: "把用户的粗略输入改写成结构清晰的提示词，只输
 # 目标能力
 能力：{{capability}}
 能力目标：{{capabilityGoal}}
+
+（若上面是「（未提供）」，按通用测试场景改写，不要臆测具体业务。）
 
 # 用户原始输入
 {{rawText}}
