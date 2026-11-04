@@ -138,29 +138,57 @@ const online = ref(true)
 const aiStatus = ref<AiStatus | null>(null)
 let timer: number | undefined
 
-/** 浏览器布局视口比物理屏幕还宽时，右侧内容会被屏幕边缘切掉，这里把可用宽度钉到屏幕宽度。 */
+/**
+ * 浏览器窗口可能比屏幕还大，或有一部分拖到了屏幕外（分辨率变化、缩放变化都会触发）。
+ * 这时超出屏幕的那部分内容永远落在屏幕之外：页面自己滚不到，用户也看不见，
+ * 所以按"内容区在屏幕上的实际可见范围"把应用整体收进来。
+ */
 const visibleWidth = ref<number | null>(null)
+const visibleHeight = ref<number | null>(null)
 let clipHintShown = false
 
-const viewportStyle = computed(() =>
-  visibleWidth.value ? { maxWidth: `${visibleWidth.value}px` } : undefined,
-)
+const viewportStyle = computed(() => {
+  const style: Record<string, string> = {}
+  if (visibleWidth.value) {
+    style.maxWidth = `${visibleWidth.value}px`
+  }
+  if (visibleHeight.value) {
+    style.maxHeight = `${visibleHeight.value}px`
+  }
+  return Object.keys(style).length ? style : undefined
+})
 
-function updateVisibleWidth(): void {
-  const screenWidth = window.screen?.width ?? 0
-  const innerWidth = window.innerWidth
-  if (screenWidth > 0 && innerWidth > screenWidth + 4) {
-    visibleWidth.value = screenWidth
-    if (!clipHintShown) {
-      clipHintShown = true
-      ElMessage({
-        type: 'warning',
-        duration: 3000,
-        message: '浏览器窗口比屏幕还宽，右侧内容原本会被挡在屏幕外，已收窄到可见区域；按 Ctrl+0 可恢复浏览器缩放。',
-      })
-    }
-  } else {
+function updateVisibleSize(): void {
+  const screen = (window.screen ?? undefined) as (Screen & { availLeft?: number; availTop?: number }) | undefined
+  const availWidth = screen?.availWidth ?? 0
+  const availHeight = screen?.availHeight ?? 0
+  if (!screen || !availWidth || !availHeight) {
     visibleWidth.value = null
+    visibleHeight.value = null
+    return
+  }
+  const innerWidth = window.innerWidth
+  const innerHeight = window.innerHeight
+  const outerHeight = window.outerHeight || innerHeight
+  // 浏览器工具栏（标签页 + 地址栏）占的高度，用来换算内容区顶部相对屏幕的位置
+  const chromeHeight = Math.max(outerHeight - innerHeight, 0)
+  // 多显示器时把窗口坐标换算到当前显示器坐标系
+  const displayLeft = screen.availLeft ?? 0
+  const displayTop = screen.availTop ?? 0
+  const offsetX = window.screenX - displayLeft
+  const offsetY = window.screenY - displayTop + chromeHeight
+  const visibleW = availWidth - Math.max(offsetX, 0)
+  const visibleH = availHeight - Math.max(offsetY, 0)
+  visibleWidth.value = visibleW > 320 && visibleW < innerWidth - 4 ? visibleW : null
+  visibleHeight.value = visibleH > 240 && visibleH < innerHeight - 4 ? visibleH : null
+  if ((visibleWidth.value || visibleHeight.value) && !clipHintShown) {
+    clipHintShown = true
+    ElMessage({
+      type: 'warning',
+      duration: 3000,
+      message:
+        '浏览器窗口有部分超出屏幕，超出的内容（右侧或底部）看不到也滚不到；已收进可见区域，按 Ctrl+0 可恢复浏览器缩放。',
+    })
   }
 }
 
@@ -272,16 +300,101 @@ function scrollActiveMenuIntoView(): void {
   }
 }
 
+/**
+ * 展开子菜单后把新出现的那几项滚进可视区，否则下半截入口在屏幕外看不到。
+ * 子菜单高度是分几步撑开的，所以每次菜单内容高度变化都重新定位一次，
+ * 最后一次（高度稳定后）就是正确位置。
+ */
+function scrollOpenedSubMenuIntoView(): void {
+  const menu = document.querySelector<HTMLElement>('.aitp-menu')
+  if (!menu) {
+    return
+  }
+  if (menu.scrollHeight === lastContentHeight) {
+    // 内容高度没变，说明只是用户自己滚动了，不要打断
+    return
+  }
+  lastContentHeight = menu.scrollHeight
+  const opened = [...document.querySelectorAll<HTMLElement>('.el-sub-menu.is-opened')]
+  const sub = opened[opened.length - 1]
+  if (!sub) {
+    return
+  }
+  const items = sub.querySelectorAll<HTMLElement>('.el-menu-item')
+  const last = items[items.length - 1]
+  if (!last) {
+    return
+  }
+  const menuRect = menu.getBoundingClientRect()
+  const itemRect = last.getBoundingClientRect()
+  if (itemRect.bottom <= menuRect.bottom && itemRect.top >= menuRect.top) {
+    return
+  }
+  // 菜单还没产生滚动条时写 scrollTop 会被浏览器丢弃，等下一帧再试
+  if (menu.scrollHeight <= menu.clientHeight) {
+    if (menuRetryHandle) {
+      window.cancelAnimationFrame(menuRetryHandle)
+    }
+    menuRetryHandle = window.requestAnimationFrame(() => {
+      menuRetryHandle = undefined
+      scrollOpenedSubMenuIntoView()
+    })
+    return
+  }
+  if (itemRect.bottom > menuRect.bottom) {
+    menu.scrollTop += itemRect.bottom - menuRect.bottom
+  } else {
+    menu.scrollTop -= menuRect.top - itemRect.top
+  }
+}
+
+/**
+ * 用 MutationObserver 直接盯 DOM：子菜单展开会改 class 与高度样式，
+ * 等布局稳定后把新出现的入口滚进可视区（Element Plus 的 open 事件在打包后不可靠）。
+ */
+let menuObserver: MutationObserver | null = null
+let menuSyncHandle: number | undefined
+let menuRetryHandle: number | undefined
+let lastContentHeight = 0
+
+function handleMenuMutation(): void {
+  if (menuSyncHandle) {
+    window.cancelAnimationFrame(menuSyncHandle)
+  }
+  menuSyncHandle = window.requestAnimationFrame(() => {
+    menuSyncHandle = undefined
+    scrollOpenedSubMenuIntoView()
+  })
+}
+
+function setupMenuObserver(): void {
+  const menu = document.querySelector('.aitp-menu')
+  if (!menu) {
+    return
+  }
+  lastContentHeight = menu.scrollHeight
+  menuObserver = new MutationObserver(handleMenuMutation)
+  menuObserver.observe(menu, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['class', 'style'],
+  })
+}
+
 onMounted(async () => {
   void ping()
   void loadAiStatus()
-  updateVisibleWidth()
-  window.addEventListener('resize', updateVisibleWidth)
+  updateVisibleSize()
+  window.addEventListener('resize', updateVisibleSize)
   timer = window.setInterval(() => {
     void ping()
     void loadAiStatus()
+    // 窗口被拖动时不会触发 resize，定期复查一次可见范围
+    updateVisibleSize()
   }, 15000)
   await nextTick()
+  setupMenuObserver()
   scrollActiveMenuIntoView()
 })
 
@@ -289,7 +402,15 @@ onUnmounted(() => {
   if (timer) {
     window.clearInterval(timer)
   }
-  window.removeEventListener('resize', updateVisibleWidth)
+  if (menuSyncHandle) {
+    window.cancelAnimationFrame(menuSyncHandle)
+  }
+  if (menuRetryHandle) {
+    window.cancelAnimationFrame(menuRetryHandle)
+  }
+  menuObserver?.disconnect()
+  menuObserver = null
+  window.removeEventListener('resize', updateVisibleSize)
 })
 </script>
 
