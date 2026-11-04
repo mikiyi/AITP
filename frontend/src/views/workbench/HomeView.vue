@@ -21,92 +21,91 @@
       <KnowledgeAssistant compact />
     </div>
 
-    <!-- 数据资产卡 -->
-    <div class="home__assets">
-      <MetricCard
-        label="项目"
-        :value="assets.project"
-        icon="Folder"
-        tone="info"
-      />
-      <MetricCard
-        label="需求"
-        :value="assets.requirement"
-        icon="Document"
-        tone="info"
-      />
-      <MetricCard
-        label="测试用例"
-        :value="assets.case"
-        icon="Tickets"
-        tone="primary"
-      />
-      <MetricCard
-        label="缺陷"
-        :value="assets.bug"
-        icon="Warning"
-        tone="danger"
-        :hint="`未关闭 ${metrics.bugOpen ?? 0}`"
-      />
-      <MetricCard
-        label="知识资产"
-        :value="assets.knowledge"
-        icon="Notebook"
-        tone="success"
-        :hint="`待审核 ${pendingKnowledge}`"
-      />
-      <MetricCard
-        label="测试报告"
-        :value="assets.report"
-        icon="DataAnalysis"
-        tone="primary"
-      />
-    </div>
-
-    <!-- 指标卡 -->
-    <div class="home__metrics">
-      <MetricCard
-        label="用例执行通过率"
-        :value="(metrics.casePassRate ?? 0) * 100"
-        :precision="2"
-        suffix="%"
-        icon="TrendCharts"
-        tone="success"
-      />
-      <MetricCard
-        label="用例总数"
-        :value="metrics.caseTotal ?? 0"
-        icon="Tickets"
-        tone="primary"
-      />
-      <MetricCard
-        label="未关闭缺陷"
-        :value="metrics.bugOpen ?? 0"
-        icon="CircleClose"
-        tone="danger"
-      />
-      <MetricCard
-        label="AI 任务成功率"
-        :value="(metrics.aiTaskSuccessRate ?? 0) * 100"
-        :precision="2"
-        suffix="%"
-        icon="MagicStick"
-        tone="primary"
-        :hint="`任务总数 ${metrics.aiTaskTotal ?? 0}`"
-      />
-      <MetricCard
-        label="模块节点"
-        :value="metrics.moduleTotal ?? 0"
-        icon="Share"
-        tone="info"
-      />
-      <MetricCard
-        label="待审核产出"
-        :value="pendingKnowledge"
-        icon="Clock"
-        tone="warning"
-        hint="审核通过后才计入知识资产"
-      />
+    <!-- 数据概览：资产卡 + 指标卡合成一个大边框，固定 6 列两行 -->
+    <div class="panel panel-pad home__section">
+      <div class="home__section-title">数据概览</div>
+      <div class="home__stats">
+        <MetricCard
+          label="项目"
+          :value="assets.project"
+          icon="Folder"
+          tone="info"
+        />
+        <MetricCard
+          label="需求"
+          :value="assets.requirement"
+          icon="Document"
+          tone="info"
+        />
+        <MetricCard
+          label="测试用例"
+          :value="assets.case"
+          icon="Tickets"
+          tone="primary"
+        />
+        <MetricCard
+          label="缺陷"
+          :value="assets.bug"
+          icon="Warning"
+          tone="danger"
+          :hint="`未关闭 ${metrics.bugOpen ?? 0}`"
+        />
+        <MetricCard
+          label="知识资产"
+          :value="assets.knowledge"
+          icon="Notebook"
+          tone="success"
+          :hint="`待审核 ${pendingKnowledge}`"
+        />
+        <MetricCard
+          label="测试报告"
+          :value="assets.report"
+          icon="DataAnalysis"
+          tone="primary"
+        />
+        <MetricCard
+          label="用例执行通过率"
+          :value="(metrics.casePassRate ?? 0) * 100"
+          :precision="2"
+          suffix="%"
+          icon="TrendCharts"
+          tone="success"
+        />
+        <MetricCard
+          label="用例总数"
+          :value="metrics.caseTotal ?? 0"
+          icon="Tickets"
+          tone="primary"
+        />
+        <MetricCard
+          label="未关闭缺陷"
+          :value="metrics.bugOpen ?? 0"
+          icon="CircleClose"
+          tone="danger"
+        />
+        <MetricCard
+          label="AI 任务成功率"
+          :value="(metrics.aiTaskSuccessRate ?? 0) * 100"
+          :precision="2"
+          suffix="%"
+          icon="MagicStick"
+          tone="primary"
+          :hint="`任务总数 ${metrics.aiTaskTotal ?? 0}`"
+        />
+        <MetricCard
+          label="模块节点"
+          :value="metrics.moduleTotal ?? 0"
+          icon="Share"
+          tone="info"
+        />
+        <MetricCard
+          label="待审核产出"
+          :value="pendingKnowledge"
+          icon="Clock"
+          tone="warning"
+          hint="审核通过后才计入知识资产"
+        />
+      </div>
     </div>
 
     <!-- 快捷入口 -->
@@ -316,12 +315,17 @@ onMounted(() => {
   color: var(--aitp-text-weak);
 }
 
-.home__assets,
-.home__metrics {
+.home__stats {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 12px;
-  margin-bottom: 14px;
+}
+
+/* 面板里再套一层卡片边框会显得重，内层只留描边 */
+.home__stats :deep(.metric-card) {
+  padding: 12px 14px;
+  box-shadow: none;
+  background: var(--aitp-subtle);
 }
 
 .home__section {

@@ -1,21 +1,34 @@
 <template>
-  <div class="metric-card" :class="`is-${tone}`">
-    <div class="metric-icon">
-      <el-icon :size="20"><component :is="icon" /></el-icon>
-    </div>
-    <div class="metric-body">
-      <div class="metric-label">{{ label }}</div>
-      <div class="metric-value">
-        {{ display }}
-        <span v-if="suffix" class="metric-suffix">{{ suffix }}</span>
+  <el-tooltip
+    effect="dark"
+    placement="top"
+    :show-after="120"
+    :disabled="!overflowing"
+  >
+    <template #content>
+      <div>
+        <div>{{ label }}：{{ display }}{{ suffix }}</div>
+        <div v-if="hint">{{ hint }}</div>
       </div>
-      <div v-if="hint" class="metric-hint">{{ hint }}</div>
+    </template>
+    <div class="metric-card" :class="`is-${tone}`" @mouseenter="detectOverflow">
+      <div class="metric-icon">
+        <el-icon :size="20"><component :is="icon" /></el-icon>
+      </div>
+      <div class="metric-body">
+        <div ref="labelEl" class="metric-label">{{ label }}</div>
+        <div ref="valueEl" class="metric-value">
+          {{ display }}
+          <span v-if="suffix" class="metric-suffix">{{ suffix }}</span>
+        </div>
+        <div v-if="hint" ref="hintEl" class="metric-hint">{{ hint }}</div>
+      </div>
     </div>
-  </div>
+  </el-tooltip>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 const props = withDefaults(
   defineProps<{
@@ -45,6 +58,18 @@ const display = computed(() => {
   }
   return String(props.value)
 })
+
+const labelEl = ref<HTMLElement | null>(null)
+const valueEl = ref<HTMLElement | null>(null)
+const hintEl = ref<HTMLElement | null>(null)
+const overflowing = ref(false)
+
+/** 窄卡片里三行文本都会被截断，只有真的截到内容才弹浮层，避免正常宽度下多一个提示。 */
+function detectOverflow(): void {
+  overflowing.value = [labelEl.value, valueEl.value, hintEl.value].some(
+    (el) => !!el && el.scrollWidth > el.clientWidth + 1,
+  )
+}
 </script>
 
 <style scoped>
@@ -99,6 +124,9 @@ const display = computed(() => {
   font-size: 12px;
   color: var(--aitp-text-weak);
   line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .metric-value {
@@ -106,6 +134,8 @@ const display = computed(() => {
   font-weight: 650;
   line-height: 1.3;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .metric-suffix {
