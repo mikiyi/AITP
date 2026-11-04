@@ -55,6 +55,30 @@ _PROMPT_TEST_RE = re.compile(r"(提示词|prompt|指令)\s*(测试|回归|评测
 _MAX_ITEMS = 20
 _MAX_EXCERPT = 200
 
+#: 允许写入 biz_ai_record 的列（白名单）
+_RECORD_COLUMNS = (
+    "task_id",
+    "session_id",
+    "capability",
+    "capability_label",
+    "model",
+    "summary",
+    "evidence_json",
+    "missing_json",
+    "risk_json",
+    "risk_level",
+    "review_required",
+    "review_status",
+    "input_json",
+    "route_json",
+    "usage_json",
+    "prompt_code",
+    "latency_ms",
+    "steps_json",
+    "created_at",
+    "updated_at",
+)
+
 
 def _excerpt(text: str, limit: int = _MAX_EXCERPT) -> str:
     clean = re.sub(r"\s+", " ", text).strip()
@@ -262,6 +286,11 @@ def build_record(
     task_id: int | None = None,
     session_id: int | None = None,
     optional_names: tuple[str, ...] = (),
+    route: list[dict[str, Any]] | None = None,
+    usage: dict[str, Any] | None = None,
+    prompt_code: str = "",
+    latency_ms: int | None = None,
+    steps: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """组装一条结构化执行记录（尚未落库）。"""
     evidence = extract_evidence(conn, output, refs)
@@ -282,6 +311,13 @@ def build_record(
         "risks": risks,
         "riskLevel": level,
         "reviewRequired": need_review,
+        # 补四段：原始输入 / 路由命中 / 步骤轨迹 / 模型用量
+        "input": dict(variables or {}),
+        "route": list(route or []),
+        "steps": list(steps or []),
+        "usage": dict(usage or {}),
+        "promptCode": prompt_code,
+        "latencyMs": latency_ms,
     }
 
 
@@ -301,18 +337,27 @@ def create_record(conn: sqlite3.Connection, record: dict[str, Any]) -> int:
         "risk_level": str(record.get("riskLevel") or RISK_NONE),
         "review_required": 1 if record.get("reviewRequired") else 0,
         "review_status": REVIEW_PENDING,
+        "input_json": _dump(record.get("input") or {}),
+        "route_json": _dump(record.get("route") or []),
+        "usage_json": _dump(record.get("usage") or {}),
+        "prompt_code": str(record.get("promptCode") or ""),
         "created_at": now,
         "updated_at": now,
     }
-    payload = {key: value for key, value in payload.items() if value is not None}
+    latency = record.get("latencyMs")
+    if latency is not None:
+        payload["latency_ms"] = int(latency)
+    steps = record.get("steps")
+    if steps:
+        payload["steps_json"] = _dump(steps)
+    # 只落库有值的字段：列名走白名单，值走命名参数，不拼 SQL 片段
+    columns = [name for name in _RECORD_COLUMNS if name in payload]
+    if not columns:
+        raise AppError(ErrorCode.PARAM_ERROR, "执行记录缺少必填字段")
+    placeholders = ", ".join(f":{name}" for name in columns)
     cursor = conn.execute(
-        "INSERT INTO biz_ai_record (task_id, session_id, capability, capability_label, model,"
-        " summary, evidence_json, missing_json, risk_json, risk_level, review_required,"
-        " review_status, created_at, updated_at)"
-        " VALUES (:task_id, :session_id, :capability, :capability_label, :model,"
-        " :summary, :evidence_json, :missing_json, :risk_json, :risk_level, :review_required,"
-        " :review_status, :created_at, :updated_at)",
-        payload,
+        f"INSERT INTO biz_ai_record ({', '.join(columns)}) VALUES ({placeholders})",
+        {name: payload[name] for name in columns},
     )
     return int(cast(int, cursor.lastrowid))
 

@@ -23,6 +23,10 @@ class AIRecordRepository(BaseRepository):
         row["evidence"] = loads(row.pop("evidence_json", None), []) or []
         row["missing"] = loads(row.pop("missing_json", None), []) or []
         row["risks"] = loads(row.pop("risk_json", None), []) or []
+        row["input"] = loads(row.pop("input_json", None), {}) or {}
+        row["route"] = loads(row.pop("route_json", None), []) or []
+        row["usage"] = loads(row.pop("usage_json", None), {}) or {}
+        row["steps"] = loads(row.pop("steps_json", None), []) or []
         return row
 
     def decorate(self, row: RowDict) -> dict[str, Any]:
@@ -43,6 +47,12 @@ class AIRecordRepository(BaseRepository):
             "reviewStatus": row.get("review_status"),
             "reviewNote": row.get("review_note"),
             "reviewedAt": row.get("reviewed_at"),
+            "input": row.get("input") or loads(row.get("input_json"), {}) or {},
+            "route": row.get("route") or loads(row.get("route_json"), []) or [],
+            "steps": row.get("steps") or loads(row.get("steps_json"), []) or [],
+            "usage": row.get("usage") or loads(row.get("usage_json"), {}) or {},
+            "promptCode": row.get("prompt_code"),
+            "latencyMs": row.get("latency_ms"),
             "createdAt": row.get("created_at"),
             "updatedAt": row.get("updated_at"),
         }

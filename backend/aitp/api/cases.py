@@ -137,6 +137,42 @@ def list_cases() -> Response:
     return ok(payload)
 
 
+@bp.get("/tree")
+def case_tree() -> Response:
+    """用例树：功能点树上挂各自的用例，没挂功能点的用例单独列出。"""
+    conn = db()
+    project_id = require_int(request.args.get("projectId"), "projectId")
+    module_repo = ModuleRepository(conn)
+    tree = module_repo.tree(project_id)
+
+    rows = TestCaseRepository(conn).list_all({"project_id": project_id}, None, limit=20000)
+    by_module: dict[int, list[dict[str, Any]]] = {}
+    orphans: list[dict[str, Any]] = []
+    for row in rows:
+        item = _to_public(row)
+        module_id = row.get("module_id")
+        if module_id:
+            by_module.setdefault(int(module_id), []).append(item)
+        else:
+            orphans.append(item)
+
+    def walk(nodes: list[dict[str, Any]]) -> None:
+        for node in nodes:
+            cases = by_module.get(int(node["id"]), [])
+            node["cases"] = cases
+            node["caseCount"] = len(cases)
+            node["passCount"] = sum(1 for item in cases if item.get("status") == "pass")
+            node["failCount"] = sum(1 for item in cases if item.get("status") == "fail")
+            walk(node.get("children") or [])
+
+    walk(tree)
+    return ok({
+        "list": tree,
+        "orphans": orphans,
+        "total": len(rows),
+    })
+
+
 @bp.get("/coverage")
 def coverage_matrix() -> Response:
     conn = db()

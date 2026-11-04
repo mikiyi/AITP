@@ -24,7 +24,8 @@ from ..errors import AppError, ErrorCode
 from ..prompts.registry import list_templates
 from ..repositories.ai_session_repo import AISessionRepository, AITaskRepository
 from ..repositories.base import dumps
-from ..services import ai_record_service, audit_service, lab_service
+from ..services import ai_record_service, audit_service, composite_service, lab_service
+from ..services import preflight_service
 from .helpers import audit, body, commit, db, page_args, page_payload
 from .sse import (
     FRAME_DELTA,
@@ -160,6 +161,9 @@ def _write_record(
     task_id: int,
     session_id: int,
     prompt_code: str,
+    usage: dict[str, Any] | None = None,
+    latency_ms: int | None = None,
+    route: list[dict[str, Any]] | None = None,
 ) -> int:
     """把这次执行的结构化结论落库：证据、缺项、风险点。"""
     record = ai_record_service.build_record(
@@ -173,6 +177,10 @@ def _write_record(
         task_id=task_id,
         session_id=session_id,
         optional_names=lab_service.optional_variables_of(prompt_code),
+        route=route or [],
+        usage=usage or {},
+        prompt_code=prompt_code,
+        latency_ms=latency_ms,
     )
     return ai_record_service.create_record(conn, record)
 
@@ -202,6 +210,20 @@ def list_capabilities() -> Response:
 @bp.get("/prompts")
 def list_prompts() -> Response:
     return ok(list_templates())
+
+
+@bp.get("/prompts/<code>")
+def get_prompt(code: str) -> Response:
+    """单个提示词模板：含正文，供提示词库页面展示。"""
+    from ..prompts.registry import get_registry
+
+    try:
+        template = get_registry().get(code)
+    except AppError:
+        raise
+    payload = template.as_dict()
+    payload["body"] = template.body
+    return ok(payload)
 
 
 @bp.get("/main-capabilities")
@@ -266,6 +288,8 @@ def run_capability(capability: str) -> Response:
         task_id=task_id,
         session_id=session_id,
         prompt_code=result.prompt_code,
+        usage=result.usage,
+        latency_ms=result.latency_ms,
     )
     commit(conn)
     payload["recordId"] = record_id
@@ -403,6 +427,7 @@ def stream_capability(capability: str) -> Response:
                     task_id=task_id,
                     session_id=session_id,
                     prompt_code=prompt_code,
+                    usage=usage,
                 )
 
     response = Response(stream_with_context(generate()), mimetype=SSE_MIME)
@@ -489,6 +514,79 @@ def route() -> Response:
     return ok(result)
 
 
+# ---------------- 执行前预检 ----------------
+
+@bp.post("/preflight")
+def preflight() -> Response:
+    """执行前体检：缺项、完整度、主/辅助任务、执行顺序。
+
+    纯本地计算，不调用模型；没有可用模型时也会如实标为阻断项。
+    """
+    conn = db()
+    data = body()
+    variables = data.get("variables")
+    if variables is None:
+        variables = {}
+    if not isinstance(variables, dict):
+        raise AppError(ErrorCode.PARAM_ERROR, "参数 variables 必须是对象")
+    capabilities = data.get("capabilities")
+    if capabilities is not None and not isinstance(capabilities, list):
+        raise AppError(ErrorCode.PARAM_ERROR, "参数 capabilities 必须是数组")
+    module_id = _optional_int(data.get("moduleId"), "moduleId")
+    project_id = _optional_int(data.get("projectId"), "projectId")
+    top_k = _optional_int(data.get("topK"), "topK") or 3
+    top_k = max(1, min(top_k, 10))
+    text = str(data.get("text") or "").strip()
+    if not text and not capabilities:
+        raise AppError(ErrorCode.PARAM_ERROR, "text 与 capabilities 至少要给一个")
+
+    result = preflight_service.preflight(
+        conn,
+        text=text,
+        capabilities=[str(item) for item in capabilities] if capabilities else None,
+        variables=variables,
+        module_id=module_id,
+        project_id=project_id,
+        top_k=top_k,
+    )
+    return ok(result)
+
+
+# ---------------- 多入口顺序执行 ----------------
+
+@bp.post("/composite/run")
+def composite_run() -> Response:
+    """按顺序跑一条能力流水线：父任务 + 子任务 + 步骤轨迹。"""
+    conn = db()
+    data = body()
+    steps = composite_service.normalize_steps(data.get("steps"))
+    profile_id = _optional_int(data.get("profileId"), "profileId")
+    module_id = _optional_int(data.get("moduleId"), "moduleId")
+    session_id = _optional_int(data.get("sessionId"), "sessionId")
+    title = str(data.get("title") or "").strip()
+    continue_on_error = bool(data.get("continueOnError"))
+    route = data.get("route")
+    if route is not None and not isinstance(route, list):
+        raise AppError(ErrorCode.PARAM_ERROR, "参数 route 必须是数组")
+
+    session_id = _ensure_session(conn, session_id, title or "多入口顺序执行", "composite")
+    result = composite_service.run_composite(
+        conn,
+        steps=steps,
+        session_id=session_id,
+        profile_id=profile_id,
+        module_id=module_id,
+        title=title,
+        route=[item for item in (route or []) if isinstance(item, dict)],
+        continue_on_error=continue_on_error,
+    )
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_GENERATE, audit_service.RESOURCE_AI_TASK,
+          int(result["parentTaskId"]), title or "多入口顺序执行",
+          {"steps": len(steps), "status": result.get("status")})
+    return ok(result)
+
+
 # ---------------- 会话与任务 ----------------
 
 @bp.get("/sessions")
@@ -549,6 +647,14 @@ def get_task(pk: str) -> Response:
     return ok(detail)
 
 
+@bp.get("/tasks/<pk>/trajectory")
+def get_task_trajectory(pk: str) -> Response:
+    """任务轨迹：子任务、逐步状态与关联执行记录。"""
+    conn = db()
+    result = composite_service.task_trajectory(conn, int(pk))
+    return ok(result)
+
+
 @bp.get("/tasks")
 def list_tasks() -> Response:
     conn = db()
@@ -569,6 +675,7 @@ def list_tasks() -> Response:
             "status": row.get("status"),
             "sessionId": row.get("session_id"),
             "moduleId": row.get("module_id"),
+            "parentId": row.get("parent_id"),
             "errorCode": row.get("error_code"),
             "errorMessage": row.get("error_message"),
             "startedAt": row.get("started_at"),

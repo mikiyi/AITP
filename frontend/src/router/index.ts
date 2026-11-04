@@ -18,6 +18,18 @@ const routes: RouteRecordRaw[] = [
     meta: { title: 'AI 实验室', icon: 'MagicStick' },
   },
   {
+    path: '/lab/pipeline',
+    name: 'lab-pipeline',
+    component: () => import('@/views/lab/PipelineView.vue'),
+    meta: { title: '顺序执行', icon: 'Sort' },
+  },
+  {
+    path: '/lab/prompts',
+    name: 'lab-prompts',
+    component: () => import('@/views/lab/PromptLibraryView.vue'),
+    meta: { title: '提示词库', icon: 'Notebook' },
+  },
+  {
     path: '/lab/:capability',
     name: 'lab-capability',
     component: () => import('@/views/lab/CapabilityView.vue'),
@@ -66,10 +78,40 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '测试用例', icon: 'Tickets' },
   },
   {
+    path: '/test-cases/tree',
+    name: 'test-case-tree',
+    component: () => import('@/views/cases/CaseTreeView.vue'),
+    meta: { title: '用例树', icon: 'Share' },
+  },
+  {
     path: '/test-cases/:id',
     name: 'test-case-detail',
     component: () => import('@/views/cases/CaseDetailView.vue'),
     meta: { title: '用例详情', hidden: true },
+  },
+  {
+    path: '/regressions',
+    name: 'regressions',
+    component: () => import('@/views/regressions/RegressionListView.vue'),
+    meta: { title: '回归清单', icon: 'Refresh' },
+  },
+  {
+    path: '/workbench/entries',
+    name: 'workbench-entries',
+    component: () => import('@/views/workbench/EntryView.vue'),
+    meta: { title: '编排入口', icon: 'Grid' },
+  },
+  {
+    path: '/workbench/validation',
+    name: 'workbench-validation',
+    component: () => import('@/views/workbench/ValidationView.vue'),
+    meta: { title: '验证沙箱', icon: 'CircleCheck' },
+  },
+  {
+    path: '/workbench/relations',
+    name: 'workbench-relations',
+    component: () => import('@/views/workbench/RelationView.vue'),
+    meta: { title: '实体关联', icon: 'Connection' },
   },
   {
     path: '/bugs',

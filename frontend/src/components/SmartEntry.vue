@@ -56,6 +56,81 @@
           <span v-if="!result.moduleRoutes.length" class="muted">未匹配到功能点候选</span>
         </div>
       </div>
+
+      <div class="smart-entry__group">
+        <div class="smart-entry__group-title">
+          执行前预检
+          <el-tag size="small" :type="preflight?.ready ? 'success' : 'warning'" effect="plain">
+            {{ preflight?.ready ? '可执行' : '有阻断项' }}
+          </el-tag>
+        </div>
+        <div v-if="preflight" class="preflight">
+          <div class="preflight__bar">
+            <span class="muted">整体完整度</span>
+            <el-progress
+              :percentage="Math.round(preflight.overallCompleteness * 100)"
+              :stroke-width="10"
+              :status="preflight.ready ? 'success' : 'exception'"
+              style="flex: 1"
+            />
+            <el-tag size="small" :type="preflight.modelReady ? 'success' : 'danger'" effect="plain">
+              {{ preflight.modelReady ? '模型可用' : '无可用模型' }}
+            </el-tag>
+          </div>
+
+          <div class="preflight__order">
+            <span class="muted">执行顺序</span>
+            <template v-for="(code, index) in preflight.order" :key="code">
+              <el-tag size="small" effect="plain">{{ index + 1 }}. {{ labelOf(code) }}</el-tag>
+              <span v-if="index < preflight.order.length - 1" class="arrow">→</span>
+            </template>
+            <span v-if="!preflight.order.length" class="muted">无</span>
+          </div>
+
+          <el-table :data="preflight.tasks" size="small" border>
+            <el-table-column prop="label" label="任务" width="130" />
+            <el-table-column label="角色" width="76" align="center">
+              <template #default="scope">
+                <el-tag size="small" :type="scope.row.role === 'primary' ? 'primary' : 'info'" effect="plain">
+                  {{ scope.row.role === 'primary' ? '主任务' : '辅助' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="完整度" width="130">
+              <template #default="scope">
+                <el-progress
+                  :percentage="Math.round(scope.row.completeness * 100)"
+                  :stroke-width="8"
+                  :status="scope.row.ready ? 'success' : 'exception'"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column label="缺项" min-width="180">
+              <template #default="scope">
+                <span v-if="scope.row.missing.length" class="missing">
+                  {{ scope.row.missing.join('、') }}
+                </span>
+                <span v-else class="muted">必填齐全</span>
+                <div v-if="scope.row.missingOptional.length" class="muted optional-line">
+                  可选未填：{{ scope.row.missingOptional.join('、') }}
+                </div>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <ul v-if="preflight.blockers.length" class="preflight__notes">
+            <li v-for="(item, index) in preflight.blockers" :key="`b-${index}`" class="blocker">
+              {{ item }}
+            </li>
+          </ul>
+          <ul v-if="preflight.warnings.length" class="preflight__notes">
+            <li v-for="(item, index) in preflight.warnings" :key="`w-${index}`" class="warning">
+              {{ item }}
+            </li>
+          </ul>
+        </div>
+        <span v-else class="muted">点击「智能匹配」后给出缺项与执行顺序</span>
+      </div>
     </div>
   </div>
 </template>
@@ -66,7 +141,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { labApi } from '@/api'
-import type { ModuleRouteResult, RouteResponse, RouteResult } from '@/api/types'
+import type { ModuleRouteResult, PreflightResult, RouteResponse, RouteResult } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
@@ -75,6 +150,25 @@ const appStore = useAppStore()
 const text = ref('')
 const loading = ref(false)
 const result = ref<RouteResponse | null>(null)
+const preflight = ref<PreflightResult | null>(null)
+
+const CAPABILITY_LABELS: Record<string, string> = {
+  requirement_review: '需求评审',
+  testpoint_generation: '测试点生成',
+  case_generation: '用例生成',
+  xmind_to_case: 'XMind 转用例',
+  bug_analysis: '缺陷分析',
+  log_analysis: '日志分析',
+  sql_analysis: 'SQL 分析',
+  regression_generation: '回归清单',
+  report_generation: '报告生成',
+  knowledge_qa: '知识问答',
+  prompt_optimize: '提示词优化',
+}
+
+function labelOf(code: string): string {
+  return CAPABILITY_LABELS[code] ?? code
+}
 
 async function route(): Promise<void> {
   const value = text.value.trim()
@@ -83,16 +177,31 @@ async function route(): Promise<void> {
     return
   }
   loading.value = true
+  preflight.value = null
   try {
     result.value = await labApi.route({
       text: value,
       projectId: appStore.currentProjectId ?? undefined,
       topK: 3,
     })
+    await loadPreflight(value)
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '匹配失败')
   } finally {
     loading.value = false
+  }
+}
+
+/** 预检与匹配并行做，纯本地计算，不调模型。 */
+async function loadPreflight(value: string): Promise<void> {
+  try {
+    preflight.value = await labApi.preflight({
+      text: value,
+      projectId: appStore.currentProjectId ?? undefined,
+      topK: 3,
+    })
+  } catch {
+    preflight.value = null
   }
 }
 
@@ -188,5 +297,58 @@ defineExpose({ route, text })
 .smart-entry__card-score {
   font-size: 12px;
   color: var(--aitp-primary);
+}
+
+.preflight {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--aitp-border);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.preflight__bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.preflight__order {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.arrow {
+  color: var(--aitp-text-weak);
+}
+
+.missing {
+  color: var(--el-color-danger);
+  font-size: 12px;
+}
+
+.optional-line {
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.preflight__notes {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.blocker {
+  color: var(--el-color-danger);
+}
+
+.warning {
+  color: var(--el-color-warning);
 }
 </style>

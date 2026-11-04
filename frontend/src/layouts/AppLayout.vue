@@ -16,10 +16,17 @@
           <el-icon><HomeFilled /></el-icon>
           <template #title>工作台</template>
         </el-menu-item>
-        <el-menu-item index="/lab">
-          <el-icon><MagicStick /></el-icon>
-          <template #title>AI 实验室</template>
-        </el-menu-item>
+        <el-sub-menu index="lab">
+          <template #title>
+            <el-icon><MagicStick /></el-icon>
+            <span>AI 实验室</span>
+          </template>
+          <el-menu-item index="/lab">能力总览</el-menu-item>
+          <el-menu-item index="/lab/pipeline">顺序执行</el-menu-item>
+          <el-menu-item index="/lab/prompts">提示词库</el-menu-item>
+          <el-menu-item index="/lab/sessions">会话记录</el-menu-item>
+          <el-menu-item index="/lab/records">执行记录</el-menu-item>
+        </el-sub-menu>
         <el-sub-menu index="asset">
           <template #title>
             <el-icon><Files /></el-icon>
@@ -28,18 +35,21 @@
           <el-menu-item index="/projects">项目</el-menu-item>
           <el-menu-item index="/requirements">需求</el-menu-item>
           <el-menu-item index="/test-cases">测试用例</el-menu-item>
+          <el-menu-item index="/test-cases/tree">用例树</el-menu-item>
           <el-menu-item index="/bugs">缺陷</el-menu-item>
           <el-menu-item index="/knowledge">知识库</el-menu-item>
+          <el-menu-item index="/regressions">回归清单</el-menu-item>
           <el-menu-item index="/reports">测试报告</el-menu-item>
         </el-sub-menu>
-        <el-menu-item index="/lab/sessions">
-          <el-icon><ChatDotRound /></el-icon>
-          <template #title>会话记录</template>
-        </el-menu-item>
-        <el-menu-item index="/lab/records">
-          <el-icon><DocumentChecked /></el-icon>
-          <template #title>执行记录</template>
-        </el-menu-item>
+        <el-sub-menu index="flow">
+          <template #title>
+            <el-icon><Operation /></el-icon>
+            <span>编排与验证</span>
+          </template>
+          <el-menu-item index="/workbench/entries">编排入口</el-menu-item>
+          <el-menu-item index="/workbench/validation">验证沙箱</el-menu-item>
+          <el-menu-item index="/workbench/relations">实体关联</el-menu-item>
+        </el-sub-menu>
         <el-menu-item index="/settings">
           <el-icon><Setting /></el-icon>
           <template #title>设置</template>
@@ -107,7 +117,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { Expand, Fold } from '@element-plus/icons-vue'
+import { Expand, Fold, Files, HomeFilled, MagicStick, Operation, Setting } from '@element-plus/icons-vue'
 import { get } from '@/api/request'
 import { settingsApi } from '@/api'
 import type { AiStatus } from '@/api/types'
@@ -158,8 +168,17 @@ const activePath = computed(() => {
   if (path.startsWith('/lab/sessions')) {
     return '/lab/sessions'
   }
+  if (path.startsWith('/lab/pipeline')) {
+    return '/lab/pipeline'
+  }
+  if (path.startsWith('/lab/prompts')) {
+    return '/lab/prompts'
+  }
   if (path.startsWith('/lab/')) {
     return '/lab'
+  }
+  if (path.startsWith('/workbench/')) {
+    return path
   }
   if (path.startsWith('/settings')) {
     return '/settings'

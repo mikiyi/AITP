@@ -15,7 +15,9 @@ import type {
   Bug,
   BugLog,
   CapabilitySpec,
+  CaseTreeNode,
   DbBackup,
+  EntityRelation,
   KnowledgeArticle,
   KnowledgeDraft,
   KnowledgeMigrateResult,
@@ -26,7 +28,12 @@ import type {
   ModuleCoverage,
   ModuleNode,
   ModuleOption,
+  PipelineResult,
+  PreflightResult,
   Project,
+  PromptTemplate,
+  Regression,
+  RegressionItem,
   Report,
   ReportItem,
   ReportStats,
@@ -37,6 +44,9 @@ import type {
   SelfCheckResult,
   SystemConfigItem,
   TestCase,
+  ValidationCase,
+  ValidationResult,
+  WorkbenchEntry,
   WorkbenchOverview,
   XmindParseResult,
 } from './types'
@@ -58,6 +68,82 @@ export const workbenchApi = {
   overview: (projectId?: number) =>
     get<WorkbenchOverview>('/workbench/overview', { projectId }),
   coverage: (projectId: number) => get('/workbench/coverage', { projectId }),
+  entries: (query: Record<string, unknown> = {}) =>
+    get<{ list: WorkbenchEntry[]; total: number }>('/workbench/entries', query as never),
+  entry: (id: number) => get<WorkbenchEntry>(`/workbench/entries/${id}`),
+  createEntry: (body: Record<string, unknown>) =>
+    post<WorkbenchEntry>('/workbench/entries', body),
+  updateEntry: (id: number, body: Record<string, unknown>) =>
+    put<WorkbenchEntry>(`/workbench/entries/${id}`, body),
+  publishEntry: (id: number) => post<WorkbenchEntry>(`/workbench/entries/${id}/publish`),
+  removeEntry: (id: number) => del(`/workbench/entries/${id}`),
+  runEntry: (id: number, body: Record<string, unknown>) =>
+    post<PipelineResult & { entryId: number; entryVersion: number }>(
+      `/workbench/entries/${id}/run`,
+      body,
+    ),
+}
+
+/** 案例验证沙箱。 */
+export const validationApi = {
+  cases: (query: Record<string, unknown> = {}) =>
+    get<{ list: ValidationCase[]; total: number }>('/validation/cases', query as never),
+  case: (id: number) => get<ValidationCase>(`/validation/cases/${id}`),
+  createCase: (body: Record<string, unknown>) => post<ValidationCase>('/validation/cases', body),
+  updateCase: (id: number, body: Record<string, unknown>) =>
+    put<ValidationCase>(`/validation/cases/${id}`, body),
+  removeCase: (id: number) => del(`/validation/cases/${id}`),
+  runCase: (id: number, body: Record<string, unknown> = {}) =>
+    post<ValidationResult>(`/validation/cases/${id}/run`, body),
+  runAll: (body: Record<string, unknown> = {}) =>
+    post<{
+      total: number
+      passed: number
+      failed: number
+      passRate: number
+      results: Array<{ id: number; name: string; passed: boolean; errors: string[] }>
+    }>('/validation/run-all', body),
+}
+
+/** 回归清单。 */
+export const regressionApi = {
+  list: (query: Record<string, unknown> = {}) =>
+    get<PagePayload<Regression>>('/regressions', query as never),
+  get: (id: number) => get<Regression>(`/regressions/${id}`),
+  create: (body: Record<string, unknown>) => post<Regression>('/regressions', body),
+  update: (id: number, body: Record<string, unknown>) =>
+    put<Regression>(`/regressions/${id}`, body),
+  remove: (id: number) => del(`/regressions/${id}`),
+  generate: (id: number, body: Record<string, unknown> = {}) =>
+    post<{ id: number; created: number; items: RegressionItem[]; output: string }>(
+      `/regressions/${id}/generate`,
+      body,
+    ),
+  items: (id: number) => get<{ list: RegressionItem[] }>(`/regressions/${id}/items`),
+  addItem: (id: number, body: Record<string, unknown>) =>
+    post<RegressionItem>(`/regressions/${id}/items`, body),
+  updateItem: (id: number, itemId: number, body: Record<string, unknown>) =>
+    put<RegressionItem>(`/regressions/${id}/items/${itemId}`, body),
+  removeItem: (id: number, itemId: number) => del(`/regressions/${id}/items/${itemId}`),
+  execute: (id: number, results: Array<{ itemId: number; result: string; remark?: string }>) =>
+    post<{ id: number; status: string; updated: number[]; skipped: number[] }>(
+      `/regressions/${id}/execute`,
+      { results },
+    ),
+}
+
+/** 通用实体关联。 */
+export const relationApi = {
+  types: () =>
+    get<{ entityTypes: string[]; relationTypes: string[] }>('/relations/types'),
+  list: (query: Record<string, unknown> = {}) =>
+    get<PagePayload<EntityRelation>>('/relations', query as never),
+  of: (entityType: string, entityId: number) =>
+    get<{
+      list: Array<EntityRelation & { direction: string; peerType: string; peerId: number }>
+    }>(`/relations/of/${entityType}/${entityId}`),
+  create: (body: Record<string, unknown>) => post<EntityRelation>('/relations', body),
+  remove: (id: number) => del(`/relations/${id}`),
 }
 
 /** 项目。 */
@@ -110,6 +196,11 @@ export const caseApi = {
   batchRemove: (ids: number[]) => post<BatchDeleteResult>('/test-cases/batch-delete', { ids }),
   execute: (id: number, body: Record<string, unknown>) => post(`/test-cases/${id}/execute`, body),
   coverage: (projectId: number) => get('/test-cases/coverage', { projectId }),
+  /** 用例树：功能点树上挂各自的用例。 */
+  tree: (projectId: number) =>
+    get<{ list: CaseTreeNode[]; orphans: TestCase[]; total: number }>('/test-cases/tree', {
+      projectId,
+    }),
   coverageModules: (projectId: number) =>
     get<{ list: ModuleCoverage[] }>('/test-cases/coverage/modules', { projectId }),
   adopt: (body: {
@@ -206,7 +297,7 @@ export const reportApi = {
 export const labApi = {
   capabilities: () => get<CapabilitySpec[]>('/lab/capabilities'),
   mainCapabilities: () => get<CapabilitySpec[]>('/lab/main-capabilities'),
-  prompts: () => get('/lab/prompts'),
+  prompts: () => get<PromptTemplate[]>('/lab/prompts'),
   run: (capability: string, body: Record<string, unknown>) =>
     post(`/lab/${capability}/run`, body),
   route: (body: { text: string; projectId?: number; topK?: number }) =>
@@ -222,6 +313,30 @@ export const labApi = {
     get<PagePayload<AiTask>>('/lab/tasks', query as never),
   task: (id: number) => get<AiTask>(`/lab/tasks/${id}`),
   cancelTask: (id: number) => post(`/lab/tasks/${id}/cancel`),
+  /** 执行前预检：缺项、完整度、主/辅助任务与执行顺序。 */
+  preflight: (body: {
+    text?: string
+    capabilities?: string[]
+    variables?: Record<string, unknown>
+    moduleId?: number | null
+    projectId?: number | null
+    topK?: number
+  }) => post<PreflightResult>('/lab/preflight', body),
+  /** 多入口顺序执行：父任务 + 子任务 + 步骤轨迹。 */
+  compositeRun: (body: {
+    steps: Array<{
+      capability: string
+      name?: string
+      moduleId?: number | null
+      variables: Record<string, unknown>
+    }>
+    title?: string
+    sessionId?: number | null
+    profileId?: number | null
+    moduleId?: number | null
+    continueOnError?: boolean
+  }) => post<PipelineResult>('/lab/composite/run', body),
+  prompt: (code: string) => get<PromptTemplate>(`/lab/prompts/${encodeURIComponent(code)}`),
 }
 
 /** AI 工具：提示词优化、引用式问答。 */

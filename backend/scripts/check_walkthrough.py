@@ -74,6 +74,33 @@ BUG_REPLY = """# 现象归纳
 #: 功能点候选里要指到的模块（种子数据里的「支付回调」）
 MOCK_MODULE: dict[str, Any] = {"id": 0, "path": ""}
 
+#: mock 里回给回归清单能力的产出物：严格 JSON 数组
+REGRESSION_REPLY: list[dict[str, str]] = [
+    {
+        "module": "支付回调",
+        "title": "重复推送只入账一次",
+        "priority": "P0",
+        "reason": "幂等键改造后需要回归",
+        "verifyTarget": "并发回放同一报文",
+    },
+    {
+        "module": "对账任务",
+        "title": "重复推送后金额与流水一致",
+        "priority": "P1",
+        "reason": "累加逻辑改了",
+        "verifyTarget": "跑一次日终对账",
+    },
+]
+
+#: mock 里回给需求评审能力的产出物
+REQUIREMENT_REPLY = """# 评审结论
+需求描述基本完整，可进入测试设计。
+
+# 问题清单
+| 序号 | 维度 | 问题描述 | 影响 | 建议 |
+| 1 | 完整性 | 缺少异常分支说明 | 用例覆盖不全 | 补充超时与重复推送场景 |
+"""
+
 
 def check(name: str, condition: bool, detail: str = "") -> bool:
     global _passed, _failed
@@ -123,6 +150,12 @@ class _MockHandler(BaseHTTPRequestHandler):
             }, ensure_ascii=False)
         if "能力目录" in prompt:
             return json.dumps(ROUTE_REPLY, ensure_ascii=False)
+        # 「影响面判定」只在回归清单提示词里出现，用它做分支不会误伤其它能力
+        if "影响面判定" in prompt:
+            return json.dumps(REGRESSION_REPLY, ensure_ascii=False)
+        # 「待澄清问题」只在需求评审提示词里出现
+        if "待澄清问题" in prompt:
+            return REQUIREMENT_REPLY
         if "bug" in model:
             return BUG_REPLY
         return "走查 mock 默认回复"
@@ -343,6 +376,268 @@ def check_offline_fallback(client: Any) -> None:
           bool(routes) and routes[0].get("capability") == "bug_analysis", str(routes)[:200])
 
 
+# ---------------- P0/P1 补强走查 ----------------
+
+def check_preflight(client: Any) -> None:
+    """P0-1 执行前预检：缺项、完整度、主/辅助任务、执行顺序。"""
+    result = data_of(client, "POST", "/api/v1/lab/preflight", {
+        "text": "支付回调重复推送导致金额翻倍",
+        "topK": 3,
+    })
+    tasks = result.get("tasks") or []
+    check("预检给出候选任务", bool(tasks), str(result)[:200])
+    check("预检标出主任务",
+          any(str(item.get("role")) == "primary" for item in tasks),
+          str([item.get("role") for item in tasks]))
+    check("预检给出执行顺序", bool(result.get("order")), str(result.get("order")))
+    check("预检认为模型可用", bool(result.get("modelReady")), str(result)[:200])
+    check("预检给出整体完整度",
+          isinstance(result.get("overallCompleteness"), (int, float)), str(result)[:200])
+
+    # 只给文本不给变量：必填变量没给，完整度应低于 1 并列出缺项
+    partial = data_of(client, "POST", "/api/v1/lab/preflight", {
+        "text": "支付回调重复推送导致金额翻倍",
+        "variables": {},
+    })
+    partial_tasks = partial.get("tasks") or []
+    check("预检列出缺项",
+          any(item.get("missing") for item in partial_tasks),
+          str([item.get("missing") for item in partial_tasks]))
+    check("预检把缺必填变量标为阻断",
+          any(item.get("blockers") for item in partial_tasks)
+          or bool(partial.get("blockers")),
+          str(partial)[:240])
+    check("预检完整度不满分",
+          float(partial.get("overallCompleteness") or 0) < 1.0,
+          str(partial.get("overallCompleteness")))
+
+    # 显式指定能力 + 给全变量：应该没有阻断项
+    full = data_of(client, "POST", "/api/v1/lab/preflight", {
+        "capabilities": ["bug_analysis"],
+        "variables": {
+            "bugTitle": "支付回调重复推送导致金额翻倍",
+            "bugDescription": "支付回调收到两次相同推送",
+            "reproSteps": "1. 触发支付回调 2. 重复推送同一条报文",
+            "expectedResult": "只入账一次",
+            "actualResult": "入账两次",
+        },
+    })
+    check("给全变量后预检不再报缺项",
+          not any(item.get("missing") for item in full.get("tasks") or []),
+          str(full)[:240])
+
+    empty = call(client, "POST", "/api/v1/lab/preflight", {"variables": {}})
+    check("预检没有输入被拒", empty.get("code") == ErrorCode.PARAM_ERROR, str(empty)[:160])
+
+
+def check_composite(client: Any) -> None:
+    """P0-2 多入口顺序执行：父任务 + 子任务 + 步骤轨迹。"""
+    result = data_of(client, "POST", "/api/v1/lab/composite/run", {
+        "title": "走查-需求到缺陷",
+        "steps": [
+            {
+                "capability": "requirement_review",
+                "name": "需求评审",
+                "variables": {
+                    "requirement": "支付回调重复推送要保证只入账一次",
+                    "projectName": "走查项目",
+                },
+            },
+            {
+                "capability": "bug_analysis",
+                "name": "缺陷分析",
+                "variables": {
+                    "bugTitle": "支付回调重复推送导致金额翻倍",
+                    "bugDescription": "支付回调收到两次相同推送，金额被累加两次",
+                    "reproSteps": "1. 触发支付回调 2. 重复推送同一条报文",
+                    "expectedResult": "只入账一次",
+                    "actualResult": "入账两次",
+                },
+            },
+        ],
+        "continueOnError": True,
+    })
+    steps = result.get("steps") or []
+    check("顺序执行返回父任务", int(result.get("parentTaskId") or 0) > 0, str(result)[:200])
+    check("顺序执行产出步骤轨迹", len(steps) == 2, str(steps)[:240])
+    check("步骤按顺序编号",
+          [item.get("order") for item in steps] == [1, 2], str(steps)[:240])
+    check("每步都成功", all(item.get("status") == "success" for item in steps), str(steps)[:240])
+    check("每步都带子任务号",
+          all(int(item.get("taskId") or 0) > 0 for item in steps), str(steps)[:240])
+    check("每步都带执行记录号",
+          all(int(item.get("recordId") or 0) > 0 for item in steps), str(steps)[:240])
+    check("每步都带模型与耗时",
+          all(item.get("model") and item.get("latencyMs") is not None for item in steps),
+          str(steps)[:240])
+    check("父任务汇总产出非空", bool(str(result.get("output") or "").strip()), str(result)[:200])
+    check("父任务落了汇总记录", int(result.get("parentRecordId") or 0) > 0, str(result)[:200])
+
+    trajectory = data_of(client, "GET",
+                         f"/api/v1/lab/tasks/{result['parentTaskId']}/trajectory")
+    check("任务轨迹能取到子任务", len(trajectory.get("children") or []) == 2,
+          str(trajectory)[:240])
+    check("任务轨迹能取到步骤", len(trajectory.get("steps") or []) == 2,
+          str(trajectory)[:240])
+
+    # 缺必填变量：执行前就拦下，不产生半截流水线
+    blocked = call(client, "POST", "/api/v1/lab/composite/run", {
+        "steps": [{"capability": "case_generation", "variables": {}}],
+    })
+    check("步骤缺必填变量被拦下", blocked.get("code") == ErrorCode.PARAM_ERROR, str(blocked)[:200])
+
+    bad = call(client, "POST", "/api/v1/lab/composite/run", {
+        "steps": [{"capability": "not-a-capability", "variables": {}}],
+    })
+    check("未知能力被拦下", bad.get("code") == ErrorCode.PARAM_ERROR, str(bad)[:200])
+
+
+def check_entry(client: Any) -> None:
+    """P0-3 编排入口：草稿 → 发布 → 按工作流运行。"""
+    created = data_of(client, "POST", "/api/v1/workbench/entries", {
+        "code": "walkthrough-req-to-bug",
+        "name": "走查-需求到缺陷",
+        "capability": "requirement_review",
+        "triggers": ["支付", "回调"],
+        "required": ["requirement"],
+        "workflow": [
+            {
+                "capability": "requirement_review",
+                "name": "需求评审",
+                "variables": {"projectName": "走查项目"},
+            },
+            {
+                "capability": "bug_analysis",
+                "name": "缺陷分析",
+                "variables": {
+                    "bugTitle": "支付回调重复推送导致金额翻倍",
+                    "bugDescription": "支付回调收到两次相同推送",
+                    "reproSteps": "1. 触发支付回调 2. 重复推送同一条报文",
+                    "expectedResult": "只入账一次",
+                    "actualResult": "入账两次",
+                },
+            },
+        ],
+    })
+    entry_id = int(created.get("id") or 0)
+    check("编排入口创建成功", entry_id > 0, str(created)[:200])
+    check("编排入口默认草稿", created.get("status") == "draft", str(created.get("status")))
+
+    published = data_of(client, "POST", f"/api/v1/workbench/entries/{entry_id}/publish")
+    check("编排入口发布成功", published.get("status") == "published", str(published)[:200])
+    check("编排入口版本号递增", int(published.get("version") or 0) >= 2,
+          str(published.get("version")))
+
+    ran = data_of(client, "POST", f"/api/v1/workbench/entries/{entry_id}/run", {
+        "variables": {"requirement": "支付回调重复推送要保证只入账一次"},
+        "continueOnError": True,
+    })
+    check("编排入口运行带回入口号", int(ran.get("entryId") or 0) == entry_id, str(ran)[:200])
+    check("编排入口运行带回版本号", int(ran.get("entryVersion") or 0) >= 2, str(ran)[:200])
+    check("编排入口按工作流跑出步骤", len(ran.get("steps") or []) == 2, str(ran)[:240])
+    check("编排入口运行产生父任务", int(ran.get("parentTaskId") or 0) > 0, str(ran)[:200])
+
+
+def check_validation(client: Any) -> None:
+    """P0-4 案例验证沙箱：期望 vs 实际。"""
+    created = data_of(client, "POST", "/api/v1/validation/cases", {
+        "name": "走查-支付回调路由",
+        "inputText": "支付回调重复推送导致金额翻倍",
+        "capability": "bug_analysis",
+        "variables": {
+            "bugTitle": "支付回调重复推送导致金额翻倍",
+            "bugDescription": "支付回调收到两次相同推送",
+            "reproSteps": "1. 触发支付回调 2. 重复推送同一条报文",
+            "expectedResult": "只入账一次",
+            "actualResult": "入账两次",
+        },
+        "expectedRoutes": ["bug_analysis"],
+        "status": "published",
+    })
+    case_id = int(created.get("id") or 0)
+    check("验证案例创建成功", case_id > 0, str(created)[:200])
+
+    result = data_of(client, "POST", f"/api/v1/validation/cases/{case_id}/run", {})
+    check("验证案例跑出比对结论", "passed" in result, str(sorted(result.keys())))
+    check("验证案例期望命中即通过", bool(result.get("passed")), str(result)[:240])
+    check("比对结果带路由命中",
+          bool((result.get("route") or {}).get("actual")), str(result.get("route"))[:240])
+    check("比对结果带实际缺项",
+          isinstance((result.get("missing") or {}).get("actual"), list),
+          str(result.get("missing"))[:240])
+    check("比对结果带命中规则",
+          isinstance((result.get("rules") or {}).get("actual"), list),
+          str(result.get("rules"))[:240])
+
+    # 期望一个不会命中的能力：不通过，且差异清单要指出差在哪
+    mismatch = data_of(client, "POST", "/api/v1/validation/cases", {
+        "name": "走查-故意不匹配",
+        "inputText": "支付回调重复推送导致金额翻倍",
+        "expectedRoutes": ["sql_analysis"],
+        "status": "published",
+    })
+    mismatch_result = data_of(
+        client, "POST", f"/api/v1/validation/cases/{mismatch['id']}/run", {})
+    check("期望不命中时判为不通过", not bool(mismatch_result.get("passed")),
+          str(mismatch_result)[:240])
+    check("不通过时给出差异清单", bool(mismatch_result.get("errors")),
+          str(mismatch_result.get("errors"))[:240])
+
+    summary = data_of(client, "POST", "/api/v1/validation/run-all", {})
+    check("全量验证给出总数", int(summary.get("total") or 0) >= 2, str(summary)[:240])
+    check("全量验证给出通过率", "passRate" in summary, str(summary)[:240])
+
+
+def check_regression_ai(client: Any) -> None:
+    """P1-2 回归清单：AI 生成条目 + 在线执行回写。"""
+    created = data_of(client, "POST", "/api/v1/regressions", {
+        "projectId": 1,
+        "title": "走查-支付回调回归",
+        "changeScope": "回调幂等改造",
+        "affectedModules": "支付回调",
+        "version": "v1.0.0",
+        "riskLevel": "high",
+    })
+    reg_id = int(created.get("id") or 0)
+    check("回归清单创建成功", reg_id > 0, str(created)[:200])
+
+    generated = data_of(client, "POST", f"/api/v1/regressions/{reg_id}/generate", {})
+    check("AI 生成回归条目", int(generated.get("created") or 0) == 2, str(generated)[:240])
+    items = generated.get("items") or []
+    check("回归条目带优先级", all(item.get("priority") in ("P0", "P1", "P2") for item in items),
+          str(items)[:240])
+
+    detail = data_of(client, "GET", f"/api/v1/regressions/{reg_id}")
+    check("生成后清单来源标为 AI", detail.get("source") == "ai", str(detail)[:240])
+    check("生成后清单状态就绪", detail.get("status") == "ready", str(detail.get("status")))
+
+    executed = data_of(client, "POST", f"/api/v1/regressions/{reg_id}/execute", {
+        "results": [
+            {"itemId": items[0]["id"], "result": "passed", "remark": "手工验证通过"},
+            {"itemId": items[1]["id"], "result": "failed", "remark": "金额对不上"},
+        ],
+    })
+    check("回归执行回写两条", len(executed.get("updated") or []) == 2, str(executed)[:240])
+    after = data_of(client, "GET", f"/api/v1/regressions/{reg_id}")
+    results = {item.get("result") for item in after.get("items") or []}
+    check("回归结果分别落库", results == {"passed", "failed"}, str(after.get("items"))[:240])
+    check("清单状态按明细回推", after.get("status") == "done", str(after.get("status")))
+
+
+def check_record_four_sections(client: Any) -> None:
+    """P1-1 执行记录补四段：原始输入 / 路由命中 / 步骤轨迹 / 模型用量。"""
+    records = data_of(client, "GET", "/api/v1/ai-records?pageSize=50")
+    items = records.get("list") or []
+    check("执行记录有数据", bool(items), str(len(items)))
+    if not items:
+        return
+    detail = data_of(client, "GET", f"/api/v1/ai-records/{items[0]['id']}")
+    for key in ("input", "route", "steps", "usage"):
+        check(f"执行记录含 {key} 段", key in detail, str(sorted(detail.keys())))
+    check("执行记录带提示词编号", "promptCode" in detail, str(sorted(detail.keys())))
+    check("执行记录带耗时", "latencyMs" in detail, str(sorted(detail.keys())))
+
+
 def main() -> int:
     workdir = pathlib.Path(tempfile.mkdtemp(prefix="aitp-walkthrough-"))
     server, mock_port = start_mock()
@@ -379,6 +674,12 @@ def main() -> int:
         record_id = check_record(client, run_result)
         check_review(client, record_id)
         check_search(client)
+        check_preflight(client)
+        check_composite(client)
+        check_entry(client)
+        check_validation(client)
+        check_regression_ai(client)
+        check_record_four_sections(client)
         check_offline_fallback(client)
     finally:
         server.shutdown()

@@ -15,10 +15,13 @@ def register_blueprints(app: Flask) -> None:
     from .meta import bp as meta_bp
     from .modules import bp as modules_bp
     from .projects import bp as projects_bp
+    from .relations import bp as relations_bp
+    from .regressions import bp as regressions_bp
     from .reports import bp as reports_bp
     from .requirements import bp as requirements_bp
     from .search import bp as search_bp
     from .settings import bp as settings_bp
+    from .validation import bp as validation_bp
     from .workbench import bp as workbench_bp
 
     for bp, prefix in (
@@ -34,6 +37,9 @@ def register_blueprints(app: Flask) -> None:
         (bugs_bp, "/api/v1/bugs"),
         (knowledge_bp, "/api/v1/knowledge"),
         (reports_bp, "/api/v1/reports"),
+        (regressions_bp, "/api/v1/regressions"),
+        (relations_bp, "/api/v1/relations"),
+        (validation_bp, "/api/v1/validation"),
         (settings_bp, "/api/v1/settings"),
         (meta_bp, "/api/v1/meta"),
     ):

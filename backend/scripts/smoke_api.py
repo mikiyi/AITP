@@ -1077,6 +1077,274 @@ def check_ai_records_and_search(api: Api, project_id: int) -> None:
     api.expect("搜索缺少关键词被拒", "GET", "/api/v1/search", ErrorCode.PARAM_ERROR)
 
 
+def check_preflight(api: Api, project_id: int) -> None:
+    """P0-1 执行前预检：缺项、完整度、主/辅助任务与执行顺序。"""
+    result = api.data("POST", "/api/v1/lab/preflight", {
+        "text": "支付回调重复推送导致金额翻倍",
+        "projectId": project_id,
+        "topK": 3,
+    })
+    tasks = result.get("tasks") or []
+    check("预检给出候选任务", bool(tasks), str(result)[:200])
+    check("预检区分主任务与辅助任务",
+          any(item.get("role") == "primary" for item in tasks)
+          and all(item.get("role") in ("primary", "auxiliary") for item in tasks),
+          str([item.get("role") for item in tasks]))
+    check("预检给出执行顺序", bool(result.get("order")), str(result.get("order")))
+    check("预检给出整体完整度",
+          isinstance(result.get("overallCompleteness"), (int, float)), str(result)[:200])
+    check("预检给出模型可用标记", isinstance(result.get("modelReady"), bool), str(result)[:200])
+    for task in tasks:
+        check(f"预检任务 {task.get('capability')} 带必填与缺项清单",
+              "required" in task and "missing" in task, str(task)[:200])
+        break
+
+    empty = api.data("POST", "/api/v1/lab/preflight", {"text": "支付回调重复推送导致金额翻倍"})
+    check("不带项目的预检也能出结论", bool(empty.get("tasks") or empty.get("blockers")),
+          str(empty)[:200])
+
+    api.expect("预检 text 与 capabilities 同时为空返回 100100", "POST",
+               "/api/v1/lab/preflight", ErrorCode.PARAM_ERROR, {"variables": {}})
+    api.expect("预检 variables 非对象返回 100100", "POST",
+               "/api/v1/lab/preflight", ErrorCode.PARAM_ERROR, {"text": "x", "variables": []})
+
+
+def check_prompt_library(api: Api) -> None:
+    """P1-5 提示词库：目录可见、单模板正文可取。"""
+    listing = api.data("GET", "/api/v1/lab/prompts")
+    check("提示词库有模板", bool(listing), str(len(listing) if listing else 0))
+    if listing:
+        first = listing[0]
+        check("提示词目录含变量清单", "variables" in first, str(sorted(first.keys())))
+        detail = api.data("GET", f"/api/v1/lab/prompts/{first['code']}")
+        check("提示词详情含正文", bool(str(detail.get("body") or "").strip()), str(detail)[:160])
+    api.expect("提示词不存在返回 120101", "GET",
+               "/api/v1/lab/prompts/definitely-not-a-prompt", ErrorCode.PROMPT_NOT_FOUND)
+
+
+def check_case_tree(api: Api, project_id: int, feature_id: int) -> None:
+    """P1-3 用例树：功能点树上挂各自的用例。"""
+    tree = api.data("GET", f"/api/v1/test-cases/tree?projectId={project_id}")
+    nodes = tree.get("list") or []
+    check("用例树返回功能点树", bool(nodes), str(len(nodes)))
+    check("用例树带总用例数", isinstance(tree.get("total"), int), str(tree.get("total")))
+
+    def find(items: list[JsonDict]) -> JsonDict | None:
+        for item in items:
+            if int(item.get("id") or 0) == feature_id:
+                return item
+            found = find(item.get("children") or [])
+            if found:
+                return found
+        return None
+
+    node = find(nodes)
+    check("用例树能定位到功能点节点", node is not None, str(feature_id))
+    if node:
+        check("功能点节点挂着用例清单", isinstance(node.get("cases"), list), str(node.keys()))
+        check("功能点节点带用例计数", isinstance(node.get("caseCount"), int), str(node.get("caseCount")))
+
+    api.expect("用例树缺项目参数返回 100100", "GET",
+               "/api/v1/test-cases/tree", ErrorCode.PARAM_ERROR)
+
+
+def check_workbench_entries(api: Api) -> None:
+    """P0-3 编排入口：草稿 → 发布 → 版本号递增。"""
+    created = api.data("POST", "/api/v1/workbench/entries", {
+        "code": "smoke-req-to-case",
+        "name": "冒烟-需求转用例",
+        "capability": "case_generation",
+        "description": "冒烟用编排入口",
+        "triggers": ["需求", "用例"],
+        "required": ["requirement"],
+        "workflow": [
+            {"capability": "requirement_review", "name": "需求评审", "variables": {}},
+            {"capability": "case_generation", "name": "生成用例", "variables": {}},
+        ],
+    })
+    entry_id = int(created.get("id") or 0)
+    check("入口创建成功", entry_id > 0, str(created)[:200])
+    check("入口默认是草稿", created.get("status") == "draft", str(created.get("status")))
+    check("入口带工作流步骤", len(created.get("workflow") or []) == 2, str(created.get("workflow")))
+
+    listing = api.data("GET", "/api/v1/workbench/entries")
+    check("入口列表可查", any(int(item.get("id") or 0) == entry_id
+                              for item in listing.get("list") or []), str(listing)[:200])
+
+    published = api.data("POST", f"/api/v1/workbench/entries/{entry_id}/publish")
+    check("入口发布后状态为已发布", published.get("status") == "published", str(published)[:200])
+    check("入口发布后版本号递增", int(published.get("version") or 0) >= 2,
+          str(published.get("version")))
+
+    detail = api.data("GET", f"/api/v1/workbench/entries/{entry_id}")
+    check("入口详情带版本历史", bool(detail.get("versions")), str(detail)[:200])
+
+    updated = api.data("PUT", f"/api/v1/workbench/entries/{entry_id}",
+                       {"description": "冒烟改过的说明"})
+    check("入口可编辑", updated.get("description") == "冒烟改过的说明", str(updated)[:200])
+
+    api.expect("入口编码重复返回 140103", "POST", "/api/v1/workbench/entries",
+               ErrorCode.UNIQUE_CONFLICT, {
+                   "code": "smoke-req-to-case", "name": "重复编码",
+                   "capability": "case_generation",
+               })
+    api.expect("入口不存在返回 140100", "GET",
+               "/api/v1/workbench/entries/999999", ErrorCode.RESOURCE_NOT_FOUND)
+    api.expect("入口缺主能力返回 100100", "POST", "/api/v1/workbench/entries",
+               ErrorCode.PARAM_ERROR, {"code": "smoke-no-cap", "name": "缺能力"})
+
+    api.data("DELETE", f"/api/v1/workbench/entries/{entry_id}")
+
+
+def check_validation_sandbox(api: Api, project_id: int) -> None:
+    """P0-4 案例验证沙箱：期望 vs 实际。"""
+    created = api.data("POST", "/api/v1/validation/cases", {
+        "name": "冒烟-支付回调路由",
+        "inputText": "支付回调重复推送导致金额翻倍",
+        "capability": "bug_analysis",
+        "expectedRoutes": ["bug_analysis"],
+        "expectedMissing": [],
+        "expectedRules": [],
+        "status": "published",
+    })
+    case_id = int(created.get("id") or 0)
+    check("验证案例创建成功", case_id > 0, str(created)[:200])
+    check("验证案例保存期望路由", created.get("expectedRoutes") == ["bug_analysis"],
+          str(created.get("expectedRoutes")))
+
+    result = api.data("POST", f"/api/v1/validation/cases/{case_id}/run",
+                      {"projectId": project_id})
+    check("验证案例跑出比对结论", "passed" in result, str(sorted(result.keys())))
+    check("比对结果含路由段", "route" in result, str(result)[:200])
+    check("比对结果含缺项段", "missing" in result, str(result)[:200])
+    check("比对结果含规则段", "rules" in result, str(result)[:200])
+    check("期望命中的路由在实测里也命中",
+          "bug_analysis" in [item.get("capability") for item in result.get("route", {}).get("actual", [])],
+          str(result.get("route"))[:200])
+
+    listing = api.data("GET", "/api/v1/validation/cases")
+    check("验证案例列表可查", any(int(item.get("id") or 0) == case_id
+                                  for item in listing.get("list") or []), str(listing)[:200])
+    after = api.data("GET", f"/api/v1/validation/cases/{case_id}")
+    check("验证案例回写上次结果", bool(after.get("lastResult")), str(after)[:200])
+
+    api.expect("验证案例缺输入返回 100100", "POST", "/api/v1/validation/cases",
+               ErrorCode.PARAM_ERROR, {"name": "缺输入"})
+    api.expect("验证案例不存在返回 140100", "POST",
+               "/api/v1/validation/cases/999999/run", ErrorCode.RESOURCE_NOT_FOUND)
+
+    api.data("DELETE", f"/api/v1/validation/cases/{case_id}")
+
+
+def check_regression(api: Api, project_id: int) -> None:
+    """P1-2 回归清单：清单 → 明细 → 在线执行回写。"""
+    created = api.data("POST", "/api/v1/regressions", {
+        "projectId": project_id,
+        "title": "冒烟-支付回调回归",
+        "changeScope": "回调幂等改造",
+        "affectedModules": "支付回调",
+        "version": "v0.0.1",
+        "riskLevel": "high",
+    })
+    reg_id = int(created.get("id") or 0)
+    check("回归清单创建成功", reg_id > 0, str(created)[:200])
+    check("回归清单默认草稿", created.get("status") == "draft", str(created.get("status")))
+
+    item = api.data("POST", f"/api/v1/regressions/{reg_id}/items", {
+        "title": "重复推送只入账一次",
+        "module": "支付回调",
+        "priority": "P0",
+        "reason": "幂等改造后需要回归",
+        "verifyTarget": "并发回放同一报文",
+    })
+    item_id = int(item.get("id") or 0)
+    check("回归明细添加成功", item_id > 0, str(item)[:200])
+    check("回归明细默认未执行", item.get("result") == "not_executed", str(item.get("result")))
+
+    items = api.data("GET", f"/api/v1/regressions/{reg_id}/items")
+    check("回归明细可查", len(items.get("list") or []) == 1, str(items)[:200])
+
+    executed = api.data("POST", f"/api/v1/regressions/{reg_id}/execute", {
+        "results": [{"itemId": item_id, "result": "passed", "remark": "手工验证通过"}],
+    })
+    check("回归执行回写成功", item_id in (executed.get("updated") or []), str(executed)[:200])
+    detail = api.data("GET", f"/api/v1/regressions/{reg_id}")
+    check("回归明细结果已落库",
+          (detail.get("items") or [{}])[0].get("result") == "passed", str(detail)[:240])
+    check("回归清单状态按明细回推", detail.get("status") != "draft", str(detail.get("status")))
+
+    api.expect("回归执行结果非法被跳过", "POST", f"/api/v1/regressions/{reg_id}/execute",
+               ErrorCode.PARAM_ERROR, {"results": []})
+    api.expect("回归清单不存在返回 140100", "GET",
+               "/api/v1/regressions/999999", ErrorCode.RESOURCE_NOT_FOUND)
+    api.expect("回归明细不存在返回 140100", "PUT",
+               f"/api/v1/regressions/{reg_id}/items/999999", ErrorCode.RESOURCE_NOT_FOUND,
+               {"title": "x"})
+
+    api.data("DELETE", f"/api/v1/regressions/{reg_id}")
+
+
+def check_relations(api: Api) -> None:
+    """P1-4 通用实体关联：建关系、双向可查。"""
+    created = api.data("POST", "/api/v1/relations", {
+        "sourceType": "case",
+        "sourceId": 1,
+        "relationType": "verifies",
+        "targetType": "requirement",
+        "targetId": 1,
+        "remark": "冒烟关联",
+    })
+    rel_id = int(created.get("id") or 0)
+    check("关联创建成功", rel_id > 0, str(created)[:200])
+
+    types = api.data("GET", "/api/v1/relations/types")
+    check("关联类型目录可用",
+          "case" in (types.get("entityTypes") or [])
+          and "verifies" in (types.get("relationTypes") or []), str(types))
+
+    of_source = api.data("GET", "/api/v1/relations/of/case/1")
+    check("来源侧能查到关联", bool(of_source.get("list")), str(of_source)[:200])
+    of_target = api.data("GET", "/api/v1/relations/of/requirement/1")
+    check("目标侧能查到关联（双向）", bool(of_target.get("list")), str(of_target)[:200])
+    if of_source.get("list"):
+        row = of_source["list"][0]
+        check("关联带方向标记", row.get("direction") in ("in", "out"), str(row)[:200])
+        check("关联带对端实体", row.get("peerType") and row.get("peerId"), str(row)[:200])
+
+    listing = api.data("GET", "/api/v1/relations?relationType=verifies")
+    check("关联可按类型过滤",
+          all(str(item.get("relationType")) == "verifies" for item in listing.get("list") or []),
+          str(listing)[:200])
+
+    api.expect("关联类型非法返回 100100", "POST", "/api/v1/relations",
+               ErrorCode.PARAM_ERROR, {
+                   "sourceType": "case", "sourceId": 1,
+                   "relationType": "not-a-type", "targetType": "bug", "targetId": 1,
+               })
+    api.expect("关联实体类型非法返回 100100", "POST", "/api/v1/relations",
+               ErrorCode.PARAM_ERROR, {
+                   "sourceType": "not-a-type", "sourceId": 1,
+                   "relationType": "relates", "targetType": "bug", "targetId": 1,
+               })
+
+    api.data("DELETE", f"/api/v1/relations/{rel_id}")
+
+
+def check_composite_guard(api: Api, project_id: int) -> None:
+    """P0-2 顺序执行：参数校验与缺变量拦截。"""
+    api.expect("顺序执行缺步骤返回 100100", "POST", "/api/v1/lab/composite/run",
+               ErrorCode.PARAM_ERROR, {"steps": []})
+    api.expect("顺序执行步骤非法返回 100100", "POST", "/api/v1/lab/composite/run",
+               ErrorCode.PARAM_ERROR, {"steps": [{"capability": "not-a-capability"}]})
+
+    missing = api.call("POST", "/api/v1/lab/composite/run", {
+        "steps": [{"capability": "case_generation", "variables": {}}],
+        "projectId": project_id,
+    })
+    check("步骤缺必填变量被拦下", missing[1].get("code") != ErrorCode.SUCCESS,
+          str(missing[1])[:200])
+
+
 def main() -> int:
     workdir = pathlib.Path(tempfile.mkdtemp(prefix="aitp-smoke-"))
     try:
@@ -1100,6 +1368,14 @@ def main() -> int:
         check_bulk_and_export(api, project_id)
         check_backups(api, project_id)
         check_ai_records_and_search(api, project_id)
+        check_preflight(api, project_id)
+        check_prompt_library(api)
+        check_case_tree(api, project_id, feature_id)
+        check_workbench_entries(api)
+        check_validation_sandbox(api, project_id)
+        check_regression(api, project_id)
+        check_relations(api)
+        check_composite_guard(api, project_id)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 

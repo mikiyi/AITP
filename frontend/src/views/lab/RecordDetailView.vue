@@ -70,19 +70,89 @@
       </div>
 
       <div class="panel panel-pad">
-        <h3 class="section-title">
-          风险点
-          <el-tag size="small" effect="plain">{{ record.risks.length }} 条</el-tag>
-        </h3>
-        <ul v-if="record.risks.length" class="plain-list">
-          <li v-for="(item, index) in record.risks" :key="index">
-            <el-tag size="small" :type="item.level === 'high' ? 'danger' : 'warning'">
-              {{ item.title }}
-            </el-tag>
-            <span class="muted">{{ item.detail }}</span>
-          </li>
-        </ul>
+        <h3 class="section-title">风险点</h3>
+        <el-table v-if="record.risks.length" :data="record.risks" border size="small">
+          <el-table-column prop="title" label="风险" width="200">
+            <template #default="scope">
+              <el-tag size="small" :type="scope.row.level === 'high' ? 'danger' : 'warning'">
+                {{ scope.row.title }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="rule" label="规则" width="180" class-name="text-mono" />
+          <el-table-column prop="detail" label="说明" min-width="200" />
+        </el-table>
         <p v-else class="muted">未命中行为安全规则。</p>
+      </div>
+
+      <div class="panel panel-pad">
+        <h3 class="section-title">原始输入</h3>
+        <el-descriptions :column="2" border>
+          <el-descriptions-item label="提示词">
+            <span class="text-mono">{{ record.promptCode || '-' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="耗时">
+            {{ record.latencyMs != null ? `${record.latencyMs} ms` : '-' }}
+          </el-descriptions-item>
+        </el-descriptions>
+        <pre v-if="hasInput" class="record-pre">{{ prettyInput }}</pre>
+        <p v-else class="muted">本次执行没有记录输入变量。</p>
+      </div>
+
+      <div class="panel panel-pad">
+        <h3 class="section-title">
+          路由命中
+          <el-tag size="small" effect="plain">{{ record.route.length }} 条</el-tag>
+        </h3>
+        <el-table v-if="record.route.length" :data="record.route" border size="small">
+          <el-table-column prop="capability" label="能力" width="160" class-name="text-mono" />
+          <el-table-column label="分" width="80" align="right">
+            <template #default="scope">
+              {{ scope.row.score != null ? Math.round(scope.row.score * 100) : '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="reason" label="理由" min-width="220" />
+        </el-table>
+        <p v-else class="muted">本次执行没有走智能路由（直接指定的能力）。</p>
+      </div>
+
+      <div class="panel panel-pad">
+        <h3 class="section-title">
+          步骤轨迹
+          <el-tag size="small" effect="plain">{{ record.steps.length }} 步</el-tag>
+        </h3>
+        <el-table v-if="record.steps.length" :data="record.steps" border size="small">
+          <el-table-column prop="order" label="#" width="56" align="center" />
+          <el-table-column prop="stepName" label="步骤" min-width="150" />
+          <el-table-column prop="label" label="能力" width="140" />
+          <el-table-column label="状态" width="90">
+            <template #default="scope">
+              <el-tag size="small" :type="scope.row.status === 'success' ? 'success' : 'danger'">
+                {{ scope.row.status === 'success' ? '成功' : '失败' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="model" label="模型" width="130" />
+          <el-table-column label="耗时" width="86" align="right">
+            <template #default="scope">{{ scope.row.latencyMs ?? '-' }}</template>
+          </el-table-column>
+          <el-table-column prop="summary" label="摘要" min-width="180" show-overflow-tooltip />
+        </el-table>
+        <p v-else class="muted">单次能力执行没有子步骤。</p>
+      </div>
+
+      <div class="panel panel-pad">
+        <h3 class="section-title">模型用量</h3>
+        <el-descriptions v-if="hasUsage" :column="3" border>
+          <el-descriptions-item
+            v-for="(value, key) in usageEntries"
+            :key="key"
+            :label="key"
+          >
+            {{ value }}
+          </el-descriptions-item>
+        </el-descriptions>
+        <p v-else class="muted">本次执行没有记录用量（离线规则或本地模型不返回用量）。</p>
       </div>
 
       <div class="panel panel-pad">
@@ -126,7 +196,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
@@ -141,6 +211,17 @@ const loading = ref(false)
 const submitting = ref(false)
 const reviewStatus = ref<'approved' | 'rejected'>('approved')
 const reviewNote = ref('')
+
+const hasInput = computed(() => Object.keys(record.value?.input ?? {}).length > 0)
+const prettyInput = computed(() => JSON.stringify(record.value?.input ?? {}, null, 2))
+
+const hasUsage = computed(() => Object.keys(record.value?.usage ?? {}).length > 0)
+const usageEntries = computed(() =>
+  Object.entries(record.value?.usage ?? {}).map(([key, value]) => ({
+    key,
+    value: typeof value === 'object' ? JSON.stringify(value) : String(value),
+  })),
+)
 
 function riskText(level: string): string {
   if (level === 'high') return '高风险'
@@ -226,5 +307,19 @@ onMounted(() => {
 
 .plain-list strong {
   margin-right: 8px;
+}
+
+.record-pre {
+  background: #f6f8fa;
+  border: 1px solid var(--aitp-border);
+  border-radius: 6px;
+  padding: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+  margin: 12px 0 0;
+  max-height: 320px;
+  overflow-y: auto;
 }
 </style>

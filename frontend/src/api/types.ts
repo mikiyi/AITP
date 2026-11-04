@@ -627,6 +627,13 @@ export interface AiRecord {
   reviewStatus: string
   reviewNote: string | null
   reviewedAt: string | null
+  /** 补四段：原始输入 / 路由命中 / 步骤轨迹 / 模型用量。 */
+  input: Record<string, unknown>
+  route: RouteResult[]
+  steps: PipelineStep[]
+  usage: Record<string, unknown>
+  promptCode: string
+  latencyMs: number | null
   createdAt: string
   updatedAt: string
 }
@@ -664,6 +671,205 @@ export interface SearchResult {
   keyword: string
   groups: SearchGroup[]
   total: number
+}
+
+/** 执行前预检里单个能力的体检结论。 */
+export interface PreflightTask {
+  capability: string
+  label: string
+  role: 'primary' | 'auxiliary'
+  order: number
+  score: number
+  required: string[]
+  optional: string[]
+  provided: string[]
+  missing: string[]
+  missingOptional: string[]
+  completeness: number
+  blockers: string[]
+  warnings: string[]
+  ready: boolean
+}
+
+/** 执行前预检的整体结论。 */
+export interface PreflightResult {
+  source: string
+  routes: RouteResult[]
+  tasks: PreflightTask[]
+  order: string[]
+  primary: string
+  auxiliary: string[]
+  overallCompleteness: number
+  modelReady: boolean
+  ready: boolean
+  blockers: string[]
+  warnings: string[]
+}
+
+/** 顺序执行里一步的真实轨迹。 */
+export interface PipelineStep {
+  order: number
+  capability: string
+  label: string
+  stepName: string
+  status: 'success' | 'failed' | 'skipped' | 'pending' | 'running'
+  taskId?: number
+  recordId?: number
+  model?: string
+  latencyMs?: number
+  summary?: string
+  errorMessage?: string
+  reviewRequired?: boolean
+}
+
+/** 多入口顺序执行的结果。 */
+export interface PipelineResult {
+  parentTaskId: number
+  sessionId: number | null
+  status: string
+  steps: PipelineStep[]
+  records: number[]
+  parentRecordId: number
+  output: string
+  errorMessage: string
+}
+
+/** 编排入口里的一步。 */
+export interface EntryWorkflowStep {
+  capability: string
+  name: string
+  moduleId?: number | null
+  variables: Record<string, unknown>
+}
+
+/** 工作台编排入口。 */
+export interface WorkbenchEntry {
+  id: Id
+  code: string
+  name: string
+  capability: string
+  description: string
+  triggers: string[]
+  required: string[]
+  knowledge: string[]
+  workflow: EntryWorkflowStep[]
+  version: number
+  status: string
+  createdAt?: string
+  updatedAt?: string
+  /** 发布历史，仅详情接口返回。 */
+  versions?: Array<{ id: Id; version: number; status: string; createdAt?: string }>
+}
+
+/** 案例验证沙箱里的一个案例。 */
+export interface ValidationCase {
+  id: Id
+  name: string
+  description: string
+  inputText: string
+  capability: string
+  variables: Record<string, unknown>
+  expectedRoutes: string[]
+  expectedMissing: string[]
+  expectedRules: string[]
+  status: string
+  lastResult: ValidationResult
+  version: number
+  createdAt?: string
+  updatedAt?: string
+}
+
+/** 案例跑完之后的逐条比对结果。 */
+export interface ValidationResult {
+  passed: boolean
+  checkedAt: string
+  route: {
+    source: string
+    actual: Array<{ capability: string; score: number; reason: string }>
+    expected: string[]
+    missed: string[]
+  }
+  missing: {
+    actual: AiRecordMissing[]
+    expected: string[]
+    missed: string[]
+  }
+  rules: {
+    actual: string[]
+    expected: string[]
+    missed: string[]
+  }
+  errors: string[]
+  output: string
+  model: string
+  latencyMs: number
+  reviewRequired: boolean
+}
+
+/** 回归清单。 */
+export interface Regression {
+  id: Id
+  projectId: Id
+  title: string
+  changeScope: string
+  affectedModules: string
+  version: string
+  riskLevel: string
+  status: string
+  source: string
+  content: string
+  items?: RegressionItem[]
+  stats?: Record<string, number>
+  createdAt?: string
+  updatedAt?: string
+}
+
+/** 回归清单里的一条待验证项。 */
+export interface RegressionItem {
+  id: Id
+  regressionId: Id
+  seq: number
+  title: string
+  module: string
+  priority: string
+  reason: string
+  verifyTarget: string
+  result: string
+  remark: string
+  executedBy: string | null
+  executedAt: string | null
+}
+
+/** 通用实体关联。 */
+export interface EntityRelation {
+  id: Id
+  sourceType: string
+  sourceId: Id
+  relationType: string
+  targetType: string
+  targetId: Id
+  remark: string
+  createdAt?: string
+}
+
+/** 提示词模板。 */
+export interface PromptTemplate {
+  code: string
+  title: string
+  description: string
+  variables: string[]
+  optional: string[]
+  path: string
+  mtime: number
+  body?: string
+}
+
+/** 用例树节点：功能点 + 挂在它下面的用例。 */
+export interface CaseTreeNode extends ModuleNode {
+  cases: TestCase[]
+  caseCount: number
+  passCount: number
+  failCount: number
 }
 
 export type { PagePayload }

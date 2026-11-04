@@ -1,4 +1,4 @@
-"""工作台首页概览。"""
+"""工作台首页概览 + 编排入口管理。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,9 @@ from flask import Blueprint, Response, request
 
 from ..ai.capability_codes import CAPABILITIES
 from ..common.enums import BUG_STATUS, CASE_STATUS
+from ..common.validators import require_str
 from ..envelope import ok
+from ..errors import AppError, ErrorCode
 from ..repositories.ai_session_repo import AITaskRepository
 from ..repositories.bug_repo import BugRepository
 from ..repositories.case_execution_repo import CaseExecutionRepository
@@ -20,7 +22,12 @@ from ..repositories.project_repo import ProjectRepository
 from ..repositories.report_repo import ReportRepository
 from ..repositories.requirement_repo import RequirementRepository
 from ..repositories.test_case_repo import TestCaseRepository
-from .helpers import db
+from ..repositories.workbench_entry_repo import (
+    WorkbenchEntryRepository,
+    entry_summary,
+)
+from ..services import audit_service, workbench_service
+from .helpers import audit, body, commit, db
 
 bp = Blueprint("workbench", __name__)
 
@@ -145,3 +152,126 @@ def execution_summary() -> Response:
     project_id = request.args.get("projectId")
     pid = int(project_id) if project_id else None
     return ok(CaseExecutionRepository(conn).result_counts(pid))
+
+
+# ---------------- 编排入口 ----------------
+
+@bp.get("/entries")
+def list_entries() -> Response:
+    conn = db()
+    repo = WorkbenchEntryRepository(conn)
+    filters: dict[str, Any] = {}
+    status = request.args.get("status")
+    if status:
+        filters["status"] = status
+    keyword = str(request.args.get("keyword") or "").strip()
+    rows = repo.list_detail(filters, keyword or None, page_num=1, page_size=200)
+    return ok({"list": [entry_summary(row) for row in rows.list], "total": rows.total})
+
+
+@bp.get("/entries/<pk>")
+def get_entry(pk: str) -> Response:
+    conn = db()
+    detail = WorkbenchEntryRepository(conn).get_detail(int(pk))
+    if not detail:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "入口不存在")
+    payload = entry_summary(detail)
+    payload["versions"] = [
+        {
+            "id": row.get("id"),
+            "version": row.get("version"),
+            "status": row.get("status"),
+            "createdAt": row.get("created_at"),
+        }
+        for row in WorkbenchEntryRepository(conn).versions_of(int(pk))
+    ]
+    return ok(payload)
+
+
+@bp.post("/entries")
+def create_entry() -> Response:
+    conn = db()
+    data = body()
+    new_id = workbench_service.create_entry(
+        conn,
+        code=require_str(data.get("code"), "code", 60),
+        name=require_str(data.get("name"), "name", 100),
+        capability=require_str(data.get("capability"), "capability", 60),
+        description=str(data.get("description") or ""),
+        triggers=data.get("triggers") or [],
+        required=data.get("required") or [],
+        knowledge=data.get("knowledge") or [],
+        workflow=data.get("workflow") or [],
+        status=str(data.get("status") or "draft"),
+    )
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_CREATE, audit_service.RESOURCE_WORKBENCH_ENTRY,
+          new_id, str(data.get("name") or ""), {"code": str(data.get("code") or "")})
+    detail = WorkbenchEntryRepository(conn).get_detail(new_id)
+    return ok(entry_summary(detail or {}))
+
+
+@bp.put("/entries/<pk>")
+def update_entry(pk: str) -> Response:
+    conn = db()
+    target = int(pk)
+    data = body()
+    detail = workbench_service.update_entry(conn, target, data)
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_WORKBENCH_ENTRY,
+          target, str(detail.get("name") or ""), {"fields": sorted(data.keys())})
+    return ok(entry_summary(detail))
+
+
+@bp.post("/entries/<pk>/publish")
+def publish_entry(pk: str) -> Response:
+    conn = db()
+    target = int(pk)
+    detail = workbench_service.publish_entry(conn, target)
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_WORKBENCH_ENTRY,
+          target, str(detail.get("name") or ""), {"version": detail.get("version")})
+    return ok(entry_summary(detail))
+
+
+@bp.delete("/entries/<pk>")
+def delete_entry(pk: str) -> Response:
+    """删除编排入口：已发布的入口也能删，删除后不能直接跑。"""
+    conn = db()
+    target = int(pk)
+    repo = WorkbenchEntryRepository(conn)
+    row = repo.get(target)
+    if not row:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "入口不存在")
+    repo.delete(target)
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_WORKBENCH_ENTRY,
+          target, str(row.get("name") or ""))
+    return ok({"id": target, "deleted": True})
+
+
+@bp.post("/entries/<pk>/run")
+def run_entry(pk: str) -> Response:
+    """按入口定义的工作流顺序执行。"""
+    conn = db()
+    data = body()
+    variables = data.get("variables") or {}
+    if not isinstance(variables, dict):
+        raise AppError(ErrorCode.PARAM_ERROR, "参数 variables 必须是对象")
+    session_id = data.get("sessionId")
+    profile_id = data.get("profileId")
+    module_id = data.get("moduleId")
+    result = workbench_service.run_entry(
+        conn,
+        int(pk),
+        variables=variables,
+        session_id=int(session_id) if session_id else None,
+        profile_id=int(profile_id) if profile_id else None,
+        module_id=int(module_id) if module_id else None,
+        continue_on_error=bool(data.get("continueOnError")),
+    )
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_GENERATE, audit_service.RESOURCE_AI_TASK,
+          int(result.get("parentTaskId") or 0), str(result.get("entryCode") or ""),
+          {"entryId": int(pk), "status": result.get("status")})
+    return ok(result)
