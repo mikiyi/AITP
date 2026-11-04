@@ -199,58 +199,7 @@
               >
                 执行
               </el-button>
-              <el-button :icon="CopyDocument" @click="copyOutput">复制</el-button>
-              <el-button :icon="Download" @click="download">下载</el-button>
-              <el-button
-                v-if="excelCapable"
-                :icon="Grid"
-                :loading="exportingExcel"
-                :disabled="!finished || !output"
-                @click="exportExcel"
-              >
-                导出 Excel
-              </el-button>
-              <el-button :icon="Collection" :disabled="!finished || !output" @click="saveToKnowledge">
-                加入知识库
-              </el-button>
-              <el-button
-                v-if="spec?.adoptable"
-                type="success"
-                :icon="Select"
-                :disabled="!finished || !output"
-                @click="openAdopt"
-              >
-                采纳为用例
-              </el-button>
-              <el-button
-                v-if="capability === 'report_generation'"
-                type="success"
-                :icon="Select"
-                :disabled="!finished || !output"
-                @click="openAdoptReport"
-              >
-                采纳为报告
-              </el-button>
-              <el-button
-                v-if="capability === 'performance_script'"
-                type="success"
-                :icon="Odometer"
-                :loading="importingScript"
-                :disabled="!finished || !output"
-                @click="importToAutomation('performance')"
-              >
-                加入性能测试
-              </el-button>
-              <el-button
-                v-if="capability === 'automation_script'"
-                type="success"
-                :icon="FolderAdd"
-                :loading="importingScript"
-                :disabled="!finished || !output"
-                @click="importToAutomation(automationCategory)"
-              >
-                加入{{ automationCategoryLabel }}自动化
-              </el-button>
+              <span class="cap-actions__hint">执行结果在右侧产出区，复制 / 采纳 / 入库都在那边</span>
             </div>
           </el-form-item>
         </el-form>
@@ -293,6 +242,62 @@
               刷新
             </el-button>
           </template>
+        </div>
+
+        <!-- 产出物操作：都是对本次产出的处理，放在产出区而不是输入表单里 -->
+        <div v-if="outputTab === 'current'" class="cap-output__actions">
+          <el-button :icon="CopyDocument" :disabled="!output" @click="copyOutput">复制</el-button>
+          <el-button :icon="Download" :disabled="!output" @click="download">下载</el-button>
+          <el-button
+            v-if="excelCapable"
+            :icon="Grid"
+            :loading="exportingExcel"
+            :disabled="!finished || !output"
+            @click="exportExcel"
+          >
+            导出 Excel
+          </el-button>
+          <el-button :icon="Collection" :disabled="!finished || !output" @click="saveToKnowledge">
+            加入知识库
+          </el-button>
+          <el-button
+            v-if="spec?.adoptable"
+            type="success"
+            :icon="Select"
+            :disabled="!finished || !output"
+            @click="openAdopt"
+          >
+            采纳为用例
+          </el-button>
+          <el-button
+            v-if="capability === 'report_generation'"
+            type="success"
+            :icon="Select"
+            :disabled="!finished || !output"
+            @click="openAdoptReport"
+          >
+            采纳为报告
+          </el-button>
+          <el-button
+            v-if="capability === 'performance_script'"
+            type="success"
+            :icon="Odometer"
+            :loading="importingScript"
+            :disabled="!finished || !output"
+            @click="importToAutomation('performance')"
+          >
+            加入性能测试
+          </el-button>
+          <el-button
+            v-if="capability === 'automation_script'"
+            type="success"
+            :icon="FolderAdd"
+            :loading="importingScript"
+            :disabled="!finished || !output"
+            @click="importToAutomation(automationCategory)"
+          >
+            加入{{ automationCategoryLabel }}自动化
+          </el-button>
         </div>
 
         <!-- 本次产出 -->
@@ -1954,6 +1959,25 @@ watch(
 }
 
 .cap-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
+.cap-actions__hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--aitp-text-weak);
+}
+
+/* 产出物操作条：复制 / 下载 / 导出 / 采纳 / 入库都挂在产出区 */
+.cap-output__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.cap-output__actions :deep(.el-button + .el-button) {
   margin-left: 0;
 }
 
