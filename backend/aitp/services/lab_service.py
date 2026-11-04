@@ -152,11 +152,15 @@ def merge_variables(
     return merged
 
 
-def build_messages(prompt_text: str, extra_system: str = "") -> list[Message]:
+def build_messages(
+    prompt_text: str,
+    extra_system: str = "",
+    images: list[str] | None = None,
+) -> list[Message]:
     system = build_safety_prompt(extra_system)
     return [
         Message(role="system", content=system),
-        Message(role="user", content=prompt_text),
+        Message(role="user", content=prompt_text, images=list(images or [])),
     ]
 
 
@@ -255,6 +259,8 @@ class RunPlan:
     candidates: list[ResolvedAIConfig]
     refs: list[dict[str, Any]] = field(default_factory=list)
     profile_id: int | None = None
+    #: 已去水印的图片（data URL），随消息一起发给多模态模型
+    images: list[str] = field(default_factory=list)
 
 
 def prepare_run(
@@ -265,6 +271,7 @@ def prepare_run(
     module_id: int | None = None,
     profile_id: int | None = None,
     extra_system: str = "",
+    images: list[str] | None = None,
 ) -> RunPlan:
     """校验并准备一次执行：变量齐全、功能点已启用、有可用模型。"""
     spec = require_capability(capability)
@@ -285,10 +292,11 @@ def prepare_run(
         spec=spec,
         binding=binding,
         prompt_text=prompt_text,
-        messages=build_messages(prompt_text, extra_system),
+        messages=build_messages(prompt_text, extra_system, images),
         candidates=candidates,
         refs=refs,
         profile_id=profile_id,
+        images=list(images or []),
     )
 
 
@@ -331,11 +339,13 @@ def run_capability(
     module_id: int | None = None,
     profile_id: int | None = None,
     extra_system: str = "",
+    images: list[str] | None = None,
 ) -> CapabilityRun:
     """同步执行一个 AI 能力。"""
     plan = prepare_run(
         conn, capability, variables,
         module_id=module_id, profile_id=profile_id, extra_system=extra_system,
+        images=images,
     )
     return execute_run(plan)
 
@@ -348,6 +358,7 @@ def stream_capability(
     module_id: int | None = None,
     profile_id: int | None = None,
     extra_system: str = "",
+    images: list[str] | None = None,
 ) -> tuple[Iterator[StreamEvent], RunPlan]:
     """流式执行一个 AI 能力。
 
@@ -356,6 +367,7 @@ def stream_capability(
     plan = prepare_run(
         conn, capability, variables,
         module_id=module_id, profile_id=profile_id, extra_system=extra_system,
+        images=images,
     )
     return stream_with_fallback(plan.candidates, plan.messages), plan
 

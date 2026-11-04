@@ -370,6 +370,31 @@ export interface XmindParseResult {
   source: string
 }
 
+/** 文档导入结果：抽取出的纯文本。 */
+export interface DocumentAttachment {
+  attachmentId: string
+  fileName: string
+  kind: string
+  text: string
+  truncated: boolean
+  chars: number
+  note: string
+}
+
+/** 图片处理结果：已去水印。 */
+export interface ImageAttachment {
+  attachmentId: string
+  fileName: string
+  mediaType: string
+  width: number
+  height: number
+  size: number
+  watermarkApplied: boolean
+  regions: Array<Record<string, unknown>>
+  note: string
+  previewUrl: string
+}
+
 /** 知识问答引用（[K1] 标记）。 */
 export interface KnowledgeRef {
   marker: string

@@ -17,6 +17,7 @@ import type {
   CapabilitySpec,
   CaseTreeNode,
   DbBackup,
+  DocumentAttachment,
   EntityRelation,
   KnowledgeArticle,
   KnowledgeDraft,
@@ -25,6 +26,7 @@ import type {
   KnowledgeReindexResult,
   KnowledgeStorage,
   KnowledgeVersion,
+  ImageAttachment,
   ModuleCoverage,
   ModuleNode,
   ModuleOption,
@@ -363,6 +365,22 @@ export const labApi = {
     continueOnError?: boolean
   }) => post<PipelineResult>('/lab/composite/run', body),
   prompt: (code: string) => get<PromptTemplate>(`/lab/prompts/${encodeURIComponent(code)}`),
+  /** 导入文档并抽取文本：Word / Excel / Markdown / PDF / HTML / JSON / TXT。 */
+  uploadDocument: (form: FormData) =>
+    request<DocumentAttachment>('/lab/attachments/document', { method: 'POST', body: form }),
+  /** 上传图片：先去水印再落库。 */
+  uploadImage: (form: FormData) =>
+    request<ImageAttachment>('/lab/attachments/image', { method: 'POST', body: form }),
+  /** 粘贴图片（data URL）：同样先走去水印。 */
+  uploadImageDataUrl: (dataUrl: string) =>
+    post<ImageAttachment>('/lab/attachments/image', { dataUrl }),
+  /** 取图片的 data URL，供多模态模型读取。 */
+  attachmentPayload: (id: string) =>
+    get<{ attachmentId: string; mediaType: string; dataUrl: string }>(
+      `/lab/attachments/${id}/payload`,
+    ),
+  /** 删除附件。 */
+  deleteAttachment: (id: string) => del(`/lab/attachments/${id}`),
 }
 
 /** AI 工具：提示词优化、引用式问答。 */

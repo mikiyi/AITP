@@ -102,6 +102,58 @@
             </el-button>
           </el-form-item>
 
+          <el-form-item label="附件">
+            <div class="cap-attachments">
+              <div class="cap-attachments__actions">
+                <el-upload
+                  :show-file-list="false"
+                  :http-request="uploadDocumentFile"
+                  :accept="DOC_ACCEPT"
+                >
+                  <el-button :icon="Document" :loading="importing">导入文档</el-button>
+                </el-upload>
+                <el-upload
+                  :show-file-list="false"
+                  :http-request="uploadImageFile"
+                  :accept="IMAGE_ACCEPT"
+                >
+                  <el-button :icon="Picture" :loading="uploadingImage">上传图片</el-button>
+                </el-upload>
+                <span class="cap-attachments__hint">也可直接 Ctrl+V 粘贴图片</span>
+              </div>
+
+              <div v-if="documents.length" class="cap-attachments__docs">
+                <el-tag
+                  v-for="item in documents"
+                  :key="item.attachmentId"
+                  size="small"
+                  type="info"
+                  effect="plain"
+                  class="cap-attachments__doc"
+                >
+                  {{ item.fileName }}（{{ item.chars }} 字）
+                </el-tag>
+              </div>
+
+              <div v-if="images.length" class="cap-attachments__list">
+                <div v-for="item in images" :key="item.attachmentId" class="cap-attachment">
+                  <img :src="item.previewUrl" class="cap-attachment__thumb" alt="附件预览" />
+                  <div class="cap-attachment__meta">
+                    <span class="cap-attachment__name">{{ item.fileName }}</span>
+                    <el-tag
+                      size="small"
+                      :type="item.watermarkApplied ? 'success' : 'info'"
+                      effect="plain"
+                    >
+                      {{ item.watermarkApplied ? '已去水印' : '未发现水印' }}
+                    </el-tag>
+                  </div>
+                  <el-button link type="danger" @click="removeImage(item.attachmentId)">移除</el-button>
+                </div>
+              </div>
+            </div>
+          </el-form-item>
+
           <PromptOptimizer
             v-model="values[primaryField]"
             :capability="capability"
@@ -334,7 +386,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import type { UploadRequestOptions } from 'element-plus'
@@ -342,8 +394,10 @@ import {
   Back,
   Collection,
   CopyDocument,
+  Document,
   Download,
   Loading,
+  Picture,
   Promotion,
   Select,
   Upload,
@@ -353,7 +407,14 @@ import MindMap from '@/components/MindMap.vue'
 import PromptOptimizer from '@/components/PromptOptimizer.vue'
 import { caseApi, knowledgeApi, labApi, reportApi, requirementApi } from '@/api'
 import { streamPost, type DegradeInfo } from '@/api/stream'
-import type { AdoptCaseItem, KnowledgeRef, MindNode, Requirement } from '@/api/types'
+import type {
+  AdoptCaseItem,
+  DocumentAttachment,
+  ImageAttachment,
+  KnowledgeRef,
+  MindNode,
+  Requirement,
+} from '@/api/types'
 import { useAppStore } from '@/stores/app'
 import { useLabStore } from '@/stores/lab'
 import { CAPABILITY_FORMS, optionPromptText, primaryFieldOf, visibleFields, visibleOptions } from './capabilityForms'
@@ -430,6 +491,110 @@ const mindTree = computed<MindNode[]>(() => {
 const mindNodes = computed<MindNode[]>(() => mindTree.value)
 
 const categoryOptions = ['general', 'test_method', 'experience', 'pitfall', 'meeting', 'security']
+
+/** 可导入的文档格式。 */
+const DOC_ACCEPT = '.docx,.doc,.xlsx,.xlsm,.csv,.md,.markdown,.txt,.log,.json,.html,.htm,.pdf'
+
+/** 可贴入的图片格式。 */
+const IMAGE_ACCEPT =
+  '.jpg,.jpeg,.png,.apng,.gif,.svg,.webp,.bmp,.tif,.tiff,.raw,.cr2,.nef,.arw,.dng,.psd,.ai,.heif,.heic,.avif,.jxl,.pdf'
+
+const importing = ref(false)
+const uploadingImage = ref(false)
+/** 已导入的文档（文本已并入输入框，这里只留个名单）。 */
+const documents = ref<DocumentAttachment[]>([])
+/** 已去水印的图片，随执行请求一起发给模型。 */
+const images = ref<ImageAttachment[]>([])
+
+async function uploadDocumentFile(options: UploadRequestOptions): Promise<void> {
+  importing.value = true
+  try {
+    const form = new FormData()
+    form.append('file', options.file)
+    const result = await labApi.uploadDocument(form)
+    documents.value = [...documents.value, result]
+    const target = primaryField.value
+    if (target) {
+      const current = values[target] ?? ''
+      values[target] = current ? `${current}\n\n${result.text}` : result.text
+    }
+    if (result.truncated) {
+      ElMessage.warning(`文档过长，已截取前 ${result.chars} 字`)
+    } else {
+      ElMessage.success(`已导入《${result.fileName}》${result.chars} 字`)
+    }
+    if (result.note) {
+      ElMessage.info(result.note)
+    }
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '文档导入失败')
+  } finally {
+    importing.value = false
+  }
+}
+
+async function uploadImageFile(options: UploadRequestOptions): Promise<void> {
+  uploadingImage.value = true
+  try {
+    const form = new FormData()
+    form.append('file', options.file)
+    const result = await labApi.uploadImage(form)
+    images.value = [...images.value, result]
+    ElMessage.success(result.watermarkApplied ? '图片已去水印' : result.note || '图片已处理')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '图片处理失败')
+  } finally {
+    uploadingImage.value = false
+  }
+}
+
+/** 粘贴图片：从剪贴板里取第一张图片，先去水印再贴入。 */
+async function onPaste(event: ClipboardEvent): Promise<void> {
+  const items = event.clipboardData?.items
+  if (!items) {
+    return
+  }
+  for (const item of Array.from(items)) {
+    if (item.kind !== 'file' || !item.type.startsWith('image/')) {
+      continue
+    }
+    const file = item.getAsFile()
+    if (!file) {
+      continue
+    }
+    event.preventDefault()
+    uploadingImage.value = true
+    try {
+      const dataUrl = await readAsDataUrl(file)
+      const result = await labApi.uploadImageDataUrl(dataUrl)
+      images.value = [...images.value, result]
+      ElMessage.success(result.watermarkApplied ? '图片已去水印' : result.note || '图片已处理')
+    } catch (err) {
+      ElMessage.error(err instanceof Error ? err.message : '粘贴图片失败')
+    } finally {
+      uploadingImage.value = false
+    }
+    return
+  }
+}
+
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(new Error('读取剪贴板图片失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function removeImage(attachmentId: string): Promise<void> {
+  images.value = images.value.filter((item) => item.attachmentId !== attachmentId)
+  try {
+    await labApi.deleteAttachment(attachmentId)
+  } catch {
+    // 附件删不掉不影响本次执行，忽略即可
+  }
+}
 
 function resetValues(): void {
   Object.keys(values).forEach((key) => delete values[key])
@@ -566,6 +731,7 @@ async function run(): Promise<void> {
       {
         variables: buildVariables(),
         moduleId: moduleId.value ?? undefined,
+        attachmentIds: images.value.map((item) => item.attachmentId),
       },
       {
         onStart: (frame) => {
@@ -863,6 +1029,11 @@ onMounted(async () => {
   await labStore.loadAllCapabilities()
   await labStore.loadModuleOptions(appStore.currentProjectId ?? undefined)
   resetValues()
+  window.addEventListener('paste', onPaste)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('paste', onPaste)
 })
 
 watch(
@@ -921,6 +1092,73 @@ watch(
 
 .cap-field-select {
   width: 100%;
+}
+
+/* 附件区：文档导入 + 图片贴入 */
+.cap-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.cap-attachments__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cap-attachments__hint {
+  font-size: 12px;
+  color: var(--aitp-text-weak);
+}
+
+.cap-attachments__docs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cap-attachments__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cap-attachment {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px;
+  border: 1px solid var(--aitp-border);
+  border-radius: 6px;
+}
+
+.cap-attachment__thumb {
+  width: 56px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--aitp-bg);
+}
+
+.cap-attachment__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.cap-attachment__name {
+  font-size: 12px;
+  color: var(--aitp-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .cap-layout {

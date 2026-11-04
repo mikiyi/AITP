@@ -28,7 +28,7 @@ from ..errors import AppError, ErrorCode
 from ..prompts.registry import list_templates
 from ..repositories.ai_session_repo import AISessionRepository, AITaskRepository
 from ..repositories.base import dumps
-from ..services import ai_record_service, audit_service, composite_service, lab_service
+from ..services import ai_record_service, attachment_service, audit_service, composite_service, lab_service
 from ..services import preflight_service
 from .helpers import audit, body, commit, db, page_args, page_payload
 from .sse import (
@@ -46,7 +46,7 @@ from .sse import (
 bp = Blueprint("lab", __name__)
 
 #: 请求体里不是提示词变量的字段
-META_FIELDS = {"variables", "sessionId", "profileId", "moduleId", "title"}
+META_FIELDS = {"variables", "sessionId", "profileId", "moduleId", "title", "attachmentIds"}
 
 
 # ---------------- 参数解析 ----------------
@@ -238,6 +238,174 @@ def list_lab_capabilities() -> Response:
     ))
 
 
+# ---------------- 附件：文档导入与图片去水印 ----------------
+
+def _attachments_root() -> Path:
+    """附件目录与数据库同放在 data 目录下。"""
+    db_path = Path(current_app.config["AITP_DB_PATH"])
+    return db_path.parent / "attachments"
+
+
+def _uploaded_file() -> tuple[str, bytes] | None:
+    uploaded = request.files.get("file")
+    if uploaded is None or not uploaded.filename:
+        return None
+    raw = uploaded.read()
+    if not raw:
+        raise AppError(ErrorCode.PARAM_ERROR, "上传的文件是空的")
+    return attachment_service.safe_file_name(uploaded.filename), raw
+
+
+def _resolve_images(attachment_ids: list[str]) -> list[str]:
+    """把附件编号解析成 data URL；只取已去水印的图片。"""
+    images: list[str] = []
+    for item in attachment_ids:
+        meta = attachment_service.load_meta(_attachments_root(), item)
+        if not meta or meta.get("kind") != "image":
+            continue
+        suffix = str(meta.get("suffix") or "")
+        data = attachment_service.load_attachment(_attachments_root(), item, suffix)
+        if not data:
+            continue
+        images.append(attachment_service.to_data_url(str(meta.get("mediaType") or "image/png"), data))
+    return images
+
+
+def _attachment_ids_of(data: dict[str, Any]) -> list[str]:
+    raw = data.get("attachmentIds")
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise AppError(ErrorCode.PARAM_ERROR, "参数 attachmentIds 必须是数组")
+    return [str(item) for item in raw if str(item).strip()]
+
+
+@bp.post("/attachments/document")
+def upload_document() -> Response:
+    """导入文档并抽取文本：Word / Excel / Markdown / PDF / HTML / JSON / TXT。"""
+    uploaded = _uploaded_file()
+    if uploaded is None:
+        raise AppError(ErrorCode.PARAM_ERROR, "请上传文档文件")
+    file_name, raw = uploaded
+    if not attachment_service.is_document(file_name):
+        raise AppError(ErrorCode.PARAM_ERROR, f"不支持的文档格式：{attachment_service.extension_of(file_name) or '未知'}")
+    try:
+        extracted = attachment_service.extract_document(file_name, raw)
+    except attachment_service.AttachmentError as exc:
+        raise AppError(ErrorCode.PARAM_ERROR, str(exc)) from None
+
+    attachment_id, _ = attachment_service.save_attachment(
+        _attachments_root(), file_name, extracted.text.encode("utf-8"), suffix=".txt"
+    )
+    attachment_service.save_meta(_attachments_root(), attachment_id, {
+        "kind": "document",
+        "fileName": file_name,
+        "suffix": ".txt",
+        "mediaType": "text/plain",
+        "docKind": extracted.kind,
+        "chars": extracted.chars,
+        "truncated": extracted.truncated,
+    })
+    payload = extracted.as_dict()
+    payload["attachmentId"] = attachment_id
+    audit(db(), audit_service.AUDIT_ACTION_IMPORT, audit_service.RESOURCE_LAB_ATTACHMENT,
+          None, file_name, {"kind": extracted.kind, "chars": extracted.chars})
+    return ok(payload)
+
+
+@bp.post("/attachments/image")
+def upload_image() -> Response:
+    """贴入或上传图片：先去水印，再存下来供后续流程使用。
+
+    支持上传文件（multipart）与粘贴（data URL）两种入口。
+    """
+    uploaded = _uploaded_file()
+    if uploaded is not None:
+        file_name, raw = uploaded
+    else:
+        data = body()
+        data_url = str(data.get("dataUrl") or "")
+        if not data_url:
+            raise AppError(ErrorCode.PARAM_ERROR, "请上传图片或粘贴图片")
+        try:
+            file_name, raw = attachment_service.decode_data_url(data_url)
+        except attachment_service.AttachmentError as exc:
+            raise AppError(ErrorCode.PARAM_ERROR, str(exc)) from None
+
+    if not attachment_service.is_image(file_name):
+        raise AppError(ErrorCode.PARAM_ERROR, f"不支持的图片格式：{attachment_service.extension_of(file_name) or '未知'}")
+
+    processed = attachment_service.process_image(file_name, raw)
+    suffix = attachment_service.suffix_of_media_type(processed.media_type)
+    attachment_id, _ = attachment_service.save_attachment(
+        _attachments_root(), file_name, processed.data, suffix=suffix
+    )
+    attachment_service.save_meta(_attachments_root(), attachment_id, {
+        "kind": "image",
+        "fileName": file_name,
+        "suffix": suffix,
+        "mediaType": processed.media_type,
+        "width": processed.width,
+        "height": processed.height,
+        "watermarkApplied": processed.watermark_applied,
+        "regions": processed.regions,
+        "note": processed.note,
+    })
+    payload = processed.as_dict()
+    payload["attachmentId"] = attachment_id
+    payload["previewUrl"] = f"/api/v1/lab/attachments/{attachment_id}"
+    audit(db(), audit_service.AUDIT_ACTION_IMPORT, audit_service.RESOURCE_LAB_ATTACHMENT,
+          None, file_name, {
+              "mediaType": processed.media_type,
+              "watermarkApplied": processed.watermark_applied,
+              "size": len(processed.data),
+          })
+    return ok(payload)
+
+
+@bp.get("/attachments/<attachment_id>")
+def get_attachment(attachment_id: str) -> Response:
+    """取回处理后的附件内容（图片预览）。"""
+    meta = attachment_service.load_meta(_attachments_root(), attachment_id)
+    if not meta:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "附件不存在")
+    suffix = str(meta.get("suffix") or "")
+    data = attachment_service.load_attachment(_attachments_root(), attachment_id, suffix)
+    if not data:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "附件内容已丢失")
+    response = Response(data, mimetype=str(meta.get("mediaType") or "application/octet-stream"))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@bp.get("/attachments/<attachment_id>/payload")
+def get_attachment_payload(attachment_id: str) -> Response:
+    """取图片的 data URL，供多模态模型直接读取。"""
+    meta = attachment_service.load_meta(_attachments_root(), attachment_id)
+    if not meta or meta.get("kind") != "image":
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "图片附件不存在")
+    suffix = str(meta.get("suffix") or "")
+    data = attachment_service.load_attachment(_attachments_root(), attachment_id, suffix)
+    if not data:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "附件内容已丢失")
+    return ok({
+        "attachmentId": attachment_id,
+        "mediaType": meta.get("mediaType"),
+        "dataUrl": attachment_service.to_data_url(str(meta.get("mediaType") or "image/png"), data),
+    })
+
+
+@bp.delete("/attachments/<attachment_id>")
+def remove_attachment(attachment_id: str) -> Response:
+    conn = db()
+    removed = attachment_service.delete_attachment(_attachments_root(), attachment_id)
+    if not removed:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "附件不存在")
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_DELETE, "lab_attachment", None, attachment_id, {})
+    return ok({"attachmentId": attachment_id, "deleted": True})
+
+
 # ---------------- 执行 ----------------
 
 @bp.post("/<capability>/run")
@@ -250,9 +418,11 @@ def run_capability(capability: str) -> Response:
     session_id = _optional_int(data.get("sessionId"), "sessionId")
 
     spec = lab_service.require_capability(capability)
+    images = _resolve_images(_attachment_ids_of(data))
     # 先校验（缺变量 / 功能点未启用 / 没有可用模型），失败时不落任务
     plan = lab_service.prepare_run(
-        conn, capability, variables, module_id=module_id, profile_id=profile_id
+        conn, capability, variables, module_id=module_id, profile_id=profile_id,
+        images=images,
     )
 
     session_id = _ensure_session(
@@ -314,8 +484,10 @@ def stream_capability(capability: str) -> Response:
     session_id = _optional_int(data.get("sessionId"), "sessionId")
 
     spec = lab_service.require_capability(capability)
+    images = _resolve_images(_attachment_ids_of(data))
     events, plan = lab_service.stream_capability(
-        conn, capability, variables, module_id=module_id, profile_id=profile_id
+        conn, capability, variables, module_id=module_id, profile_id=profile_id,
+        images=images,
     )
 
     session_id = _ensure_session(

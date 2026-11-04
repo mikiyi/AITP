@@ -35,7 +35,7 @@ class OllamaNativeAdapter(BaseAdapter):
     ) -> dict[str, Any]:
         return {
             "model": cfg.model,
-            "messages": [m.as_dict() for m in messages],
+            "messages": [m.as_ollama_dict() for m in messages],
             "stream": stream,
             "options": {
                 "temperature": opts.get("temperature", cfg.temperature),
