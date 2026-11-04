@@ -20,12 +20,13 @@
       <div class="todo-stat todo-stat--wide">
         <span class="todo-stat__label">完成率</span>
         <el-progress
-          :percentage="Math.round((summary.completionRate || 0) * 100)"
+          :percentage="(summary.completionRate || 0) * 100"
+          :format="percentText"
           :stroke-width="8"
           :show-text="false"
           class="todo-stat__bar"
         />
-        <span class="todo-stat__value">{{ ((summary.completionRate || 0) * 100).toFixed(2) }}%</span>
+        <span class="todo-stat__value">{{ percentText((summary.completionRate || 0) * 100) }}</span>
       </div>
     </div>
 
@@ -340,6 +341,7 @@ import {
 } from '@element-plus/icons-vue'
 import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import { todoApi } from '@/api'
+import { percentText } from '@/utils/format'
 import type { Todo, TodoSummary } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 

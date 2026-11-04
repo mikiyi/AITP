@@ -34,7 +34,7 @@
       </div>
       <div class="run-summary__item">
         <span class="muted">通过率</span>
-        <strong>{{ (lastRun.passRate * 100).toFixed(2) }}%</strong>
+        <strong>{{ percentText(lastRun.passRate * 100) }}</strong>
       </div>
     </div>
 
@@ -221,6 +221,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Refresh, VideoPlay } from '@element-plus/icons-vue'
 import { validationApi } from '@/api'
+import { percentText } from '@/utils/format'
 import type { ValidationCase, ValidationResult } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 import { useLabStore } from '@/stores/lab'

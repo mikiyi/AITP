@@ -80,7 +80,14 @@ function pairs(
 
 const caseStatusOption = computed<EChartsOption>(() => ({
   textStyle: { color: text.value },
-  tooltip: { trigger: 'item' },
+  tooltip: {
+    trigger: 'item',
+    // 饼图默认只显示整数百分比，这里统一成两位小数
+    formatter: (params: unknown) => {
+      const item = params as { name?: string; value?: unknown; percent?: number }
+      return `${item.name ?? ''}: ${item.value ?? ''}（${Number(item.percent ?? 0).toFixed(2)}%）`
+    },
+  },
   legend: { bottom: 0, type: 'scroll', textStyle: { color: weak.value } },
   series: [
     {
@@ -125,7 +132,14 @@ const casePriorityOption = computed<EChartsOption>(() => ({
 
 const caseTypeOption = computed<EChartsOption>(() => ({
   textStyle: { color: text.value },
-  tooltip: { trigger: 'item' },
+  tooltip: {
+    trigger: 'item',
+    // 饼图默认只显示整数百分比，这里统一成两位小数
+    formatter: (params: unknown) => {
+      const item = params as { name?: string; value?: unknown; percent?: number }
+      return `${item.name ?? ''}: ${item.value ?? ''}（${Number(item.percent ?? 0).toFixed(2)}%）`
+    },
+  },
   legend: { bottom: 0, type: 'scroll', textStyle: { color: weak.value } },
   series: [
     {
@@ -173,7 +187,14 @@ const bugStatusOption = computed<EChartsOption>(() => {
 
 const bugSeverityOption = computed<EChartsOption>(() => ({
   textStyle: { color: text.value },
-  tooltip: { trigger: 'item' },
+  tooltip: {
+    trigger: 'item',
+    // 饼图默认只显示整数百分比，这里统一成两位小数
+    formatter: (params: unknown) => {
+      const item = params as { name?: string; value?: unknown; percent?: number }
+      return `${item.name ?? ''}: ${item.value ?? ''}（${Number(item.percent ?? 0).toFixed(2)}%）`
+    },
+  },
   legend: { bottom: 0, type: 'scroll', textStyle: { color: weak.value } },
   series: [
     {

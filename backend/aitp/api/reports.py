@@ -188,7 +188,7 @@ def _build_generated_items(stats: dict[str, Any], project_name: str) -> list[dic
             "title": "用例执行情况",
             "content": f"通过 {metric['passed']} 条，失败 {metric['failed']} 条，"
                        f"阻塞 {metric['blocked']} 条，未执行 {metric['notExecuted']} 条，"
-                       f"通过率 {metric['passRate'] * 100:.1f}%。",
+                       f"通过率 {metric['passRate'] * 100:.2f}%。",
             "metric": case_metric,
             "sortOrder": 1,
         },

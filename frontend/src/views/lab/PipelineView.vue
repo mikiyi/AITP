@@ -38,14 +38,15 @@
           </div>
           <template v-if="preflight">
             <el-progress
-              :percentage="Math.round(preflight.overallCompleteness * 100)"
+              :percentage="preflight.overallCompleteness * 100"
+              :format="percentText"
               :stroke-width="10"
               :status="preflight.ready ? 'success' : 'exception'"
             />
             <ul class="preflight-box__list">
               <li v-for="task in preflight.tasks" :key="task.capability">
                 <strong>{{ task.label }}</strong>
-                <span class="muted">完整度 {{ (task.completeness * 100).toFixed(2) }}%</span>
+                <span class="muted">完整度 {{ percentText(task.completeness * 100) }}</span>
                 <el-tag size="small" effect="plain">{{ task.role === 'primary' ? '主任务' : '辅助' }}</el-tag>
                 <span v-if="task.missing.length" class="missing">
                   缺：{{ task.missing.join('、') }}
@@ -197,6 +198,7 @@ import {
   Top,
 } from '@element-plus/icons-vue'
 import { labApi } from '@/api'
+import { percentText } from '@/utils/format'
 import type { PipelineResult, PreflightResult } from '@/api/types'
 import { usePromptTemplates } from '@/composables/usePromptTemplates'
 import { useAppStore } from '@/stores/app'
@@ -339,7 +341,7 @@ async function confirmPreflight(): Promise<void> {
         step.variables[name] = ''
       })
     })
-    ElMessage.success(`预检完成：主任务 ${data.primary || '无'}，完整度 ${Math.round(data.overallCompleteness * 100)}%`)
+    ElMessage.success(`预检完成：主任务 ${data.primary || '无'}，完整度 ${percentText(data.overallCompleteness * 100)}`)
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '预检失败')
   } finally {

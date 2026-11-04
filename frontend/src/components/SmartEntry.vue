@@ -68,7 +68,8 @@
           <div class="preflight__bar">
             <span class="muted">整体完整度</span>
             <el-progress
-              :percentage="Math.round(preflight.overallCompleteness * 100)"
+              :percentage="preflight.overallCompleteness * 100"
+              :format="percentText"
               :stroke-width="10"
               :status="preflight.ready ? 'success' : 'exception'"
               style="flex: 1"
@@ -99,7 +100,8 @@
             <el-table-column label="完整度" width="130">
               <template #default="scope">
                 <el-progress
-                  :percentage="Math.round(scope.row.completeness * 100)"
+                  :percentage="scope.row.completeness * 100"
+                  :format="percentText"
                   :stroke-width="8"
                   :status="scope.row.ready ? 'success' : 'exception'"
                 />
@@ -143,6 +145,7 @@ import { Search } from '@element-plus/icons-vue'
 import { labApi } from '@/api'
 import type { ModuleRouteResult, PreflightResult, RouteResponse, RouteResult } from '@/api/types'
 import { useAppStore } from '@/stores/app'
+import { percentText } from '@/utils/format'
 
 const router = useRouter()
 const appStore = useAppStore()
