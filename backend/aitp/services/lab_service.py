@@ -527,6 +527,51 @@ def score_capabilities(text: str, top_k: int) -> list[dict[str, Any]]:
     return scored[:top_k]
 
 
+def fuse_capability_routes(
+    ai_routes: list[dict[str, Any]],
+    keyword_routes: list[dict[str, Any]],
+    top_k: int,
+) -> list[dict[str, Any]]:
+    """AI 路由与关键词命中取并集。
+
+    本地小模型经常不看输入、固定回几条候选；关键词命中是文本里的硬证据，
+    所以 AI 分数先打六折再与关键词分数比较，命中关键词的能力可以排到前面。
+    两者都命中的能力只保留一条，理由优先用关键词证据。
+    """
+    merged: dict[str, dict[str, Any]] = {}
+    for item in ai_routes:
+        code = str(item.get("capability") or "")
+        if not code:
+            continue
+        merged[code] = {
+            "capability": code,
+            "label": str(item.get("label") or label_of(code)),
+            "score": round(float(item.get("score") or 0.6) * 0.6, 3),
+            "reason": str(item.get("reason") or "AI 判断"),
+            "source": "ai",
+        }
+    for item in keyword_routes:
+        code = str(item.get("capability") or "")
+        if not code:
+            continue
+        keyword_score = float(item.get("score") or 0)
+        existing = merged.get(code)
+        if existing is None:
+            merged[code] = {
+                "capability": code,
+                "label": str(item.get("label") or label_of(code)),
+                "score": round(keyword_score, 3),
+                "reason": str(item.get("reason") or "关键词命中"),
+                "source": "fallback",
+            }
+        elif keyword_score > existing["score"]:
+            existing["score"] = round(keyword_score, 3)
+            existing["reason"] = str(item.get("reason") or existing["reason"])
+            existing["source"] = "ai+fallback"
+    routes = sorted(merged.values(), key=lambda route: float(route["score"]), reverse=True)
+    return routes[:top_k]
+
+
 def score_modules(text: str, options: list[dict[str, Any]], top_k: int) -> list[dict[str, Any]]:
     """离线兜底：按功能点名称/路径包含度打分。"""
     lowered = text.lower()
@@ -688,8 +733,11 @@ def route_text(
             source = "ai"
     except Exception:
         capability_routes = []
-    if not capability_routes:
-        capability_routes = score_capabilities(text, top_k)
+    # 关键词命中始终参与排序，避免本地小模型固定回复把真正相关的能力挤掉
+    keyword_routes = score_capabilities(text, max(top_k, 6))
+    capability_routes = fuse_capability_routes(capability_routes, keyword_routes, top_k)
+    if capability_routes and all(item.get("source") == "fallback" for item in capability_routes):
+        source = "fallback"
 
     options = module_options(conn, project_id)
     if options:

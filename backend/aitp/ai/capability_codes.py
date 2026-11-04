@@ -228,7 +228,8 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
     CAP_AUTOMATION_SCRIPT: CapabilitySpec(
         CAP_AUTOMATION_SCRIPT, "自动化脚本生成", "按目标类型与框架生成可直接运行的 Python 自动化脚本",
         ("自动化", "脚本", "selenium", "playwright", "appium", "pytest", "接口自动化",
-         "web自动化", "app自动化", "autoscript", "代码生成"),
+         "web自动化", "app自动化", "网页自动化", "移动端自动化", "ui自动化",
+         "自动化测试", "自动化脚本", "测试脚本", "autoscript", "代码生成"),
         prompt_code="automation-script",
         variables=(
             "projectName", "targetType", "framework", "language",
@@ -237,7 +238,8 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
     ),
     CAP_PERFORMANCE_SCRIPT: CapabilitySpec(
         CAP_PERFORMANCE_SCRIPT, "性能脚本生成", "生成可直接运行的 JMeter 性能测试脚本",
-        ("性能", "压测", "jmeter", "jmx", "并发", "tps", "性能脚本", "performance"),
+        ("性能", "压测", "性能测试", "性能脚本", "压力测试", "负载测试", "并发", "tps",
+         "jmeter", "jmx", "performance"),
         prompt_code="performance-script",
         variables=(
             "projectName", "scenario", "baseUrl", "threads",
