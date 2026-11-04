@@ -11,6 +11,7 @@
         :columns="columns"
         :fetcher="fetcher"
         :search-fields="searchFields"
+        sync-query
         @row-click="onRowClick"
       >
         <template #status="{ row }">

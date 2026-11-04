@@ -548,4 +548,42 @@ export interface KnowledgeMigrateResult extends KnowledgeReindexResult {
   removedFromSource: number
 }
 
+/** 待审池批量审核结果：failed 里带每条未处理的原因。 */
+export interface BatchReviewResult {
+  action: 'approve' | 'reject'
+  succeeded: number[]
+  failed: Array<{ draftId: number, code: number, message: string }>
+  successCount: number
+  failCount: number
+}
+
+/** 批量删除结果：skipped 是已删除或不存在因而没动到的 id。 */
+export interface BatchDeleteResult {
+  deleted: number[]
+  count: number
+  skipped: number[]
+}
+
+/** 本机数据库备份文件。 */
+export interface DbBackup {
+  name: string
+  sizeBytes: number
+  createdAt: string
+  isSafety: boolean
+}
+
+/** 备份列表载荷。 */
+export interface BackupListResult {
+  list: DbBackup[]
+  dir: string
+  dbPath: string
+}
+
+/** 恢复结果：记录用了哪个备份、恢复前自动存的那份安全备份叫什么。 */
+export interface RestoreResult {
+  restored: string
+  safetyBackup: string
+  appliedMigrations: number[]
+}
+
 export type { PagePayload }

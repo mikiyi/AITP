@@ -7,9 +7,13 @@ import type {
   AiStatus,
   AiTask,
   AuditLog,
+  BackupListResult,
+  BatchDeleteResult,
+  BatchReviewResult,
   Bug,
   BugLog,
   CapabilitySpec,
+  DbBackup,
   KnowledgeArticle,
   KnowledgeDraft,
   KnowledgeMigrateResult,
@@ -25,6 +29,7 @@ import type {
   ReportItem,
   ReportStats,
   Requirement,
+  RestoreResult,
   RouteResponse,
   SelfCheckResult,
   SystemConfigItem,
@@ -32,6 +37,18 @@ import type {
   WorkbenchOverview,
   XmindParseResult,
 } from './types'
+
+/** 拼接下载类接口的查询串，跳过空值。 */
+function exportUrl(path: string, query: Record<string, unknown>): string {
+  const params = new URLSearchParams()
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      params.append(key, String(value))
+    }
+  })
+  const qs = params.toString()
+  return qs ? `/api/v1/${path}?${qs}` : `/api/v1/${path}`
+}
 
 /** 工作台概览。 */
 export const workbenchApi = {
@@ -59,6 +76,8 @@ export const requirementApi = {
   create: (body: Partial<Requirement>) => post<Requirement>('/requirements', body),
   update: (id: number, body: Partial<Requirement>) => put<Requirement>(`/requirements/${id}`, body),
   remove: (id: number) => del(`/requirements/${id}`),
+  batchRemove: (ids: number[]) => post<BatchDeleteResult>('/requirements/batch-delete', { ids }),
+  exportUrl: (query: Record<string, unknown>) => exportUrl('requirements/export', query),
 }
 
 /** 四级模块树。 */
@@ -85,6 +104,7 @@ export const caseApi = {
   create: (body: Record<string, unknown>) => post<TestCase>('/test-cases', body),
   update: (id: number, body: Record<string, unknown>) => put<TestCase>(`/test-cases/${id}`, body),
   remove: (id: number) => del(`/test-cases/${id}`),
+  batchRemove: (ids: number[]) => post<BatchDeleteResult>('/test-cases/batch-delete', { ids }),
   execute: (id: number, body: Record<string, unknown>) => post(`/test-cases/${id}/execute`, body),
   coverage: (projectId: number) => get('/test-cases/coverage', { projectId }),
   coverageModules: (projectId: number) =>
@@ -104,15 +124,7 @@ export const caseApi = {
       method: 'POST',
       body: form,
     }),
-  exportUrl: (query: Record<string, unknown>) => {
-    const params = new URLSearchParams()
-    Object.entries(query).forEach(([key, value]) => {
-      if (value !== undefined && value !== null && value !== '') {
-        params.append(key, String(value))
-      }
-    })
-    return `/api/v1/test-cases/export?${params.toString()}`
-  },
+  exportUrl: (query: Record<string, unknown>) => exportUrl('test-cases/export', query),
 }
 
 /** 缺陷。 */
@@ -123,11 +135,13 @@ export const bugApi = {
   create: (body: Record<string, unknown>) => post<Bug>('/bugs', body),
   update: (id: number, body: Record<string, unknown>) => put<Bug>(`/bugs/${id}`, body),
   remove: (id: number) => del(`/bugs/${id}`),
+  batchRemove: (ids: number[]) => post<BatchDeleteResult>('/bugs/batch-delete', { ids }),
   transition: (id: number, body: Record<string, unknown>) => post(`/bugs/${id}/transition`, body),
   logs: (id: number) => get<BugLog[]>(`/bugs/${id}/logs`),
   linkCases: (id: number, caseIds: number[]) => post(`/bugs/${id}/cases`, { caseIds }),
   unlinkCases: (id: number, caseIds: number[]) => del(`/bugs/${id}/cases`, { caseIds }),
   stats: () => get('/bugs/stats'),
+  exportUrl: (query: Record<string, unknown>) => exportUrl('bugs/export', query),
 }
 
 /** 知识库：待审池 + 正式库。 */
@@ -140,9 +154,10 @@ export const knowledgeApi = {
   reviewDraft: (id: number, action: 'approve' | 'reject', comment = '') =>
     post(`/knowledge/drafts/${id}/review`, { action, comment }),
   batchReview: (draftIds: number[], action: 'approve' | 'reject', comment = '') =>
-    post('/knowledge/drafts/batch-review', { draftIds, action, comment }),
+    post<BatchReviewResult>('/knowledge/drafts/batch-review', { draftIds, action, comment }),
   listArticles: (query: Record<string, unknown> = {}) =>
     get<PagePayload<KnowledgeArticle>>('/knowledge/articles', query as never),
+  exportArticlesUrl: (query: Record<string, unknown>) => exportUrl('knowledge/articles/export', query),
   getArticle: (id: number) => get<KnowledgeArticle>(`/knowledge/articles/${id}`),
   updateArticle: (id: number, body: Record<string, unknown>) =>
     put<KnowledgeArticle>(`/knowledge/articles/${id}`, body),
@@ -256,6 +271,12 @@ export const settingsApi = {
     get<PagePayload<AuditLog>>('/settings/audit-logs', query as never),
   auditResources: (resourceType: string, resourceId: number) =>
     get('/settings/audit-logs/resources', { resourceType, resourceId }),
+  backups: () => get<BackupListResult>('/settings/backups'),
+  createBackup: () => post<DbBackup>('/settings/backups'),
+  restoreBackup: (name: string, confirm: string) =>
+    post<RestoreResult>(`/settings/backups/${encodeURIComponent(name)}/restore`, { confirm }),
+  deleteBackup: (name: string) => del(`/settings/backups/${encodeURIComponent(name)}`),
+  backupDownloadUrl: (name: string) => `/api/v1/settings/backups/${encodeURIComponent(name)}/download`,
   enums: () => get('/meta/enums'),
   capabilities: () => get('/meta/capabilities'),
 }

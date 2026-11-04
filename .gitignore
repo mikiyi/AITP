@@ -1,6 +1,6 @@
-# 运行时数据
-data/
-knowledge/
+# 运行时数据（根目录锚定：未锚定的 knowledge/ 会连 frontend/src/views/knowledge 一起忽略）
+/data/
+/knowledge/
 
 # 前端
 node_modules/

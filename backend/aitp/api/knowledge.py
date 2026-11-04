@@ -17,15 +17,28 @@ from ..repositories.knowledge_draft_repo import (
 from ..repositories.knowledge_ref_repo import KnowledgeRefRepository
 from ..repositories.knowledge_repo import KnowledgeRepository
 from ..repositories.knowledge_version_repo import KnowledgeVersionRepository
-from ..services import audit_service, knowledge_storage
+from ..services import audit_service, knowledge_storage, tabular_export
 from ..repositories.sys_config_repo import SysConfigRepository
-from .helpers import (audit, body, bool_arg, commit, db, keyword_of, page_args, page_payload,
-                     query_filters)
+from .helpers import (audit, body, bool_arg, commit, db, download_response, keyword_of, page_args,
+                      page_payload, query_filters, tabular_format_of)
 
 bp = Blueprint("knowledge", __name__)
 
 ARTICLE_FILTERS = {"category": "category", "sourceType": "source_type", "moduleId": "module_id"}
 DRAFT_FILTERS = {"reviewStatus": "review_status", "sourceType": "source_type", "moduleId": "module_id"}
+ARTICLE_TABULAR_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("id", "ID"),
+    ("title", "标题"),
+    ("category", "分类"),
+    ("tags", "标签"),
+    ("summary", "摘要"),
+    ("reviewStatus", "审核状态"),
+    ("currentVersion", "当前版本"),
+    ("sourceType", "来源类型"),
+    ("viewCount", "查看次数"),
+    ("filePath", "文件路径"),
+    ("updatedAt", "更新时间"),
+)
 
 
 def _sync_file(conn: Any, article_id: int) -> str:
@@ -253,6 +266,26 @@ def list_articles() -> Response:
     payload = page_payload(page)
     payload["list"] = [_article_public(row) for row in payload["list"]]
     return ok(payload)
+
+
+@bp.get("/articles/export")
+def export_articles() -> Response:
+    """导出正式库清单为 CSV / JSON，筛选条件与列表接口一致。"""
+    conn = db()
+    fmt = tabular_format_of(request.args.get("format"))
+    repo = KnowledgeRepository(conn)
+    filters = query_filters(ARTICLE_FILTERS)
+    status = request.args.get("reviewStatus")
+    filters["review_status"] = "published" if not status or status == "all" else status
+    rows = repo.list_all(filters, keyword_of() or None, limit=10000)
+    content, mimetype, extension = tabular_export.render(
+        fmt, ARTICLE_TABULAR_COLUMNS, [_article_public(row) for row in rows]
+    )
+    audit(conn, audit_service.AUDIT_ACTION_EXPORT, audit_service.RESOURCE_KNOWLEDGE_ARTICLE,
+          None, "", {"format": fmt, "count": len(rows)})
+    return download_response(
+        content, tabular_export.safe_filename("知识库正式库", extension), mimetype, count=len(rows)
+    )
 
 
 @bp.get("/articles/<pk>")

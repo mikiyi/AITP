@@ -13,6 +13,7 @@
         :fetcher="fetcher"
         :search-fields="searchFields"
         :extra-query="extraQuery"
+        sync-query
         @row-click="onRowClick"
       >
         <template #reportType="{ row }">{{ typeLabel(row.reportType) }}</template>

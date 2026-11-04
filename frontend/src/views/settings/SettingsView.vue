@@ -34,10 +34,53 @@
 
     <div class="panel panel-pad settings-block">
       <div class="settings-block__head">
+        <h3>数据备份</h3>
+        <div class="settings-block__actions">
+          <span class="muted">{{ backupDir || '备份目录加载中…' }}</span>
+          <el-button size="small" :loading="backupCreating" @click="createBackup">立即备份</el-button>
+        </div>
+      </div>
+      <p class="muted settings-block__hint">
+        数据库文件：{{ dbPath || '-' }}。恢复会用所选备份覆盖当前库，覆盖前系统自动先备份一份当前数据。
+      </p>
+      <el-table :data="backups" size="small" border max-height="320">
+        <el-table-column prop="name" label="备份文件" min-width="220" />
+        <el-table-column prop="createdAt" label="时间" width="160" />
+        <el-table-column label="大小" width="100" align="right">
+          <template #default="{ row }">{{ formatSize(row.sizeBytes) }}</template>
+        </el-table-column>
+        <el-table-column label="类型" width="110">
+          <template #default="{ row }">
+            <el-tag :type="row.isSafety ? 'warning' : 'info'" size="small" effect="plain">
+              {{ row.isSafety ? '恢复前自动备份' : '手动备份' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="200">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="downloadBackup(row.name)">下载</el-button>
+            <el-button link type="warning" @click="restore(row.name)">恢复</el-button>
+            <el-button link type="danger" @click="removeBackup(row.name)">删除</el-button>
+          </template>
+        </el-table-column>
+        <template #empty>
+          <span class="muted">还没有备份文件，点「立即备份」生成第一份</span>
+        </template>
+      </el-table>
+    </div>
+
+    <div class="panel panel-pad settings-block">
+      <div class="settings-block__head">
         <h3>审计日志</h3>
         <span class="muted">关键写操作都会留痕，可按资源追溯</span>
       </div>
-      <BaseProTable :columns="auditColumns" :fetcher="auditFetcher" :search-fields="auditSearchFields" />
+      <BaseProTable
+        :columns="auditColumns"
+        :fetcher="auditFetcher"
+        :search-fields="auditSearchFields"
+        sync-query
+        query-prefix="audit_"
+      />
     </div>
   </div>
 </template>
@@ -45,10 +88,10 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import BaseProTable, { type ColumnDef, type SearchField } from '@/components/BaseProTable.vue'
 import { settingsApi } from '@/api'
-import type { SystemConfigItem } from '@/api/types'
+import type { DbBackup, SystemConfigItem } from '@/api/types'
 
 const router = useRouter()
 
@@ -100,8 +143,92 @@ function auditFetcher(query: Record<string, unknown>) {
   return settingsApi.auditLogs(query)
 }
 
+const backups = ref<DbBackup[]>([])
+const backupDir = ref('')
+const dbPath = ref('')
+const backupCreating = ref(false)
+
+function formatSize(size: number): string {
+  if (!size) {
+    return '0 B'
+  }
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1)} KB`
+  }
+  return `${(size / 1024 / 1024).toFixed(1)} MB`
+}
+
+async function loadBackups(): Promise<void> {
+  try {
+    const result = await settingsApi.backups()
+    backups.value = result.list ?? []
+    backupDir.value = result.dir
+    dbPath.value = result.dbPath
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '加载备份列表失败')
+  }
+}
+
+async function createBackup(): Promise<void> {
+  backupCreating.value = true
+  try {
+    const info = await settingsApi.createBackup()
+    ElMessage.success(`已备份：${info.name}`)
+    await loadBackups()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '备份失败')
+  } finally {
+    backupCreating.value = false
+  }
+}
+
+function downloadBackup(name: string): void {
+  window.open(settingsApi.backupDownloadUrl(name), '_blank')
+}
+
+async function restore(name: string): Promise<void> {
+  let confirm = ''
+  try {
+    const result = await ElMessageBox.prompt(
+      `恢复会用「${name}」覆盖当前数据库，正在录入的用例与缺陷都会回到备份时的状态。请输入备份文件名确认。`,
+      '恢复确认',
+      {
+        inputPlaceholder: name,
+        type: 'warning',
+        inputValidator: (value) => (value === name ? true : '请完整输入备份文件名'),
+      },
+    )
+    confirm = String(result.value ?? '')
+  } catch {
+    return
+  }
+  try {
+    const result = await settingsApi.restoreBackup(name, confirm)
+    ElMessage.success(`已恢复，恢复前的数据保存在 ${result.safetyBackup}`)
+    await loadBackups()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '恢复失败')
+  }
+}
+
+async function removeBackup(name: string): Promise<void> {
+  try {
+    await ElMessageBox.confirm(`确认删除备份文件「${name}」？删除后无法找回。`, '删除确认', { type: 'warning' })
+  } catch {
+    return
+  }
+  try {
+    await settingsApi.deleteBackup(name)
+    ElMessage.success('已删除')
+    await loadBackups()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '删除失败')
+  }
+}
+
 onMounted(() => {
   void loadConfig()
+  void loadBackups()
 })
 </script>
 
@@ -153,6 +280,18 @@ onMounted(() => {
 .settings-block__head h3 {
   margin: 0;
   font-size: 15px;
+}
+
+.settings-block__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-block__hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .settings-block__desc {

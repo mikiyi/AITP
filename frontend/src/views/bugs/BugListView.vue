@@ -2,7 +2,10 @@
   <div class="page">
     <div class="page-header">
       <h2 class="page-title">缺陷</h2>
-      <el-button type="primary" :icon="Plus" @click="openCreate">新建缺陷</el-button>
+      <div>
+        <BaseExportMenu :resolve-url="resolveExportUrl" />
+        <el-button type="primary" :icon="Plus" @click="openCreate">新建缺陷</el-button>
+      </div>
     </div>
 
     <div class="panel panel-pad">
@@ -12,8 +15,15 @@
         :fetcher="fetcher"
         :search-fields="searchFields"
         :extra-query="extraQuery"
+        selectable
+        sync-query
         @row-click="onRowClick"
       >
+        <template #batch="{ rows }">
+          <el-button size="small" type="danger" plain :loading="batchRemoving" @click="batchRemove(rows)">
+            批量删除
+          </el-button>
+        </template>
         <template #severity="{ row }">
           <el-tag :type="severityTag(row.severity)" size="small" effect="plain">{{ row.severity }}</el-tag>
         </template>
@@ -94,6 +104,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
+import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import { bugApi, moduleApi } from '@/api'
 import type { Bug, ModuleOption } from '@/api/types'
 import { useAppStore } from '@/stores/app'
@@ -136,6 +147,14 @@ const searchFields: SearchField[] = [
 
 function fetcher(query: Record<string, unknown>) {
   return bugApi.list(query)
+}
+
+function resolveExportUrl(format: string): string {
+  return bugApi.exportUrl({
+    projectId: appStore.currentProjectId,
+    format,
+    ...tableRef.value?.filterQuery(),
+  })
 }
 
 function statusLabel(value: string): string {
@@ -291,6 +310,36 @@ async function remove(row: Bug): Promise<void> {
 
 function onRowClick(row: Bug): void {
   void router.push(`/bugs/${row.id}`)
+}
+
+const batchRemoving = ref(false)
+
+async function batchRemove(rows: Record<string, any>[]): Promise<void> {
+  const ids = rows.map((row) => Number(row.id)).filter((id) => Number.isInteger(id) && id > 0)
+  if (!ids.length) {
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认删除选中的 ${ids.length} 个缺陷？未闭环缺陷清零会影响首页指标。`,
+      '批量删除确认',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  batchRemoving.value = true
+  try {
+    const result = await bugApi.batchRemove(ids)
+    const skipped = result.skipped?.length ? `，跳过 ${result.skipped.length} 条` : ''
+    ElMessage.success(`已删除 ${result.count} 个${skipped}`)
+    tableRef.value?.clearSelection()
+    tableRef.value?.reload()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '批量删除失败')
+  } finally {
+    batchRemoving.value = false
+  }
 }
 
 async function loadOptions(): Promise<void> {

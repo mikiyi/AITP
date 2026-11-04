@@ -923,6 +923,99 @@ def _check_lab_inner(api: Api, project_id: int, feature_id: int) -> None:
     check("知识问答返回引用清单", isinstance(ask.get("refs"), list), str(type(ask.get("refs"))))
 
 
+def check_backups(api: Api, project_id: int) -> None:
+    """备份 / 下载 / 恢复 / 删除，以及恢复前的强制文件名确认。"""
+    created = api.data("POST", "/api/v1/settings/backups")
+    name = str(created.get("name") or "")
+    check("备份创建返回文件名", bool(name), str(created)[:200])
+    check("备份落盘有大小", int(created.get("sizeBytes") or 0) > 0, str(created)[:200])
+
+    listed = api.data("GET", "/api/v1/settings/backups")
+    check("备份列表包含新建备份", any(item.get("name") == name for item in listed.get("list") or []),
+          str(listed)[:200])
+    check("备份返回库路径", bool(listed.get("dbPath")), str(listed)[:120])
+
+    resp, _ = api.call("GET", f"/api/v1/settings/backups/{name}/download")
+    check("备份可下载", resp.status_code == 200 and len(resp.data) > 0, f"status={resp.status_code}")
+    check("下载走附件Disposition", "attachment" in resp.headers.get("Content-Disposition", ""),
+          resp.headers.get("Content-Disposition", ""))
+    # send_file 的句柄要显式释放，否则 Windows 上后续删除会被占用
+    resp.close()
+
+    api.expect("非法备份文件名被拒", "DELETE", "/api/v1/settings/backups/evil.txt",
+               ErrorCode.PARAM_ERROR)
+    resp, traversal = api.call("DELETE", "/api/v1/settings/backups/..%2F..%2Ft.db")
+    check("路径穿越文件名被拒",
+          traversal.get("code") in (ErrorCode.PARAM_ERROR, ErrorCode.NOT_FOUND_ENDPOINT,
+                                    ErrorCode.METHOD_NOT_ALLOWED),
+          f"code={traversal.get('code')} status={resp.status_code}")
+    api.expect("下载接口拒绝非法文件名", "GET", "/api/v1/settings/backups/evil.txt/download",
+               ErrorCode.PARAM_ERROR)
+    api.expect("恢复缺少确认返回 140105", "POST", f"/api/v1/settings/backups/{name}/restore",
+               ErrorCode.ILLEGAL_OPERATION, {"confirm": "wrong-name"})
+
+    sentinel = int(api.data("POST", "/api/v1/requirements",
+                            {"projectId": project_id, "title": "备份之后新增的需求"})["id"])
+    restored = api.data("POST", f"/api/v1/settings/backups/{name}/restore", {"confirm": name})
+    check("恢复返回备份名", restored.get("restored") == name, str(restored)[:200])
+    check("恢复前自动生成安全备份", bool(restored.get("safetyBackup")), str(restored)[:200])
+    api.expect("恢复回滚了备份之后的写入", "GET", f"/api/v1/requirements/{sentinel}",
+               ErrorCode.RESOURCE_NOT_FOUND)
+
+    after_restore = api.data("GET", "/api/v1/settings/backups")
+    names = [str(item.get("name")) for item in after_restore.get("list") or []]
+    check("安全备份进入备份列表", any(item.startswith("pre-restore") for item in names), str(names)[:200])
+
+    api.data("DELETE", f"/api/v1/settings/backups/{name}")
+    after_delete = api.data("GET", "/api/v1/settings/backups")
+    check("删除后备份不再列出",
+          all(item.get("name") != name for item in after_delete.get("list") or []), str(names)[:200])
+    api.expect("删除不存在的备份报错", "DELETE", f"/api/v1/settings/backups/{name}",
+               ErrorCode.RESOURCE_NOT_FOUND)
+
+
+def check_bulk_and_export(api: Api, project_id: int) -> None:
+    """批量删除 + CSV/JSON 导出；放在最后跑，避免影响前面的计数断言。"""
+    ids = [
+        int(api.data("POST", "/api/v1/requirements",
+                     {"projectId": project_id, "title": f"批量删除用需求 {i}"})["id"])
+        for i in range(3)
+    ]
+    result = api.data("POST", "/api/v1/requirements/batch-delete",
+                      {"ids": [*ids, 999_999]})
+    check("批量删除返回成功数量", result.get("count") == 3, str(result)[:200])
+    check("批量删除跳过不存在项", result.get("skipped") == [999_999], str(result)[:200])
+    for item in ids:
+        api.expect(f"批量删除后 {item} 不可查", "GET", f"/api/v1/requirements/{item}",
+                   ErrorCode.RESOURCE_NOT_FOUND)
+    api.expect("空批量删除被拒", "POST", "/api/v1/requirements/batch-delete",
+               ErrorCode.PARAM_ERROR, {"ids": []})
+
+    for label, path in (
+        ("需求", f"/api/v1/requirements/export?format=csv&projectId={project_id}"),
+        ("缺陷", f"/api/v1/bugs/export?format=csv&projectId={project_id}"),
+        ("用例", f"/api/v1/test-cases/export?format=csv&projectId={project_id}"),
+        ("知识", "/api/v1/knowledge/articles/export?format=csv"),
+    ):
+        resp, _ = api.call("GET", path)
+        text = resp.data.decode("utf-8", errors="replace")
+        check(f"{label} CSV 导出成功", resp.status_code == 200, f"status={resp.status_code}")
+        check(f"{label} CSV 带 UTF-8 BOM", resp.data.startswith(b"\xef\xbb\xbf"),
+              repr(resp.data[:6]))
+        check(f"{label} CSV 含表头", "编号" in text or "标题" in text or "ID" in text, text[:60])
+        check(f"{label} 导出计数头", bool(resp.headers.get("X-AITP-Export-Count")),
+              str(resp.headers.get("X-AITP-Export-Count")))
+
+    resp, _ = api.call("GET", f"/api/v1/requirements/export?format=json&projectId={project_id}")
+    payload = resp.get_json(silent=True)
+    check("需求 JSON 导出带清单", isinstance(payload, dict) and "list" in payload, str(payload)[:120])
+
+    api.expect("用例导出格式白名单", "GET", "/api/v1/test-cases/export?projectId=1&format=pdf",
+               ErrorCode.PARAM_ERROR)
+    api.expect("需求导出格式白名单", "GET", "/api/v1/requirements/export?format=pdf",
+               ErrorCode.PARAM_ERROR)
+
+
 def main() -> int:
     workdir = pathlib.Path(tempfile.mkdtemp(prefix="aitp-smoke-"))
     try:
@@ -943,6 +1036,8 @@ def main() -> int:
         check_settings(api, workdir)
         check_audit(api, project_id)
         check_meta(api)
+        check_bulk_and_export(api, project_id)
+        check_backups(api, project_id)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 

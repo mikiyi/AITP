@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from flask import Blueprint, Response, request
+from flask import Blueprint, Response, current_app, request, send_file
 
 from ..common.constants import AI_DEFAULT_TIMEOUT, PROVIDERS
 from ..common.validators import optional_str, require_int, require_str
@@ -14,7 +14,7 @@ from ..repositories.ai_profile_repo import AIProfileRepository
 from ..repositories.audit_log_repo import AuditLogRepository
 from ..repositories.base import dumps, loads
 from ..repositories.sys_config_repo import SysConfigRepository
-from ..services import ai_check, audit_service
+from ..services import ai_check, audit_service, backup_service
 from .helpers import audit, body, commit, db, keyword_of, page_args, page_payload, query_filters
 
 bp = Blueprint("settings", __name__)
@@ -316,3 +316,50 @@ def list_audit_resources() -> Response:
     resource_id = require_int(request.args.get("resourceId"), "resourceId")
     rows = AuditLogRepository(conn).list_by_resource(resource_type, resource_id)
     return ok(rows)
+
+
+# ---------------- 数据备份 ----------------
+
+@bp.get("/backups")
+def list_backups() -> Response:
+    return ok({
+        "list": backup_service.list_backups(),
+        "dir": str(backup_service.backup_dir()),
+        "dbPath": str(current_app.config["AITP_DB_PATH"]),
+    })
+
+
+@bp.post("/backups")
+def create_backup() -> Response:
+    conn = db()
+    info = backup_service.create(conn)
+    audit(conn, audit_service.AUDIT_ACTION_BACKUP, audit_service.RESOURCE_DB_BACKUP, None,
+          str(info["name"]), {"sizeBytes": info["sizeBytes"]})
+    return ok(info)
+
+
+@bp.get("/backups/<name>/download")
+def download_backup(name: str) -> Response:
+    path = backup_service.resolve_existing(name)
+    return send_file(path, as_attachment=True, download_name=path.name, mimetype="application/octet-stream")
+
+
+@bp.post("/backups/<name>/restore")
+def restore_backup(name: str) -> Response:
+    """恢复会覆盖当前库，必须回传 confirm 且内容与备份文件名一致。"""
+    conn = db()
+    data = body()
+    confirm = optional_str(data.get("confirm"), "confirm", 200) or ""
+    if confirm != name:
+        raise AppError(ErrorCode.ILLEGAL_OPERATION, "请输入备份文件名以确认恢复")
+    result = backup_service.restore(conn, name)
+    audit(conn, audit_service.AUDIT_ACTION_RESTORE, audit_service.RESOURCE_DB_BACKUP, None, name, result)
+    return ok(result)
+
+
+@bp.delete("/backups/<name>")
+def delete_backup(name: str) -> Response:
+    conn = db()
+    removed = backup_service.remove(name)
+    audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_DB_BACKUP, None, removed)
+    return ok({"name": removed, "deleted": True})

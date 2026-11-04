@@ -2,7 +2,10 @@
   <div class="page">
     <div class="page-header">
       <h2 class="page-title">需求</h2>
-      <el-button type="primary" :icon="Plus" @click="openCreate">新建需求</el-button>
+      <div>
+        <BaseExportMenu :resolve-url="resolveExportUrl" />
+        <el-button type="primary" :icon="Plus" @click="openCreate">新建需求</el-button>
+      </div>
     </div>
 
     <div class="panel panel-pad">
@@ -11,8 +14,15 @@
         :columns="columns"
         :fetcher="fetcher"
         :search-fields="searchFields"
+        selectable
+        sync-query
         @row-click="openEdit"
       >
+        <template #batch="{ rows }">
+          <el-button size="small" type="danger" plain :loading="batchRemoving" @click="batchRemove(rows)">
+            批量删除
+          </el-button>
+        </template>
         <template #priority="{ row }">
           <el-tag :type="priorityTag(row.priority)" size="small" effect="plain">{{ row.priority }}</el-tag>
         </template>
@@ -76,6 +86,7 @@ import { reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
+import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import { requirementApi } from '@/api'
 import type { Requirement } from '@/api/types'
 import { useAppStore } from '@/stores/app'
@@ -103,6 +114,10 @@ const searchFields: SearchField[] = [
 
 function fetcher(query: Record<string, unknown>) {
   return requirementApi.list(query)
+}
+
+function resolveExportUrl(format: string): string {
+  return requirementApi.exportUrl({ format, ...tableRef.value?.filterQuery() })
 }
 
 const dialogVisible = ref(false)
@@ -202,6 +217,36 @@ async function remove(row: Requirement): Promise<void> {
     tableRef.value?.reload()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '删除失败')
+  }
+}
+
+const batchRemoving = ref(false)
+
+async function batchRemove(rows: Record<string, any>[]): Promise<void> {
+  const ids = rows.map((row) => Number(row.id)).filter((id) => Number.isInteger(id) && id > 0)
+  if (!ids.length) {
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认删除选中的 ${ids.length} 条需求？关联的用例不会一起删除，但覆盖矩阵会失去这些行。`,
+      '批量删除确认',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  batchRemoving.value = true
+  try {
+    const result = await requirementApi.batchRemove(ids)
+    const skipped = result.skipped?.length ? `，跳过 ${result.skipped.length} 条` : ''
+    ElMessage.success(`已删除 ${result.count} 条${skipped}`)
+    tableRef.value?.clearSelection()
+    tableRef.value?.reload()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '批量删除失败')
+  } finally {
+    batchRemoving.value = false
   }
 }
 </script>

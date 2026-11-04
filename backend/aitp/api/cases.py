@@ -17,8 +17,20 @@ from ..repositories.project_repo import ProjectRepository
 from ..repositories.requirement_repo import RequirementRepository
 from ..repositories.test_case_repo import TestCaseRepository
 from ..services import audit_service
-from ..services import xlsx_exporter, xlsx_importer
-from .helpers import audit, body, commit, db, keyword_of, page_args, page_payload, query_filters
+from ..services import tabular_export, xlsx_exporter, xlsx_importer
+from .helpers import (
+    audit,
+    batch_soft_delete,
+    body,
+    commit,
+    db,
+    download_response,
+    ids_of,
+    keyword_of,
+    page_args,
+    page_payload,
+    query_filters,
+)
 
 bp = Blueprint("test_cases", __name__)
 
@@ -62,6 +74,57 @@ def _to_public(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+CASE_EXPORT_FORMATS = ("xlsx", *tabular_export.TABULAR_FORMATS)
+
+CASE_TABULAR_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("caseNo", "用例编号"),
+    ("title", "标题"),
+    ("caseType", "用例类型"),
+    ("priority", "优先级"),
+    ("status", "执行状态"),
+    ("modulePath", "功能点"),
+    ("reqNo", "需求编号"),
+    ("preconditions", "前置条件"),
+    ("stepsText", "操作步骤"),
+    ("expectedResult", "预期结果"),
+    ("tags", "标签"),
+    ("linkedBugNos", "关联缺陷"),
+    ("creator", "创建人"),
+    ("createdAt", "创建时间"),
+)
+
+
+def _flat_cases(
+    rows: list[dict[str, Any]],
+    module_paths: dict[int, str],
+    requirement_nos: dict[int, str],
+    bug_nos_by_case: dict[int, list[str]],
+) -> list[dict[str, Any]]:
+    """把用例摊平成一行一条，供 CSV / JSON 导出使用。"""
+    flat: list[dict[str, Any]] = []
+    for case in rows:
+        case_id = int(case["id"])
+        module_id = case.get("module_id")
+        requirement_id = case.get("requirement_id")
+        flat.append({
+            "caseNo": case.get("case_no"),
+            "title": case.get("title"),
+            "caseType": case.get("case_type"),
+            "priority": case.get("priority"),
+            "status": case.get("status"),
+            "modulePath": module_paths.get(int(module_id), "") if module_id else "",
+            "reqNo": requirement_nos.get(int(requirement_id), "") if requirement_id else "",
+            "preconditions": case.get("preconditions"),
+            "stepsText": xlsx_exporter.steps_to_text(case.get("steps") or []),
+            "expectedResult": case.get("expected_result"),
+            "tags": case.get("tags"),
+            "linkedBugNos": "、".join(bug_nos_by_case.get(case_id, [])),
+            "creator": case.get("creator"),
+            "createdAt": case.get("created_at"),
+        })
+    return flat
+
+
 @bp.get("")
 def list_cases() -> Response:
     conn = db()
@@ -91,9 +154,12 @@ def module_coverage_matrix() -> Response:
 
 @bp.get("/export")
 def export_cases() -> Response:
-    """导出 xlsx：7 张表，格式对齐 testSKill\\generate_test_cases.py。"""
+    """导出用例：xlsx 走 7 张表（格式对齐 testSKill\\generate_test_cases.py），csv/json 走单表摊平。"""
     conn = db()
     project_id = require_int(request.args.get("projectId"), "projectId")
+    fmt = str(request.args.get("format") or "xlsx").strip().lower()
+    if fmt not in CASE_EXPORT_FORMATS:
+        raise AppError(ErrorCode.PARAM_ERROR, "format 只能是 xlsx / csv / json")
     filters: dict[str, Any] = {"project_id": project_id}
     column_map = {
         "caseType": "case_type",
@@ -108,7 +174,7 @@ def export_cases() -> Response:
             filters[column] = value
 
     repo = TestCaseRepository(conn)
-    raw_rows = repo.list_all(filters, None, limit=10000)
+    raw_rows = repo.list_all(filters, keyword_of() or None, limit=10000)
     rows: list[dict[str, Any]] = []
     for raw in raw_rows:
         case = dict(raw)
@@ -133,6 +199,21 @@ def export_cases() -> Response:
         for case_id, items in linked.items()
     }
 
+    project = ProjectRepository(conn).get(project_id)
+    project_name = str((project or {}).get("name") or "")
+    if fmt in tabular_export.TABULAR_FORMATS:
+        content, mimetype, extension = tabular_export.render(
+            fmt, CASE_TABULAR_COLUMNS, _flat_cases(rows, module_paths, requirement_nos, bug_nos_by_case),
+        )
+        audit(conn, audit_service.AUDIT_ACTION_EXPORT, audit_service.RESOURCE_TEST_CASE, project_id,
+              project_name, {"format": fmt, "count": len(rows)})
+        return download_response(
+            content,
+            tabular_export.safe_filename(f"{project_name or 'AITP'}测试用例", extension),
+            mimetype,
+            count=len(rows),
+        )
+
     cases_by_type: dict[str, list[dict[str, Any]]] = {case_type: [] for case_type in CASE_TYPE}
     for case in rows:
         case_type = str(case.get("case_type") or "functional")
@@ -148,8 +229,7 @@ def export_cases() -> Response:
         requirements=requirements,
     )
 
-    project = ProjectRepository(conn).get(project_id)
-    filename = xlsx_exporter.build_export_filename(str((project or {}).get("name") or ""))
+    filename = xlsx_exporter.build_export_filename(project_name)
     return Response(
         content,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -353,6 +433,14 @@ def delete_case(pk: str) -> Response:
     audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_TEST_CASE, target,
           row.get("title", ""))
     return ok({"id": target, "deleted": True})
+
+
+@bp.post("/batch-delete")
+def batch_delete_cases() -> Response:
+    """批量删除用例；已删除或不存在的 id 归入 skipped。"""
+    conn = db()
+    ids = ids_of(body())
+    return ok(batch_soft_delete(conn, TestCaseRepository(conn), ids, audit_service.RESOURCE_TEST_CASE))
 
 
 @bp.post("/adopt")

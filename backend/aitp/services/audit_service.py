@@ -22,6 +22,8 @@ AUDIT_ACTION_IMPORT = "import"
 AUDIT_ACTION_EXPORT = "export"
 AUDIT_ACTION_GENERATE = "generate"
 AUDIT_ACTION_CONFIG = "config"
+AUDIT_ACTION_BACKUP = "backup"
+AUDIT_ACTION_RESTORE = "restore"
 
 # ---- 资源类型 ----
 RESOURCE_AI_PROFILE = "ai_profile"
@@ -38,6 +40,7 @@ RESOURCE_REPORT = "report"
 RESOURCE_PROJECT = "project"
 RESOURCE_REQUIREMENT = "requirement"
 RESOURCE_SYSTEM_CONFIG = "system_config"
+RESOURCE_DB_BACKUP = "db_backup"
 
 _MAX_DETAIL_CHARS = 2000
 

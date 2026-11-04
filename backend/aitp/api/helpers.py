@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import sqlite3
 from typing import Any, Iterable
+from urllib.parse import quote
 
-from flask import request
+from flask import Response, request
 
 from ..common.pagination import Page
 from ..common.validators import parse_page_args, require_int
 from ..db.connection import get_db
 from ..errors import AppError, ErrorCode
-from ..services import audit_service
+from ..repositories.base import BaseRepository
+from ..services import audit_service, tabular_export
 
 
 def db() -> sqlite3.Connection:
@@ -107,9 +109,74 @@ def pick(source: dict[str, Any], allowed: Iterable[str]) -> dict[str, Any]:
     return {k: v for k, v in source.items() if k in allowed_set}
 
 
+def download_response(
+    content: bytes,
+    filename: str,
+    mimetype: str,
+    count: int | None = None,
+) -> Response:
+    """二进制下载响应；文件名只用 UTF-8 编码，不回显请求里的原始名字。"""
+    response = Response(content, mimetype=mimetype)
+    if mimetype.startswith("text/"):
+        response.headers["Content-Type"] = f"{mimetype}; charset=utf-8"
+    response.headers["Content-Disposition"] = (
+        f"attachment; filename*=UTF-8''{quote(filename, safe='')}"
+    )
+    if count is not None:
+        response.headers["X-AITP-Export-Count"] = str(count)
+    return response
+
+
+def tabular_format_of(raw: Any, default: str = "csv") -> str:
+    """导出格式白名单：只接受 csv / json，其余报参数错误。"""
+    try:
+        return tabular_export.normalize_format(raw or default)
+    except ValueError:
+        raise AppError(ErrorCode.PARAM_ERROR, "format 只能是 csv / json") from None
+
+
 def bool_arg(value: Any, default: bool = False) -> bool:
     if value in (None, ""):
         return default
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def ids_of(data: dict[str, Any], field: str = "ids", max_count: int = 500) -> list[int]:
+    """从请求体取一批 id，去重并保持提交顺序。"""
+    raw = data.get(field)
+    if not isinstance(raw, list) or not raw:
+        raise AppError(ErrorCode.PARAM_ERROR, f"参数 {field} 必须是非空数组")
+    if len(raw) > max_count:
+        raise AppError(ErrorCode.PARAM_ERROR, f"{field} 一次最多 {max_count} 项")
+    return list(dict.fromkeys(require_int(item, f"{field}[]") for item in raw))
+
+
+def batch_soft_delete(
+    conn: sqlite3.Connection,
+    repo: BaseRepository,
+    ids: list[int],
+    resource: str,
+    label_key: str = "title",
+) -> dict[str, Any]:
+    """批量软删并记一条审计；已删除或不存在的 id 归入 skipped。"""
+    removed: list[int] = []
+    labels: list[str] = []
+    for item in ids:
+        row = repo.get(item)
+        if row is None or not repo.soft_delete(item):
+            continue
+        removed.append(item)
+        labels.append(str(row.get(label_key) or item))
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_DELETE, resource, None, "", {
+        "count": len(removed),
+        "ids": removed,
+        "labels": labels[:20],
+    })
+    return {
+        "deleted": removed,
+        "count": len(removed),
+        "skipped": [item for item in ids if item not in removed],
+    }

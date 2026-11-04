@@ -12,8 +12,21 @@ from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.base import dumps, loads
 from ..repositories.bug_repo import BugRepository
-from ..services import audit_service
-from .helpers import audit, body, commit, db, keyword_of, page_args, page_payload, query_filters
+from ..services import audit_service, tabular_export
+from .helpers import (
+    audit,
+    batch_soft_delete,
+    body,
+    commit,
+    db,
+    download_response,
+    ids_of,
+    keyword_of,
+    page_args,
+    page_payload,
+    query_filters,
+    tabular_format_of,
+)
 
 bp = Blueprint("bugs", __name__)
 
@@ -92,6 +105,42 @@ def bug_stats() -> Response:
         "openCount": repo.open_bug_count(pid),
         "total": sum(result.values()),
     })
+
+
+BUG_TABULAR_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("bugNo", "缺陷编号"),
+    ("title", "标题"),
+    ("severity", "严重级别"),
+    ("priority", "优先级"),
+    ("status", "状态"),
+    ("bugType", "缺陷类型"),
+    ("module", "所属模块"),
+    ("assignee", "处理人"),
+    ("reporter", "报告人"),
+    ("version", "版本"),
+    ("env", "环境"),
+    ("description", "描述"),
+    ("expectedResult", "预期结果"),
+    ("actualResult", "实际结果"),
+    ("createdAt", "创建时间"),
+)
+
+
+@bp.get("/export")
+def export_bugs() -> Response:
+    """导出缺陷清单为 CSV / JSON，筛选条件与列表接口一致。"""
+    conn = db()
+    fmt = tabular_format_of(request.args.get("format"))
+    filters = query_filters(FILTERS)
+    rows = BugRepository(conn).list_all(filters, keyword_of() or None, limit=10000)
+    content, mimetype, extension = tabular_export.render(
+        fmt, BUG_TABULAR_COLUMNS, [_to_public(row) for row in rows]
+    )
+    audit(conn, audit_service.AUDIT_ACTION_EXPORT, audit_service.RESOURCE_BUG, None, "",
+          {"format": fmt, "count": len(rows)})
+    return download_response(
+        content, tabular_export.safe_filename("缺陷清单", extension), mimetype, count=len(rows)
+    )
 
 
 @bp.get("/<pk>")
@@ -177,6 +226,14 @@ def delete_bug(pk: str) -> Response:
     audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_BUG, target,
           row.get("title", ""))
     return ok({"id": target, "deleted": True})
+
+
+@bp.post("/batch-delete")
+def batch_delete_bugs() -> Response:
+    """批量删除缺陷；已删除或不存在的 id 归入 skipped。"""
+    conn = db()
+    ids = ids_of(body())
+    return ok(batch_soft_delete(conn, BugRepository(conn), ids, audit_service.RESOURCE_BUG))
 
 
 @bp.post("/<pk>/transition")

@@ -12,13 +12,39 @@ from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.project_repo import ProjectRepository
 from ..repositories.requirement_repo import RequirementRepository
-from ..services import audit_service
-from .helpers import audit, body, commit, db, keyword_of, page_args, page_payload, query_filters
+from ..services import audit_service, tabular_export
+from .helpers import (
+    audit,
+    batch_soft_delete,
+    body,
+    commit,
+    db,
+    download_response,
+    ids_of,
+    keyword_of,
+    page_args,
+    page_payload,
+    query_filters,
+    tabular_format_of,
+)
 
 bp = Blueprint("requirements", __name__)
 
 FILTERS = {"projectId": "project_id", "status": "status", "priority": "priority"}
 WRITE_FIELDS = {"title", "content", "source", "version", "status", "priority", "tags", "project_id"}
+
+REQUIREMENT_TABULAR_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("reqNo", "需求编号"),
+    ("title", "标题"),
+    ("status", "状态"),
+    ("priority", "优先级"),
+    ("version", "版本"),
+    ("source", "来源"),
+    ("tags", "标签"),
+    ("content", "正文"),
+    ("createdAt", "创建时间"),
+    ("updatedAt", "更新时间"),
+)
 
 
 def _to_public(row: dict[str, Any]) -> dict[str, Any]:
@@ -61,6 +87,23 @@ def requirement_options() -> Response:
         {"id": r["id"], "reqNo": r["req_no"], "title": r["title"], "projectId": r["project_id"]}
         for r in rows
     ])
+
+
+@bp.get("/export")
+def export_requirements() -> Response:
+    """导出需求清单为 CSV / JSON，筛选条件与列表接口一致。"""
+    conn = db()
+    fmt = tabular_format_of(request.args.get("format"))
+    filters = query_filters(FILTERS)
+    rows = RequirementRepository(conn).list_all(filters, keyword_of() or None, limit=10000)
+    content, mimetype, extension = tabular_export.render(
+        fmt, REQUIREMENT_TABULAR_COLUMNS, [_to_public(row) for row in rows]
+    )
+    audit(conn, audit_service.AUDIT_ACTION_EXPORT, audit_service.RESOURCE_REQUIREMENT, None, "",
+          {"format": fmt, "count": len(rows)})
+    return download_response(
+        content, tabular_export.safe_filename("需求清单", extension), mimetype, count=len(rows)
+    )
 
 
 @bp.get("/<pk>")
@@ -130,6 +173,16 @@ def delete_requirement(pk: str) -> Response:
     audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_REQUIREMENT, target,
           row.get("title", ""))
     return ok({"id": target, "deleted": True})
+
+
+@bp.post("/batch-delete")
+def batch_delete_requirements() -> Response:
+    """批量删除需求；已删除或不存在的 id 归入 skipped。"""
+    conn = db()
+    ids = ids_of(body())
+    return ok(batch_soft_delete(
+        conn, RequirementRepository(conn), ids, audit_service.RESOURCE_REQUIREMENT
+    ))
 
 
 def request_int(name: str) -> int | None:

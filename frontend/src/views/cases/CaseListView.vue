@@ -4,7 +4,11 @@
       <h2 class="page-title">测试用例</h2>
       <div>
         <el-button :icon="Upload" @click="importVisible = true">导入 xlsx</el-button>
-        <el-button :icon="Download" @click="exportXlsx">导出 xlsx</el-button>
+        <BaseExportMenu
+          :formats="['xlsx', 'csv', 'json']"
+          :resolve-url="resolveExportUrl"
+          :guard="exportGuard"
+        />
         <el-button :icon="DataAnalysis" @click="openCoverage">覆盖矩阵</el-button>
         <el-button type="primary" :icon="Plus" @click="openCreate">新建用例</el-button>
       </div>
@@ -17,8 +21,15 @@
         :fetcher="fetcher"
         :search-fields="searchFields"
         :extra-query="extraQuery"
+        selectable
+        sync-query
         @row-click="onRowClick"
       >
+        <template #batch="{ rows }">
+          <el-button size="small" type="danger" plain :loading="batchRemoving" @click="batchRemove(rows)">
+            批量删除
+          </el-button>
+        </template>
         <template #caseType="{ row }">
           <el-tag size="small" effect="plain">{{ caseTypeLabel(row.caseType) }}</el-tag>
         </template>
@@ -163,9 +174,10 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Download, DataAnalysis, Plus, Upload, UploadFilled } from '@element-plus/icons-vue'
+import { DataAnalysis, Plus, Upload, UploadFilled } from '@element-plus/icons-vue'
 import type { UploadFile, UploadFiles } from 'element-plus'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
+import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import { caseApi, moduleApi, requirementApi } from '@/api'
 import type { CaseStep, ModuleCoverage, ModuleOption, Requirement, TestCase } from '@/api/types'
 import { useAppStore } from '@/stores/app'
@@ -421,6 +433,36 @@ function onRowClick(row: TestCase): void {
   void router.push(`/test-cases/${row.id}`)
 }
 
+const batchRemoving = ref(false)
+
+async function batchRemove(rows: Record<string, any>[]): Promise<void> {
+  const ids = rows.map((row) => Number(row.id)).filter((id) => Number.isInteger(id) && id > 0)
+  if (!ids.length) {
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认删除选中的 ${ids.length} 条用例？删除为软删，仍会占用编号。`,
+      '批量删除确认',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  batchRemoving.value = true
+  try {
+    const result = await caseApi.batchRemove(ids)
+    const skipped = result.skipped?.length ? `，跳过 ${result.skipped.length} 条` : ''
+    ElMessage.success(`已删除 ${result.count} 条${skipped}`)
+    tableRef.value?.clearSelection()
+    tableRef.value?.reload()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '批量删除失败')
+  } finally {
+    batchRemoving.value = false
+  }
+}
+
 const importVisible = ref(false)
 const importing = ref(false)
 const fileList = ref<UploadFiles>([])
@@ -456,12 +498,16 @@ async function doImport(): Promise<void> {
   }
 }
 
-function exportXlsx(): void {
-  if (!appStore.currentProjectId) {
-    ElMessage.warning('请先在右上角选择项目')
-    return
-  }
-  window.open(caseApi.exportUrl({ projectId: appStore.currentProjectId }), '_blank')
+function exportGuard(): string {
+  return appStore.currentProjectId ? '' : '请先在右上角选择项目'
+}
+
+function resolveExportUrl(format: string): string {
+  return caseApi.exportUrl({
+    projectId: appStore.currentProjectId,
+    format,
+    ...tableRef.value?.filterQuery(),
+  })
 }
 
 const coverageVisible = ref(false)
