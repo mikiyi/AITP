@@ -16,7 +16,10 @@
       description="请确认 AITP 后端已启动（默认 http://127.0.0.1:8760），然后点击「刷新」重试。"
     />
 
-    <KnowledgeAssistant compact class="home__assistant" />
+    <div class="panel panel-pad home__section">
+      <div class="home__section-title">知识库问答助手</div>
+      <KnowledgeAssistant compact />
+    </div>
 
     <!-- 数据资产卡 -->
     <div class="home__assets">
@@ -304,10 +307,6 @@ onMounted(() => {
 <style scoped>
 .home__alert {
   margin-bottom: 12px;
-}
-
-.home__assistant {
-  margin-bottom: 14px;
 }
 
 .home__section-hint {
