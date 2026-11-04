@@ -8,6 +8,7 @@ from flask import Flask
 def register_blueprints(app: Flask) -> None:
     from .ai import bp as ai_bp
     from .ai_records import bp as ai_records_bp
+    from .automation import bp as automation_bp
     from .bugs import bp as bugs_bp
     from .cases import bp as cases_bp
     from .knowledge import bp as knowledge_bp
@@ -41,6 +42,7 @@ def register_blueprints(app: Flask) -> None:
         (regressions_bp, "/api/v1/regressions"),
         (relations_bp, "/api/v1/relations"),
         (todos_bp, "/api/v1/todos"),
+        (automation_bp, "/api/v1/automation"),
         (validation_bp, "/api/v1/validation"),
         (settings_bp, "/api/v1/settings"),
         (meta_bp, "/api/v1/meta"),

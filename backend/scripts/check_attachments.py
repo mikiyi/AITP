@@ -226,7 +226,9 @@ def check_image_dewatermark() -> None:
     check("位图识别出水印覆盖层", result.watermark_applied, result.note)
     cleaned = Image.open(io.BytesIO(result.data)).convert("RGB")
     pixel = cleaned.getpixel((10, 10))
-    check("水印区域已被覆盖回背景色", abs(pixel[0] - 120) < 12, f"像素={pixel}")
+    pixel_rgb = pixel if isinstance(pixel, tuple) else (pixel,)
+    red = float(pixel_rgb[0]) if pixel_rgb[0] is not None else -1.0
+    check("水印区域已被覆盖回背景色", abs(red - 120) < 12, f"像素={pixel}")
 
     plain = Image.new("RGB", (400, 300), (120, 120, 120))
     buffer = io.BytesIO()

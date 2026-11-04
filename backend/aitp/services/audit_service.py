@@ -24,6 +24,7 @@ AUDIT_ACTION_GENERATE = "generate"
 AUDIT_ACTION_CONFIG = "config"
 AUDIT_ACTION_BACKUP = "backup"
 AUDIT_ACTION_RESTORE = "restore"
+AUDIT_ACTION_EXECUTE = "execute"
 
 # ---- 资源类型 ----
 RESOURCE_AI_PROFILE = "ai_profile"
@@ -48,6 +49,8 @@ RESOURCE_LAB_ATTACHMENT = "lab_attachment"
 RESOURCE_REGRESSION = "regression"
 RESOURCE_ENTITY_RELATION = "entity_relation"
 RESOURCE_TODO = "todo"
+RESOURCE_AUTOMATION_SCRIPT = "automation_script"
+RESOURCE_AUTOMATION_RUN = "automation_run"
 
 _MAX_DETAIL_CHARS = 2000
 

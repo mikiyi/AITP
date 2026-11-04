@@ -435,14 +435,14 @@ def process_image(file_name: str, data: bytes) -> ProcessedImage:
     media_type = _media_type_of(ext)
 
     if ext == ".svg":
-        cleaned, removed = _strip_svg_watermark(data)
-        note = "SVG 按图元标识去水印" if removed else "SVG 未发现带水印标识的图元"
+        cleaned_svg, svg_removed = _strip_svg_watermark(data)
+        note = "SVG 按图元标识去水印" if svg_removed else "SVG 未发现带水印标识的图元"
         return ProcessedImage(
             file_name=file_name,
             media_type="image/svg+xml",
-            data=cleaned,
-            watermark_applied=bool(removed),
-            regions=[{"type": "svg-element"} for _ in range(removed)],
+            data=cleaned_svg,
+            watermark_applied=bool(svg_removed),
+            regions=[{"type": "svg-element"} for _ in range(svg_removed)],
             note=note,
         )
 
@@ -474,7 +474,7 @@ def process_image(file_name: str, data: bytes) -> ProcessedImage:
         ratio = MAX_IMAGE_SIDE / max(cleaned.size)
         cleaned = cleaned.resize(
             (max(1, int(cleaned.width * ratio)), max(1, int(cleaned.height * ratio))),
-            Image.LANCZOS,
+            Image.Resampling.LANCZOS,
         )
 
     buffer = io.BytesIO()
@@ -494,7 +494,7 @@ def process_image(file_name: str, data: bytes) -> ProcessedImage:
         cleaned.convert("RGB").save(buffer, format="BMP")
         out_media = "image/bmp"
     elif ext in (".gif",):
-        cleaned.convert("P", palette=Image.ADAPTIVE).save(buffer, format="GIF")
+        cleaned.convert("P", palette=Image.Palette.ADAPTIVE).save(buffer, format="GIF")
         out_media = "image/gif"
     else:
         cleaned.save(buffer, format="PNG")
