@@ -73,11 +73,14 @@ def export_output(
         raise AppError(ErrorCode.PARAM_ERROR, f"产出超过 {MAX_OUTPUT_CHARS} 字，无法导出")
 
     if capability in EXPORT_CASE_CAPABILITIES:
-        items = _parse_case_json(text)
-        headers = _merge_columns(columns, DEFAULT_CASE_COLUMNS)
-        rows = [_case_row(item, headers) for item in items]
-        content = _build_case_workbook(headers, rows, sheet_name or "测试用例")
-        return content, len(rows)
+        # 模型可能按模板输出 Markdown 表格或直接写说明文字，
+        # 解析不出 JSON 数组不代表没有产出，落到下面的 Markdown/纯文本导出。
+        items = _try_parse_case_json(text)
+        if items:
+            headers = _merge_columns(columns, DEFAULT_CASE_COLUMNS)
+            rows = [_case_row(item, headers) for item in items]
+            content = _build_case_workbook(headers, rows, sheet_name or "测试用例")
+            return content, len(rows)
 
     sections = _parse_markdown(text)
     content, count = _build_markdown_workbook(sections)
@@ -91,8 +94,8 @@ def _strip_fences(text: str) -> str:
     return _FENCE_RE.sub("", text).strip()
 
 
-def _parse_case_json(text: str) -> list[dict[str, Any]]:
-    """从产出里取出用例数组；解析失败按参数错误返回，不生成空表。"""
+def _try_parse_case_json(text: str) -> list[dict[str, Any]]:
+    """从产出里取出用例数组；拿不到就返回空列表，交给 Markdown 导出兜底。"""
     raw = _strip_fences(text)
     start = raw.find("[")
     end = raw.rfind("]")
@@ -101,18 +104,18 @@ def _parse_case_json(text: str) -> list[dict[str, Any]]:
     try:
         parsed = json.loads(raw)
     except (ValueError, TypeError):
-        raise AppError(ErrorCode.PARAM_ERROR, "产出不是合法 JSON 用例数组，无法导出 Excel") from None
+        return []
     if isinstance(parsed, dict):
         for key in ("cases", "list", "data"):
             if isinstance(parsed.get(key), list):
                 parsed = parsed[key]
                 break
-    if not isinstance(parsed, list) or not parsed:
-        raise AppError(ErrorCode.PARAM_ERROR, "产出里没有可导出的用例")
-    items = [item for item in parsed if isinstance(item, dict) and str(item.get("title") or "").strip()]
-    if not items:
-        raise AppError(ErrorCode.PARAM_ERROR, "产出里的用例缺少标题，无法导出")
-    return items
+    if not isinstance(parsed, list):
+        return []
+    return [
+        item for item in parsed
+        if isinstance(item, dict) and str(item.get("title") or "").strip()
+    ]
 
 
 def _merge_columns(columns: list[str] | None, defaults: tuple[str, ...]) -> list[str]:

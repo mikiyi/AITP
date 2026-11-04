@@ -303,6 +303,20 @@
           </div>
 
           <template v-if="!running">
+            <div v-if="excelArtifact" class="cap-artifact">
+              <el-icon :size="18" color="var(--el-color-success)"><Document /></el-icon>
+              <div class="cap-artifact__body">
+                <span class="cap-artifact__title">Excel 产出已生成</span>
+                <span class="cap-artifact__meta">
+                  {{ excelArtifact.filename }}
+                  <template v-if="excelArtifact.count"> · {{ excelArtifact.count }} 条</template>
+                </span>
+              </div>
+              <el-button type="success" size="small" :icon="Download" @click="downloadExcelArtifact">
+                下载
+              </el-button>
+            </div>
+
             <MindMap
               v-if="mindNodes.length"
               :nodes="mindNodes"
@@ -677,12 +691,19 @@ function onTemplateToggle(value: string | number | boolean): void {
 
 /* ---- Excel 导出 ---- */
 
+interface ExcelArtifact {
+  blob: Blob
+  filename: string
+  count: number | null
+}
+
+/** 本次执行生成的 Excel 产出；执行成功后自动生成，产出面板里直接可下载。 */
+const excelArtifact = ref<ExcelArtifact | null>(null)
 const exportingExcel = ref(false)
 
-async function exportExcel(): Promise<void> {
-  if (!output.value.trim()) {
-    ElMessage.warning('暂无产出')
-    return
+async function buildExcelArtifact(quiet: boolean): Promise<ExcelArtifact | null> {
+  if (!excelCapable.value || !output.value.trim()) {
+    return null
   }
   exportingExcel.value = true
   try {
@@ -691,17 +712,57 @@ async function exportExcel(): Promise<void> {
       output: output.value,
       templateId: useTemplate.value && templateId.value ? templateId.value : undefined,
     })
-    const url = URL.createObjectURL(result.blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = result.filename || `${capability.value}.xlsx`
-    link.click()
-    URL.revokeObjectURL(url)
-    ElMessage.success('已导出 Excel')
+    return {
+      blob: result.blob,
+      filename: result.filename || `${capability.value}.xlsx`,
+      count: result.count,
+    }
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : '导出失败')
+    if (!quiet) {
+      ElMessage.error(err instanceof Error ? err.message : '导出失败')
+    }
+    return null
   } finally {
     exportingExcel.value = false
+  }
+}
+
+function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+/** 手动导出：生成（或复用）Excel 后立即下载。 */
+async function exportExcel(): Promise<void> {
+  if (!output.value.trim()) {
+    ElMessage.warning('暂无产出')
+    return
+  }
+  const artifact = await buildExcelArtifact(false)
+  if (!artifact) {
+    return
+  }
+  excelArtifact.value = artifact
+  saveBlob(artifact.blob, artifact.filename)
+  ElMessage.success('已导出 Excel')
+}
+
+/** 执行成功后静默生成 Excel 产出，成品直接挂在产出面板上。 */
+async function prepareExcelArtifact(): Promise<void> {
+  if (!excelCapable.value) {
+    return
+  }
+  excelArtifact.value = await buildExcelArtifact(true)
+}
+
+function downloadExcelArtifact(): void {
+  const artifact = excelArtifact.value
+  if (artifact) {
+    saveBlob(artifact.blob, artifact.filename)
   }
 }
 
@@ -1088,6 +1149,7 @@ async function run(): Promise<void> {
   }
   running.value = true
   output.value = ''
+  excelArtifact.value = null
   finished.value = false
   reasoning.value = ''
   model.value = ''
@@ -1132,6 +1194,8 @@ async function run(): Promise<void> {
           finished.value = true
           reviewRequired.value = frame.reviewRequired === true
           latencyMs.value = Date.now() - startedAt
+          // 用例类能力同步生成 Excel 产出，产出面板里直接可下载
+          void prepareExcelArtifact()
           // 本次执行已经入库，刷新历史列表，让计数和最新一条马上可见
           void loadHistory(1)
         },
@@ -1462,6 +1526,7 @@ watch(
 watch(capability, () => {
   resetValues()
   output.value = ''
+  excelArtifact.value = null
   reasoning.value = ''
   finished.value = false
   xmindTree.value = []
@@ -1680,6 +1745,39 @@ watch(
   gap: 8px;
   color: var(--aitp-text-weak);
   margin-bottom: 10px;
+}
+
+/* 本次执行生成的 Excel 产出：一条常驻的下载条 */
+.cap-artifact {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--el-color-success-light-5, #b3e19d);
+  border-radius: 6px;
+  background: var(--aitp-subtle);
+}
+
+.cap-artifact__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.cap-artifact__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cap-artifact__meta {
+  font-size: 12px;
+  color: var(--aitp-text-weak);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---- 历史产出：左列表 + 右原文 ---- */

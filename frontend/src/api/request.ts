@@ -164,6 +164,8 @@ export interface BlobResult {
   blob: Blob
   /** 服务端 Content-Disposition 里的文件名（已解码），取不到时为空串。 */
   filename: string
+  /** 服务端标记的导出行数（X-AITP-Export-Count），没有时为空。 */
+  count: number | null
 }
 
 /** 从 Content-Disposition 里取文件名；后端用 filename*=UTF-8'' 编码中文。 */
@@ -210,8 +212,11 @@ export async function postBlob(path: string, body: unknown): Promise<BlobResult>
   if (!response.ok) {
     throw new ApiError('导出失败，请稍后重试', -1, '', true)
   }
+  const rawCount = response.headers.get('X-AITP-Export-Count')
+  const count = rawCount && !Number.isNaN(Number(rawCount)) ? Number(rawCount) : null
   return {
     blob: await response.blob(),
     filename: filenameOf(response.headers.get('Content-Disposition') ?? ''),
+    count,
   }
 }
