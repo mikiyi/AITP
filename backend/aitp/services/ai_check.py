@@ -78,6 +78,13 @@ def _overrides(params: dict[str, Any]) -> dict[str, Any]:
         value = _text(params, key)
         if value:
             result[column] = value
+    # 未保存的「启用本地 Key」也要参与自检：变量名与作用域随草稿传过来
+    if "useEnvKey" in params:
+        result["use_env_key"] = 1 if params.get("useEnvKey") else 0
+    if "envKeyName" in params:
+        result["env_key_name"] = _text(params, "envKeyName")
+    if "envKeyScope" in params:
+        result["env_key_scope"] = _text(params, "envKeyScope") or "user"
     for key, column, caster in _NUMERIC_OVERRIDES:
         raw = params.get(key)
         if raw is None or raw == "":
@@ -135,6 +142,9 @@ def build_config(conn: sqlite3.Connection, params: dict[str, Any]) -> tuple[Reso
 def _hint_of(exc: Exception, config: ResolvedAIConfig) -> str:
     """把异常翻译成用户能直接照做的提示。"""
     if isinstance(exc, AICredentialMissing):
+        message = str(exc)
+        if "环境变量" in message:
+            return f"未读取到本地 Key：{message}"
         return "未配置 AI 凭证：请在「AI 配置」里设置 API Key，或设置环境变量后再试。"
     if isinstance(exc, AIAuthFailed):
         return "鉴权失败：API Key 无效或没有该模型的权限，请重新设置 Key。"
@@ -222,6 +232,19 @@ def status(conn: sqlite3.Connection) -> dict[str, Any]:
 def self_check(conn: sqlite3.Connection, params: dict[str, Any]) -> dict[str, Any]:
     """真实调用一次 AI，返回延迟、回复片段、用量与失败原因。"""
     config, draft = build_config(conn, params)
+    if config.credential_hint and not config.api_key:
+        payload = _config_summary(config)
+        payload.update({
+            "ok": False,
+            "reason": "credential_missing",
+            "message": config.credential_hint,
+            "hint": config.credential_hint,
+            "latencyMs": 0,
+            "reply": "",
+            "usage": {},
+            "draft": draft,
+        })
+        return payload
     started = time.perf_counter()
     try:
         result = AIClient(config).chat(

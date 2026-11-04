@@ -24,6 +24,8 @@ class ResolvedAIConfig:
     priority: int = 0
     is_local: bool = False
     locality: str = "custom"
+    #: 凭证缺失时的可操作提示（本地 Key 模式会写明变量名与作用域）
+    credential_hint: str = ""
 
     @property
     def has_api_key(self) -> bool:

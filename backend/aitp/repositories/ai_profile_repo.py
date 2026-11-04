@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..common.env_scope import normalize_scope, read_scoped_env
 from ..common.pagination import RowDict, RowList
 from ..common.secret_store import get_store
 from ..common.security import mask
@@ -74,6 +75,12 @@ class AIProfileRepository(BaseRepository):
     def to_public(row: RowDict) -> dict[str, Any]:
         """对外输出，绝不暴露密文与明文。"""
         extra = loads(row.get("extra_json"), {}) or {}
+        use_env_key = bool(row.get("use_env_key"))
+        env_key_name = str(row.get("env_key_name") or "")
+        env_key_scope = normalize_scope(row.get("env_key_scope"))
+        env_key_present = bool(
+            use_env_key and env_key_name and read_scoped_env(env_key_name, env_key_scope)
+        )
         return {
             "id": row.get("id"),
             "name": row.get("name"),
@@ -82,7 +89,11 @@ class AIProfileRepository(BaseRepository):
             "baseUrl": row.get("base_url"),
             "model": row.get("model"),
             "apiKeyMasked": row.get("api_key_masked") or "",
-            "hasApiKey": bool(row.get("api_key_ref") or row.get("api_key_enc")),
+            "hasApiKey": bool(row.get("api_key_ref") or row.get("api_key_enc")) or env_key_present,
+            "useEnvKey": use_env_key,
+            "envKeyName": env_key_name,
+            "envKeyScope": env_key_scope,
+            "envKeyPresent": env_key_present,
             "extra": extra,
             "temperature": row.get("temperature"),
             "maxTokens": row.get("max_tokens"),

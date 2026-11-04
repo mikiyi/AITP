@@ -473,6 +473,14 @@ export interface AiProfile {
   isLocal: boolean
   apiKeyMasked: string
   hasApiKey: boolean
+  /** 是否从本机环境变量读取 Key；开启后忽略密钥库里的 Key */
+  useEnvKey: boolean
+  /** 环境变量名，必须与本机变量同名 */
+  envKeyName: string
+  /** user=用户变量，system=系统变量 */
+  envKeyScope: 'user' | 'system'
+  /** 当前进程/注册表能否读到该变量 */
+  envKeyPresent: boolean
   extra: Record<string, unknown>
   temperature: number
   maxTokens: number

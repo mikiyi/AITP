@@ -51,29 +51,47 @@
 
     <div class="panel panel-pad">
       <el-table v-loading="loading" :data="profiles" border stripe>
-        <el-table-column prop="name" label="名称" min-width="140" />
-        <el-table-column prop="provider" label="供应商" width="120" />
-        <el-table-column prop="protocol" label="协议" width="130" />
-        <el-table-column prop="model" label="模型" min-width="160" />
-        <el-table-column prop="baseUrl" label="Base URL" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="priority" label="优先级" width="100" sortable />
-        <el-table-column label="API Key" width="140">
+        <el-table-column prop="name" label="名称" min-width="120" />
+        <el-table-column prop="provider" label="供应商" width="100" />
+        <el-table-column prop="model" label="模型" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="baseUrl" label="Base URL" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="priority" label="优先级" width="90" sortable />
+        <el-table-column label="API Key" width="160">
           <template #default="{ row }">
-            <el-tag v-if="row.hasApiKey" size="small" type="success" effect="plain">
+            <el-tooltip
+              v-if="row.useEnvKey"
+              placement="top"
+              :content="envKeyTip(row)"
+            >
+              <el-tag size="small" :type="row.envKeyPresent ? 'success' : 'warning'" effect="plain">
+                本地变量 {{ row.envKeyName || '未设置' }}
+              </el-tag>
+            </el-tooltip>
+            <el-tag v-else-if="row.hasApiKey" size="small" type="success" effect="plain">
               {{ row.apiKeyMasked || '已配置' }}
             </el-tag>
             <el-tag v-else size="small" type="info" effect="plain">未配置</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="150">
+        <el-table-column label="启用" width="80">
           <template #default="{ row }">
-            <el-tag v-if="row.isDefault" size="small" type="primary" effect="plain">默认</el-tag>
-            <el-tag v-if="row.isActive" size="small" type="success" effect="plain">启用</el-tag>
-            <el-tag v-else size="small" type="info" effect="plain">停用</el-tag>
-            <el-tag v-if="row.isLocal" size="small" type="warning" effect="plain">本地</el-tag>
+            <el-switch
+              :model-value="row.isActive"
+              :loading="activeBusyId === row.id"
+              @change="(value: string | number | boolean) => toggleActive(row, Boolean(value))"
+            />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="260">
+        <el-table-column label="标记" width="110">
+          <template #default="{ row }">
+            <div class="mark-tags">
+              <el-tag v-if="row.isDefault" size="small" type="primary" effect="plain">默认</el-tag>
+              <el-tag v-if="row.isLocal" size="small" type="warning" effect="plain">本地</el-tag>
+              <span v-if="!row.isDefault && !row.isLocal" class="muted">-</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="240" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button link type="warning" @click="openKey(row)">设置 Key</el-button>
@@ -148,30 +166,76 @@
         </el-form-item>
         <el-form-item label="温度">
           <el-input-number v-model="form.temperature" :min="0" :max="2" :step="0.1" />
+          <div class="field-hint">
+            <el-icon><InfoFilled /></el-icon>
+            <span>取值范围 0~2，越大回答越发散。生成用例、评审建议 0.2~0.7；需要稳定复现同一结果时用 0~0.3。</span>
+          </div>
         </el-form-item>
         <el-form-item label="最大 Token">
           <el-input-number v-model="form.maxTokens" :min="256" :max="200000" :step="256" />
+          <div class="field-hint">
+            <el-icon><InfoFilled /></el-icon>
+            <span>单次回复的最大长度（含推理内容），默认 4096。长用例、长报告可调到 8192；调大更慢、消耗更多 token。</span>
+          </div>
         </el-form-item>
         <el-form-item label="超时(秒)">
           <el-input-number v-model="form.timeout" :min="5" :max="600" />
+          <div class="field-hint">
+            <el-icon><InfoFilled /></el-icon>
+            <span>单次调用最长等待秒数，默认 60。本地大模型首次加载较慢，建议 120~300；云端接口 30~60 即可。</span>
+          </div>
         </el-form-item>
         <el-form-item label="默认档案">
           <el-switch v-model="form.isDefault" />
+          <div class="field-hint">
+            <el-icon><InfoFilled /></el-icon>
+            <span>开启后新请求优先使用这个档案；同一时间只会保留一个默认档案，开启会自动取消其他档案的默认标记。</span>
+          </div>
         </el-form-item>
-        <el-form-item label="启用">
-          <el-switch v-model="form.isActive" />
+
+        <el-form-item label="启用本地 Key">
+          <el-switch v-model="form.useEnvKey" />
+          <div class="field-hint">
+            <el-icon><InfoFilled /></el-icon>
+            <span>
+              开启后不再使用「设置 Key」保存的密钥，改为从本机环境变量读取：填写的变量名必须与本机环境变量完全一致（区分大小写）。
+              用户变量只对当前登录用户生效，系统变量对所有用户生效；本工具直接读取注册表，设置完变量无需重启服务。
+              变量不存在时，调用模型会提示「未读取到环境变量」。
+            </span>
+          </div>
         </el-form-item>
-        <el-form-item label="临时 Key">
+        <template v-if="form.useEnvKey">
+          <el-form-item label="变量名" required>
+            <el-input v-model="form.envKeyName" placeholder="例如 OPENAI_API_KEY" />
+          </el-form-item>
+          <el-form-item label="变量范围">
+            <el-radio-group v-model="form.envKeyScope">
+              <el-radio value="user">用户变量</el-radio>
+              <el-radio value="system">系统变量</el-radio>
+            </el-radio-group>
+            <div class="field-hint">
+              <el-icon><InfoFilled /></el-icon>
+              <span>用户变量位于 HKEY_CURRENT_USER\Environment，系统变量位于 HKEY_LOCAL_MACHINE；不确定时先用「用户变量」。</span>
+            </div>
+          </el-form-item>
+        </template>
+
+        <el-form-item v-if="!form.useEnvKey" label="临时 Key">
           <el-input
             v-model="draftApiKey"
             type="password"
             show-password
-            placeholder="仅用于本次自检，不保存、不落库"
+            placeholder="仅用于本次连通性测试，不保存、不落库"
           />
-          <div class="muted form-hint">自检可以用未保存的配置与临时 Key；正式 Key 请用「设置 Key」写入系统密钥库。</div>
+          <div class="field-hint">
+            <el-icon><InfoFilled /></el-icon>
+            <span>连通性测试可以使用未保存的配置与临时 Key；正式 Key 请用列表里的「设置 Key」写入系统密钥库。</span>
+          </div>
         </el-form-item>
         <el-form-item>
-          <el-button :loading="checkingDraft" @click="checkDraft">测试未保存的配置</el-button>
+          <el-button type="primary" plain :icon="Connection" :loading="checkingDraft" @click="checkDraft">
+            测试大模型配置是否连通
+          </el-button>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -236,7 +300,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh } from '@element-plus/icons-vue'
+import { Connection, InfoFilled, Plus, Refresh } from '@element-plus/icons-vue'
 import { settingsApi } from '@/api'
 import type { AiModelInfo, AiProfile, AiStatus, SelfCheckResult } from '@/api/types'
 
@@ -289,8 +353,13 @@ const form = reactive({
   maxTokens: 4096,
   timeout: 60,
   isDefault: false,
-  isActive: true,
+  useEnvKey: false,
+  envKeyName: '',
+  envKeyScope: 'user' as 'user' | 'system',
 })
+
+/** 行内启用开关的加载态 */
+const activeBusyId = ref<number | null>(null)
 
 const keyVisible = ref(false)
 const savingKey = ref(false)
@@ -410,7 +479,9 @@ function openCreate(): void {
     maxTokens: 4096,
     timeout: 60,
     isDefault: false,
-    isActive: true,
+    useEnvKey: false,
+    envKeyName: '',
+    envKeyScope: 'user',
   })
   draftApiKey.value = ''
   modelOptions.value = []
@@ -430,7 +501,9 @@ function openEdit(row: AiProfile): void {
     maxTokens: row.maxTokens,
     timeout: row.timeout,
     isDefault: row.isDefault,
-    isActive: row.isActive,
+    useEnvKey: row.useEnvKey,
+    envKeyName: row.envKeyName,
+    envKeyScope: row.envKeyScope,
   })
   draftApiKey.value = ''
   modelOptions.value = []
@@ -442,12 +515,32 @@ async function save(): Promise<void> {
     ElMessage.warning('名称与供应商为必填项')
     return
   }
+  if (form.useEnvKey && !form.envKeyName.trim()) {
+    ElMessage.warning('启用本地 Key 时必须填写环境变量名')
+    return
+  }
+  // 「启用」在列表里单独开关，这里不提交，避免用旧值覆盖
+  const payload = {
+    name: form.name,
+    provider: form.provider,
+    protocol: form.protocol,
+    baseUrl: form.baseUrl,
+    model: form.model,
+    priority: form.priority,
+    temperature: form.temperature,
+    maxTokens: form.maxTokens,
+    timeout: form.timeout,
+    isDefault: form.isDefault,
+    useEnvKey: form.useEnvKey,
+    envKeyName: form.envKeyName.trim(),
+    envKeyScope: form.envKeyScope,
+  }
   saving.value = true
   try {
     if (editing.value) {
-      await settingsApi.updateProfile(editing.value.id, { ...form })
+      await settingsApi.updateProfile(editing.value.id, payload)
     } else {
-      await settingsApi.createProfile({ ...form })
+      await settingsApi.createProfile(payload)
     }
     ElMessage.success('保存成功')
     dialogVisible.value = false
@@ -509,6 +602,11 @@ async function checkProfile(row: AiProfile): Promise<void> {
   try {
     checkResult.value = await settingsApi.selfCheck({ profileId: row.id })
     checkVisible.value = true
+    if (checkResult.value.ok) {
+      ElMessage.success(`连接成功 · ${checkResult.value.latencyMs} ms`)
+    } else {
+      ElMessage.error(checkResult.value.hint || checkResult.value.message || '连接失败')
+    }
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '自检请求失败')
   } finally {
@@ -529,15 +627,46 @@ async function checkDraft(): Promise<void> {
     if (editing.value) {
       payload.profileId = editing.value.id
     }
-    if (draftApiKey.value.trim()) {
+    payload.useEnvKey = form.useEnvKey
+    payload.envKeyName = form.envKeyName.trim()
+    payload.envKeyScope = form.envKeyScope
+    if (!form.useEnvKey && draftApiKey.value.trim()) {
       payload.apiKey = draftApiKey.value.trim()
     }
     checkResult.value = await settingsApi.selfCheck(payload)
     checkVisible.value = true
+    if (checkResult.value.ok) {
+      ElMessage.success(`连接成功 · ${checkResult.value.latencyMs} ms`)
+    } else {
+      ElMessage.error(checkResult.value.hint || checkResult.value.message || '连接失败')
+    }
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : '自检请求失败')
+    ElMessage.error(err instanceof Error ? err.message : '连通性测试失败')
   } finally {
     checkingDraft.value = false
+  }
+}
+
+/** 环境变量 Key 的悬停说明 */
+function envKeyTip(row: AiProfile): string {
+  const scope = row.envKeyScope === 'system' ? '系统变量' : '用户变量'
+  const status = row.envKeyPresent ? '当前可读取' : '当前未读取到，调用会报「未读取到环境变量」'
+  return `${scope} ${row.envKeyName || '（未设置变量名）'} · ${status}`
+}
+
+/** 列表里直接启停档案，不用进编辑弹框 */
+async function toggleActive(row: AiProfile, value: boolean): Promise<void> {
+  activeBusyId.value = row.id
+  try {
+    await settingsApi.updateProfile(row.id, { isActive: value })
+    row.isActive = value
+    ElMessage.success(value ? '已启用' : '已停用')
+    await loadStatus()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '切换失败')
+    await load()
+  } finally {
+    activeBusyId.value = null
   }
 }
 
@@ -590,6 +719,35 @@ onMounted(loadAll)
 .form-hint {
   margin-left: 10px;
   font-size: 12px;
+}
+
+.mark-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.mark-tags :deep(.el-tag + .el-tag) {
+  margin-left: 0;
+}
+
+/* 字段说明：图标 + 取值解释 */
+.field-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--aitp-text-weak);
+}
+
+.field-hint .el-icon {
+  margin-top: 2px;
+  flex-shrink: 0;
+  color: var(--el-color-primary);
+  opacity: 0.85;
 }
 
 .model-field {

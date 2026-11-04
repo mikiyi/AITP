@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from flask import Blueprint, Response, current_app, request, send_file
 
 from ..common.constants import AI_DEFAULT_TIMEOUT, PROVIDERS
+from ..common.env_scope import normalize_scope
 from ..common.validators import optional_str, require_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
@@ -68,6 +70,37 @@ PROFILE_WRITE_FIELDS = {
     "max_tokens", "timeout", "is_default", "is_active", "sort_order", "priority",
     "is_local", "extra",
 }
+
+
+#: 环境变量名只允许字母、数字、下划线，且不能以数字开头
+_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+
+
+def _env_key_columns(data: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
+    """整理「启用本地 Key」相关字段；开启时必须给出合法的变量名。"""
+    base = existing or {}
+    use_env = bool(data.get("useEnvKey")) if "useEnvKey" in data else bool(base.get("use_env_key"))
+    name = (
+        str(data.get("envKeyName") or "").strip()
+        if "envKeyName" in data
+        else str(base.get("env_key_name") or "").strip()
+    )
+    scope = normalize_scope(
+        data.get("envKeyScope") if "envKeyScope" in data else base.get("env_key_scope"),
+    )
+    if use_env:
+        if not name:
+            raise AppError(ErrorCode.PARAM_ERROR, "启用本地 Key 时必须填写环境变量名")
+        if not _ENV_NAME_RE.match(name):
+            raise AppError(
+                ErrorCode.PARAM_ERROR,
+                "环境变量名只能包含字母、数字与下划线，且不能以数字开头",
+            )
+    return {
+        "use_env_key": 1 if use_env else 0,
+        "env_key_name": name,
+        "env_key_scope": scope,
+    }
 
 
 def _camel_of(snake: str) -> str:
@@ -152,6 +185,7 @@ def create_profile() -> Response:
         "priority": int(data.get("priority", 0)),
         "is_local": 1 if (data.get("isLocal") if data.get("isLocal") is not None
                           else (spec.name == "ollama" if spec else False)) else 0,
+        **_env_key_columns(data),
     })
     api_key = optional_str(data.get("apiKey"), "apiKey", 500)
     if api_key:
@@ -194,6 +228,8 @@ def update_profile(pk: str) -> Response:
             payload[key] = 1 if data[camel] else 0
     if "extra" in data:
         payload["extra_json"] = dumps(data["extra"] or {})
+    if any(key in data for key in ("useEnvKey", "envKeyName", "envKeyScope")):
+        payload.update(_env_key_columns(data, row))
     repo.update(target, payload)
     api_key = optional_str(data.get("apiKey"), "apiKey", 500)
     if api_key:

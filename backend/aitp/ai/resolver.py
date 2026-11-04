@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 from typing import Any, Callable
 
+from ..common.env_scope import normalize_scope, read_scoped_env, scope_label
 from ..common.constants import (
     AI_DEFAULT_TIMEOUT,
     LOCALITY_CLOUD,
@@ -199,9 +200,16 @@ def _build_config(
             sources["model"] = SOURCE_DEFAULT if model else SOURCE_NONE
 
     # ---- api key ----
-    # 数据库只存引用与掩码，密钥本体在 OS 密钥库（DPAPI / 钥匙串）里
+    # 本地 Key 模式优先：Key 由用户自己放在系统环境变量里，库里只记变量名与作用域
+    use_env_key = bool((profile or {}).get("use_env_key"))
+    env_key_name = str((profile or {}).get("env_key_name") or "").strip()
+    env_key_scope = normalize_scope((profile or {}).get("env_key_scope"))
     api_key = ""
-    if profile and (profile.get("api_key_ref") or "").strip():
+    if use_env_key:
+        if env_key_name:
+            api_key = read_scoped_env(env_key_name, env_key_scope)
+        sources["apiKey"] = SOURCE_ENV if api_key else SOURCE_NONE
+    elif profile and (profile.get("api_key_ref") or "").strip():
         api_key = _load_secret(str(profile["api_key_ref"]))
         sources["apiKey"] = SOURCE_DB if from_db else SOURCE_ENV
     elif profile and (profile.get("api_key_enc") or "").strip():
@@ -236,6 +244,15 @@ def _build_config(
     priority = int((profile or {}).get("priority") or 0)
     is_local = bool((profile or {}).get("is_local")) or spec.is_local
 
+    env_hint = ""
+    if use_env_key and spec.requires_api_key and not is_local and not api_key:
+        env_hint = (
+            f"未读取到环境变量 {env_key_name or '（未填写变量名）'}（{scope_label(env_key_scope)}）："
+            "请确认变量名与本机完全一致、值已设置；或在「AI 设置」里关闭「启用本地 Key」，"
+            "改用系统密钥库保存的 Key。"
+        )
+        if require_key:
+            raise AICredentialMissing(env_hint)
     if require_key and spec.requires_api_key and not api_key and not is_local:
         raise AICredentialMissing(
             f"未配置 AI 凭证：{spec.label} 需要 API Key。请在「工作台配置 → AI配置」中填写，"
@@ -260,6 +277,7 @@ def _build_config(
         priority=priority,
         is_local=is_local,
         locality=_locality(provider, is_local),
+        credential_hint=env_hint,
     )
     if require_key:
         ensure_credential(config)
