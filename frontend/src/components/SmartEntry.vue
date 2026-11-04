@@ -146,8 +146,10 @@ import { labApi } from '@/api'
 import type { ModuleRouteResult, PreflightResult, RouteResponse, RouteResult } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 import { percentText } from '@/utils/format'
+import { useAiGuardStore } from '@/stores/aiGuard'
 
 const router = useRouter()
+const aiGuard = useAiGuardStore()
 const appStore = useAppStore()
 
 const text = ref('')
@@ -184,6 +186,10 @@ async function route(): Promise<void> {
   const value = text.value.trim()
   if (!value) {
     ElMessage.warning('请先描述你的需求')
+    return
+  }
+  // 智能路由会调用模型，先确认数据已脱敏
+  if (!(await aiGuard.ensureExternalConfirmed())) {
     return
   }
   loading.value = true

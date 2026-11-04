@@ -199,3 +199,20 @@ body {
   min-width: 320px;
   max-width: 100vw;
 }
+
+/* 外部大模型调用确认框：两个按钮用深绿/深黄，一眼区分「先检查」与「已确认」 */
+.ai-egress-box .ai-egress-cancel,
+.ai-egress-box .ai-egress-cancel:hover,
+.ai-egress-box .ai-egress-cancel:focus {
+  background: #14532d !important;
+  border-color: #14532d !important;
+  color: #ffffff !important;
+}
+
+.ai-egress-box .ai-egress-confirm,
+.ai-egress-box .ai-egress-confirm:hover,
+.ai-egress-box .ai-egress-confirm:focus {
+  background: #9a6b00 !important;
+  border-color: #9a6b00 !important;
+  color: #ffffff !important;
+}

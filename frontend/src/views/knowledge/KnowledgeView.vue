@@ -16,6 +16,42 @@
       </div>
     </div>
 
+    <!-- 知识库概览：正式条目、待审核、分类、标签与落盘情况 -->
+    <div class="knowledge-stats">
+      <MetricCard
+        label="正式条目"
+        :value="storageInfo?.articleCount ?? 0"
+        icon="Notebook"
+        tone="primary"
+      />
+      <MetricCard
+        label="待审核"
+        :value="pendingCount"
+        icon="Clock"
+        tone="warning"
+        hint="审核通过才计入正式库"
+      />
+      <MetricCard
+        label="分类"
+        :value="categoryStore.list.length"
+        icon="Collection"
+        tone="info"
+      />
+      <MetricCard
+        label="标签"
+        :value="tagCount"
+        icon="PriceTag"
+        tone="success"
+      />
+      <MetricCard
+        label="落盘文件"
+        :value="storageInfo?.fileCount ?? 0"
+        icon="Document"
+        tone="primary"
+        :hint="storageInfo?.fileMode === 'mirror' ? '双写 Markdown' : '仅存数据库'"
+      />
+    </div>
+
     <el-tabs v-model="activeTab" class="knowledge-tabs">
       <el-tab-pane name="drafts">
         <template #label>
@@ -199,8 +235,9 @@ import { Files, Plus, Search } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import MarkdownView from '@/components/MarkdownView.vue'
+import MetricCard from '@/components/MetricCard.vue'
 import { knowledgeApi, moduleApi, workbenchApi } from '@/api'
-import type { KnowledgeArticle, KnowledgeDraft, ModuleOption } from '@/api/types'
+import type { KnowledgeArticle, KnowledgeDraft, KnowledgeStorage, ModuleOption } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 import { DEFAULT_KNOWLEDGE_CATEGORY, useKnowledgeCategoryStore } from '@/stores/knowledgeCategory'
 import { useReferenceGuard } from '@/composables/useReferenceGuard'
@@ -213,6 +250,8 @@ const categoryStore = useKnowledgeCategoryStore()
 const activeTab = ref('drafts')
 const keyword = ref('')
 const pendingCount = ref(0)
+const storageInfo = ref<KnowledgeStorage | null>(null)
+const tagCount = ref(0)
 const moduleOptions = ref<ModuleOption[]>([])
 
 const { blockedVisible, blockedRefs, blockedMessage, handleError } = useReferenceGuard()
@@ -275,6 +314,20 @@ function resolveArticleExportUrl(format: string): string {
   })
 }
 
+async function loadStorageStats(): Promise<void> {
+  try {
+    storageInfo.value = await knowledgeApi.storage()
+  } catch {
+    storageInfo.value = null
+  }
+  try {
+    const tags = await knowledgeApi.tags()
+    tagCount.value = Array.isArray(tags) ? tags.length : 0
+  } catch {
+    tagCount.value = 0
+  }
+}
+
 async function refreshPending(): Promise<void> {
   try {
     const overview = await workbenchApi.overview()
@@ -282,6 +335,7 @@ async function refreshPending(): Promise<void> {
   } catch {
     pendingCount.value = 0
   }
+  await loadStorageStats()
 }
 
 async function review(row: KnowledgeDraft, action: 'approve' | 'reject'): Promise<void> {
@@ -535,6 +589,13 @@ onMounted(() => {
 <style scoped>
 .knowledge-badge {
   margin-left: 4px;
+}
+
+.knowledge-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
 }
 
 .knowledge-tabs :deep(.el-tabs__header) {

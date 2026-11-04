@@ -199,6 +199,7 @@ import {
 } from '@element-plus/icons-vue'
 import { labApi } from '@/api'
 import { percentText } from '@/utils/format'
+import { useAiGuardStore } from '@/stores/aiGuard'
 import type { PipelineResult, PreflightResult } from '@/api/types'
 import { usePromptTemplates } from '@/composables/usePromptTemplates'
 import { useAppStore } from '@/stores/app'
@@ -213,6 +214,7 @@ interface StepForm {
 }
 
 const labStore = useLabStore()
+const aiGuard = useAiGuardStore()
 const appStore = useAppStore()
 const { variablesOf, loadMany } = usePromptTemplates()
 
@@ -413,6 +415,9 @@ async function run(): Promise<void> {
   })
   if (missing.length) {
     ElMessage.warning(missing.slice(0, 3).join('；'))
+    return
+  }
+  if (!(await aiGuard.ensureExternalConfirmed())) {
     return
   }
   running.value = true

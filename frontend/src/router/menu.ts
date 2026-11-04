@@ -101,7 +101,6 @@ export const MENU_NODES: MenuNode[] = [
       { path: '/test-cases', title: '测试用例', icon: Finished },
       { path: '/test-cases/tree', title: '用例树', icon: Share },
       { path: '/bugs', title: '缺陷', icon: Warning },
-      { path: '/knowledge', title: '知识库', icon: Reading },
       { path: '/regressions', title: '回归清单', icon: Refresh },
       { path: '/reports', title: '测试报告', icon: DataAnalysis },
       { path: '/automation/web', title: 'Web 自动化管理', icon: Monitor },
@@ -110,6 +109,7 @@ export const MENU_NODES: MenuNode[] = [
       { path: '/automation/performance', title: '性能测试管理', icon: Stopwatch },
     ],
   },
+  { type: 'item', path: '/knowledge', title: '知识库', icon: Reading },
   {
     type: 'group',
     key: 'flow',

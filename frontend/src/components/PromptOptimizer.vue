@@ -25,6 +25,7 @@ import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { MagicStick } from '@element-plus/icons-vue'
 import { aiApi } from '@/api'
+import { useAiGuardStore } from '@/stores/aiGuard'
 
 /**
  * 提示词自动优化：AI 改写后回填输入框，原文保留可一键还原，
@@ -40,6 +41,7 @@ const emit = defineEmits<{
   (event: 'update:modelValue', value: string): void
 }>()
 
+const aiGuard = useAiGuardStore()
 const enabled = ref(false)
 const optimizing = ref(false)
 const original = ref('')
@@ -48,6 +50,9 @@ async function optimize(): Promise<void> {
   const raw = props.modelValue ?? ''
   if (!raw.trim()) {
     ElMessage.warning('请先填写主要输入内容')
+    return
+  }
+  if (!(await aiGuard.ensureExternalConfirmed())) {
     return
   }
   optimizing.value = true

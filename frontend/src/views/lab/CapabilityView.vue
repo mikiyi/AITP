@@ -656,6 +656,7 @@ import type {
   Requirement,
 } from '@/api/types'
 import { useAppStore } from '@/stores/app'
+import { useAiGuardStore } from '@/stores/aiGuard'
 import { useBadgeStore } from '@/stores/badges'
 import { DEFAULT_KNOWLEDGE_CATEGORY, useKnowledgeCategoryStore } from '@/stores/knowledgeCategory'
 import { useLabStore } from '@/stores/lab'
@@ -668,6 +669,7 @@ const labStore = useLabStore()
 const appStore = useAppStore()
 const categoryStore = useKnowledgeCategoryStore()
 const badgeStore = useBadgeStore()
+const aiGuard = useAiGuardStore()
 
 const capability = computed(() => String(route.params.capability ?? ''))
 const spec = computed(
@@ -1307,6 +1309,10 @@ async function run(): Promise<void> {
     .map((field) => field.label)
   if (missing.length) {
     ElMessage.warning(`请填写：${missing.join('、')}`)
+    return
+  }
+  // 云端模型会把输入发到第三方，执行前先让人确认数据已脱敏
+  if (!(await aiGuard.ensureExternalConfirmed())) {
     return
   }
   running.value = true
