@@ -166,3 +166,9 @@ body {
     max-height: calc(100vh - 20px);
   }
 }
+
+/* 抽屉按百分比给宽，窄窗口下留一个可用下限 */
+.el-drawer {
+  min-width: 320px;
+  max-width: 100vw;
+}

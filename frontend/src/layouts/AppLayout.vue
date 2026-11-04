@@ -68,7 +68,7 @@
               :value="item.id"
             />
           </el-select>
-          <el-tooltip placement="bottom" :disabled="!aiStatus">
+          <el-tooltip placement="bottom-end" :disabled="!aiStatus">
             <template #content>
               <div v-if="aiStatus" class="ai-chip__tip">
                 <div>生效模型：{{ aiStatus.provider }} / {{ aiStatus.model || '未指定' }}</div>
@@ -247,12 +247,43 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.aitp-header-left :deep(.el-breadcrumb) {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.aitp-header-left :deep(.el-breadcrumb__item),
+.aitp-header-left :deep(.el-breadcrumb__separator) {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.aitp-header-left :deep(.el-breadcrumb__item:last-child) {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.aitp-header-left :deep(.el-breadcrumb__item:last-child .el-breadcrumb__inner) {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .aitp-header-right {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-shrink: 0;
 }
 
 .aitp-project-select {
@@ -268,6 +299,8 @@ onUnmounted(() => {
 .ai-chip__tip {
   line-height: 1.8;
   font-size: 12px;
+  max-width: 320px;
+  word-break: break-word;
 }
 
 .aitp-main {
