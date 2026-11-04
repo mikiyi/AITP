@@ -92,11 +92,14 @@ stop.bat          :: Windows
 | 模块 | 能力 |
 |---|---|
 | 项目 | 项目增删改查、当前项目切换 |
-| 需求 | 需求维护、关联模块 |
-| 测试用例 | 用例 CRUD、状态流转、xlsx 导入导出、批量执行 |
-| 缺陷 | 缺陷 CRUD、状态机流转、关联用例、日志附件、缺陷分析 |
-| 知识库 | 待审池 → 正式库、版本、审核、引用保护、全文检索 |
+| 需求 | 需求维护、关联模块、批量删除、CSV/JSON 导出 |
+| 测试用例 | 用例 CRUD、状态流转、xlsx 导入导出、批量执行与批量删除、CSV/JSON 导出 |
+| 缺陷 | 缺陷 CRUD、状态机流转、关联用例、日志附件、缺陷分析、批量删除、CSV/JSON 导出 |
+| 知识库 | 待审池 → 正式库、版本、审核、引用保护、全文检索、批量通过驳回、CSV/JSON 导出 |
 | 测试报告 | 报告生成/采纳、ECharts 图表、md/html/pdf/print 导出 |
+
+> 列表页的筛选与分页会写进地址栏，链接可直接分享，刷新或粘贴链接都能还原当前视图；
+> 导出走的是列表当前筛选条件，不是全量导出。
 
 ### 四级模块树
 
@@ -111,6 +114,7 @@ stop.bat          :: Windows
 | 知识库设置 | 存放目录、文件模式（mirror/db_only）、启动重建索引、**目录迁移**、**重建索引** |
 | 模块树管理 | 四级结构维护与能力绑定 |
 | 系统配置 | 全量配置项读写 |
+| 数据备份 | 一键备份、下载、删除、恢复（恢复前自动生成一份安全备份，恢复后就地生效无需重启） |
 | 审计日志 | 关键写操作留痕，可按资源追溯 |
 
 > 页面头部常驻 **AI 状态条**：显示当前生效的 provider / model 与来源层（工作台配置 / 环境变量 / 内置默认），
@@ -170,8 +174,8 @@ stop.bat          :: Windows
 ## 质量门禁
 
 ```bash
-python -m mypy                          # 后端类型门禁（--strict，92 个源文件）
-python backend/scripts/smoke_api.py     # API 冒烟（188 项）
+python -m mypy                          # 后端类型门禁（--strict，94 个源文件）
+python backend/scripts/smoke_api.py     # API 冒烟（229 项）
 python backend/scripts/check_security.py     # 密钥/注入/路径安全回归
 python backend/scripts/check_types.py        # mypy 门禁封装
 python backend/scripts/check_lab.py          # AI 实验室能力回归
@@ -201,7 +205,7 @@ backend/
     common/       常量、校验、分页、密钥库、安全工具
     db/           连接与迁移
     repositories/ 参数化 SQL 仓储层
-    services/     知识落盘、报告导出、xlsx、xmind、AI 自检
+    services/     知识落盘、报告导出、xlsx、xmind、备份恢复、AI 自检
     prompts/      提示词模板库
     static/       前端构建产物（由 npm run build 生成）
   prompts/        提示词 YAML
@@ -213,6 +217,7 @@ frontend/
     composables/  useEchart 等
     views/        21 个页面组件
 data/             运行时数据（SQLite、日志、密钥、导出文件）
+data/backups/     数据库备份快照（与 SQLite 同级，恢复前会自动留一份安全备份）
 knowledge/        知识库 Markdown 落盘目录
 logs/deploy.log   部署日志
 ```
