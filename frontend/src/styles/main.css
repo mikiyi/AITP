@@ -120,3 +120,49 @@ body {
 .el-table .cell {
   word-break: break-word;
 }
+
+/* ---- 弹框整窗可见：标题与底部按钮常驻，内容区内部滚动 ---- */
+.el-overlay-dialog {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 24px 0;
+}
+
+.el-dialog {
+  display: flex;
+  flex-direction: column;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 48px);
+  margin: auto;
+  overflow: hidden;
+}
+
+.el-dialog__header {
+  flex: 0 0 auto;
+  padding-bottom: 12px;
+}
+
+.el-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.el-dialog__footer {
+  flex: 0 0 auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+@media (max-height: 600px) {
+  .el-overlay-dialog {
+    padding: 10px 0;
+  }
+
+  .el-dialog {
+    max-height: calc(100vh - 20px);
+  }
+}
