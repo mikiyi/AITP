@@ -55,12 +55,14 @@ AI_TASK_STATUS = ("pending", "running", "success", "failed", "cancelled")
 AI_TASK_TYPE = (
     "case_generation",
     "case_review",
-    "requirement_review",
+    "requirement_confirm",
     "bug_analysis",
     "bug_classification",
     "report_generation",
     "knowledge_qa",
     "general_chat",
+    "automation_script",
+    "performance_script",
 )
 
 # 缺陷状态机：允许的流转

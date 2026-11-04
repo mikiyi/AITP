@@ -25,7 +25,7 @@ PROMPTS_DIR = ROOT / "backend" / "prompts"
 
 #: 每个能力的样例变量，用于验证渲染链路
 SAMPLES: dict[str, dict[str, Any]] = {
-    "requirement-review": {"requirement": "手机号+验证码登录，验证码 5 分钟有效", "projectName": "示例电商"},
+    "requirement-confirm": {"requirement": "手机号+验证码登录，验证码 5 分钟有效", "projectName": "示例电商"},
     "testpoint-generation": {"requirement": "手机号+验证码登录", "projectName": "示例电商", "moduleCount": "3"},
     "case-generation": {"requirement": "手机号+验证码登录", "projectName": "示例电商", "caseTypes": "functional", "count": "5"},
     "xmind-to-case": {"xmindOutline": "登录\n  验证码\n    超时", "projectName": "示例电商", "caseTypes": "functional"},
@@ -50,10 +50,19 @@ SAMPLES: dict[str, dict[str, Any]] = {
     "module-router": {"rawText": "支付回调重复推送", "moduleCatalog": "- id=1｜示例电商/交易/支付"},
     "case-review": {"requirement": "登录", "criteria": "覆盖率", "cases": "[]"},
     "bug-classification": {"bugTitle": "空指针", "bugDescription": "NPE", "modulePath": "交易/支付"},
-    "requirement-clarify": {"projectName": "示例电商", "requirement": "下单"},
     "test-plan": {"projectName": "示例电商", "period": "第 3 周", "requirementSummary": "登录下单", "modules": "登录"},
     "api-test-design": {"projectName": "示例电商", "baseUrl": "http://127.0.0.1/api", "apiDescription": "下单接口"},
     "risk-assessment": {"projectName": "示例电商", "changeScope": "支付改造", "metricsJson": "{}"},
+    "automation-script": {
+        "projectName": "示例电商", "targetType": "web", "framework": "selenium", "language": "python",
+        "appPlatforms": "无", "scenario": "登录后查询订单列表",
+        "baseUrl": "http://127.0.0.1", "extraRequirements": "失败截图",
+    },
+    "performance-script": {
+        "projectName": "示例电商", "scenario": "下单接口压测", "baseUrl": "http://127.0.0.1",
+        "threads": "20", "duration": "60", "rampUp": "10",
+        "dataFile": "无", "extraRequirements": "无",
+    },
 }
 
 
@@ -136,7 +145,7 @@ def main() -> int:
 
     # 缺必填变量 → 120102 并列出缺失名
     try:
-        registry.render("requirement-review", {"projectName": "示例电商"})
+        registry.render("requirement-confirm", {"projectName": "示例电商"})
         checker.check("缺变量报错", False, "未抛出 120102")
     except AppError as exc:
         checker.check(
@@ -173,7 +182,7 @@ def main() -> int:
             f"错误码 {exc.code}，期望 {ErrorCode.PROMPT_NOT_FOUND}",
         )
 
-    # 10 个实验室能力都有模板
+    # 实验室能力都有模板
     for code in LAB_CAPABILITIES:
         spec = CAPABILITIES[code]
         checker.check(f"实验室能力 {code} 有模板", bool(spec.prompt_code), "缺少提示词编号")

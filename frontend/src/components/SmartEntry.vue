@@ -153,7 +153,7 @@ const result = ref<RouteResponse | null>(null)
 const preflight = ref<PreflightResult | null>(null)
 
 const CAPABILITY_LABELS: Record<string, string> = {
-  requirement_review: '需求评审',
+  requirement_confirm: '需求确认',
   testpoint_generation: '测试点生成',
   case_generation: '用例生成',
   xmind_to_case: 'XMind 转用例',
@@ -164,6 +164,13 @@ const CAPABILITY_LABELS: Record<string, string> = {
   report_generation: '报告生成',
   knowledge_qa: '知识问答',
   prompt_optimize: '提示词优化',
+  api_test_design: '接口测试设计',
+  test_plan: '测试计划',
+  case_review: '用例评审',
+  bug_classification: '缺陷归类',
+  risk_assessment: '风险评估',
+  automation_script: '自动化脚本生成',
+  performance_script: '性能脚本生成',
 }
 
 function labelOf(code: string): string {

@@ -44,8 +44,37 @@
                 </el-tag>
               </span>
             </template>
+            <el-select
+              v-if="field.type === 'select'"
+              v-model="values[field.name]"
+              class="cap-field-select"
+              :placeholder="field.placeholder ?? '请选择'"
+            >
+              <el-option
+                v-for="option in visibleOptions(field, values)"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </el-select>
+            <el-select
+              v-else-if="field.type === 'multiselect'"
+              v-model="multiValues[field.name]"
+              class="cap-field-select"
+              multiple
+              collapse-tags
+              collapse-tags-tooltip
+              :placeholder="field.placeholder ?? '可多选'"
+            >
+              <el-option
+                v-for="option in visibleOptions(field, values)"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </el-select>
             <el-input
-              v-if="field.type === 'textarea'"
+              v-else-if="field.type === 'textarea'"
               v-model="values[field.name]"
               type="textarea"
               :rows="field.rows ?? 6"
@@ -327,7 +356,7 @@ import { streamPost, type DegradeInfo } from '@/api/stream'
 import type { AdoptCaseItem, KnowledgeRef, MindNode, Requirement } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 import { useLabStore } from '@/stores/lab'
-import { CAPABILITY_FORMS, primaryFieldOf } from './capabilityForms'
+import { CAPABILITY_FORMS, optionPromptText, primaryFieldOf, visibleFields, visibleOptions } from './capabilityForms'
 import { findNodeByPath, subtreeText, testpointToMindNodes } from './mindmap'
 
 const route = useRoute()
@@ -342,11 +371,13 @@ const spec = computed(
     labStore.capabilities.find((item) => item.code === capability.value) ??
     null,
 )
-const fields = computed(() => CAPABILITY_FORMS[capability.value] ?? [])
+const fields = computed(() => visibleFields(capability.value, values))
 const moduleOptions = computed(() => labStore.moduleOptions)
 const primaryField = computed(() => primaryFieldOf(capability.value))
 
 const values = reactive<Record<string, string>>({})
+/** 多选字段的选中项，单独存一份数组，提交时再拼成字符串。 */
+const multiValues = reactive<Record<string, string[]>>({})
 const moduleId = ref<number | null>(null)
 
 const running = ref(false)
@@ -402,9 +433,16 @@ const categoryOptions = ['general', 'test_method', 'experience', 'pitfall', 'mee
 
 function resetValues(): void {
   Object.keys(values).forEach((key) => delete values[key])
-  fields.value.forEach((field) => {
+  Object.keys(multiValues).forEach((key) => delete multiValues[key])
+  const allFields = CAPABILITY_FORMS[capability.value] ?? []
+  allFields.forEach((field) => {
     values[field.name] = field.defaultValue ?? ''
+    if (field.type === 'multiselect') {
+      multiValues[field.name] = []
+    }
   })
+  // 目标类型与框架联动：默认框架若不适用于当前目标类型，落到第一个可用项
+  syncFrameworkOptions()
   const preset = String(route.query.text ?? '')
   if (preset && primaryField.value) {
     values[primaryField.value] = preset
@@ -415,6 +453,24 @@ function resetValues(): void {
     labStore.currentModuleId = moduleId.value
   }
   syncModulePath()
+}
+
+/** 框架候选项随目标类型联动，当前选中的框架不再可选时自动换成第一个可用项。 */
+function syncFrameworkOptions(): void {
+  const frameworkField = (CAPABILITY_FORMS[capability.value] ?? []).find(
+    (field) => field.name === 'framework',
+  )
+  if (!frameworkField) {
+    return
+  }
+  const allowed = visibleOptions(frameworkField, values).map((item) => item.value)
+  if (!allowed.length) {
+    return
+  }
+  const current = values.framework ?? ''
+  if (!allowed.includes(current)) {
+    values.framework = allowed[0]
+  }
 }
 
 /**
@@ -484,7 +540,12 @@ function onDegrade(info: DegradeInfo): void {
 
 async function run(): Promise<void> {
   const missing = fields.value
-    .filter((field) => !values[field.name]?.trim() && !isOptionalVariable(field.name))
+    .filter((field) => {
+      if (field.type === 'multiselect') {
+        return !(multiValues[field.name]?.length ?? 0) && !isOptionalVariable(field.name)
+      }
+      return !values[field.name]?.trim() && !isOptionalVariable(field.name)
+    })
     .map((field) => field.label)
   if (missing.length) {
     ElMessage.warning(`请填写：${missing.join('、')}`)
@@ -503,7 +564,7 @@ async function run(): Promise<void> {
     await streamPost(
       `/lab/${capability.value}/stream`,
       {
-        variables: { ...values },
+        variables: buildVariables(),
         moduleId: moduleId.value ?? undefined,
       },
       {
@@ -544,6 +605,24 @@ async function run(): Promise<void> {
     running.value = false
     latencyMs.value = latencyMs.value || Date.now() - startedAt
   }
+}
+
+/**
+ * 拼装提交给后端的变量：下拉与多选统一转成可读文本，
+ * 多选用「、」连接，避免模型把数组序号当成步骤。
+ */
+function buildVariables(): Record<string, string> {
+  const payload: Record<string, string> = {}
+  fields.value.forEach((field) => {
+    if (field.type === 'multiselect') {
+      const picked = multiValues[field.name] ?? []
+      payload[field.name] = picked.map((item) => optionPromptText(field, item)).join('、')
+      return
+    }
+    const raw = values[field.name] ?? ''
+    payload[field.name] = field.type === 'select' && raw ? optionPromptText(field, raw) : raw
+  })
+  return payload
 }
 
 function copyOutput(): void {
@@ -796,6 +875,14 @@ watch(
 watch(moduleId, () => {
   syncModulePath()
 })
+
+// 目标类型变化时，框架候选项随之变化，已选框架不再适用就自动切换
+watch(
+  () => values.targetType,
+  () => {
+    syncFrameworkOptions()
+  },
+)
 </script>
 
 <style scoped>
@@ -830,6 +917,10 @@ watch(moduleId, () => {
 
 .cap-field-optional {
   transform: scale(0.9);
+}
+
+.cap-field-select {
+  width: 100%;
 }
 
 .cap-layout {

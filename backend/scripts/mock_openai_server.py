@@ -170,7 +170,7 @@ def _route_capabilities(prompt: str) -> dict[str, Any]:
     if not routes:
         fallback = _capability_re.search(prompt)
         routes = [{
-            "capability": fallback.group(1) if fallback else "requirement_review",
+            "capability": fallback.group(1) if fallback else "requirement_confirm",
             "score": 0.4,
             "reason": "默认候选",
         }]

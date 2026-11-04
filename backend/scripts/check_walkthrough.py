@@ -436,7 +436,7 @@ def check_composite(client: Any) -> None:
         "title": "走查-需求到缺陷",
         "steps": [
             {
-                "capability": "requirement_review",
+                "capability": "requirement_confirm",
                 "name": "需求评审",
                 "variables": {
                     "requirement": "支付回调重复推送要保证只入账一次",
@@ -497,12 +497,12 @@ def check_entry(client: Any) -> None:
     created = data_of(client, "POST", "/api/v1/workbench/entries", {
         "code": "walkthrough-req-to-bug",
         "name": "走查-需求到缺陷",
-        "capability": "requirement_review",
+        "capability": "requirement_confirm",
         "triggers": ["支付", "回调"],
         "required": ["requirement"],
         "workflow": [
             {
-                "capability": "requirement_review",
+                "capability": "requirement_confirm",
                 "name": "需求评审",
                 "variables": {"projectName": "走查项目"},
             },

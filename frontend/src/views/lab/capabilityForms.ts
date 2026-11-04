@@ -4,21 +4,65 @@
  * 与后端 `aitp/ai/capability_codes.py` 的 variables 一一对应：
  * 变量名必须完全一致，缺一个后端会返回 120102。
  */
+
+/** 下拉/多选候选项。 */
+export interface CapabilityOption {
+  label: string
+  value: string
+  /** 提交给模型时用的文本，缺省用 value。 */
+  promptText?: string
+  /** 仅在 dependsOn 的字段取对应值时出现，例如框架随目标类型联动。 */
+  showFor?: Record<string, string[]>
+}
+
 export interface CapabilityField {
   name: string
   label: string
-  type: 'text' | 'textarea' | 'number'
+  type: 'text' | 'textarea' | 'number' | 'select' | 'multiselect'
   placeholder?: string
   rows?: number
   defaultValue?: string
   /** 提示词优化针对的主输入框。 */
   primary?: boolean
+  /** select / multiselect 的候选项。 */
+  options?: CapabilityOption[]
+  /** 只有当依赖字段取到指定值时才显示该字段。 */
+  dependsOn?: { field: string; values: string[] }
 }
 
 const CASE_TYPES_HINT = '例如：functional,interface,boundary'
 
+/** 自动化脚本支持的开发语言（当前只开放 Python）。 */
+const SCRIPT_LANGUAGES: CapabilityOption[] = [
+  { label: 'Python', value: 'python', promptText: 'Python' },
+]
+
+/** 自动化脚本的目标类型。 */
+const TARGET_TYPES: CapabilityOption[] = [
+  { label: 'Web 网页端', value: 'web', promptText: 'web（网页 / Web 端）' },
+  { label: '接口', value: 'api', promptText: 'api（接口）' },
+  { label: 'App 移动端', value: 'app', promptText: 'app（移动端）' },
+]
+
+/** 主流自动化框架，随目标类型联动。 */
+const AUTOMATION_FRAMEWORKS: CapabilityOption[] = [
+  { label: 'Selenium', value: 'selenium', promptText: 'selenium', showFor: { targetType: ['web'] } },
+  { label: 'Playwright', value: 'playwright', promptText: 'playwright', showFor: { targetType: ['web'] } },
+  { label: 'Requests', value: 'requests', promptText: 'requests（HTTP 接口）', showFor: { targetType: ['api'] } },
+  { label: 'Pytest', value: 'pytest', promptText: 'pytest', showFor: { targetType: ['api'] } },
+  { label: 'Unittest', value: 'unittest', promptText: 'unittest', showFor: { targetType: ['api'] } },
+  { label: 'Appium', value: 'appium', promptText: 'appium', showFor: { targetType: ['app'] } },
+]
+
+/** App 目标平台。 */
+const APP_PLATFORMS: CapabilityOption[] = [
+  { label: 'iOS', value: 'ios', promptText: 'iOS' },
+  { label: 'HOS（鸿蒙）', value: 'hos', promptText: 'HOS（HarmonyOS 鸿蒙）' },
+  { label: 'Android', value: 'android', promptText: 'Android' },
+]
+
 export const CAPABILITY_FORMS: Record<string, CapabilityField[]> = {
-  requirement_review: [
+  requirement_confirm: [
     { name: 'requirement', label: '需求原文', type: 'textarea', rows: 10, primary: true, placeholder: '粘贴需求描述' },
     { name: 'projectName', label: '项目名称', type: 'text' },
   ],
@@ -80,10 +124,6 @@ export const CAPABILITY_FORMS: Record<string, CapabilityField[]> = {
   knowledge_qa: [
     { name: 'question', label: '问题', type: 'textarea', rows: 6, primary: true, placeholder: '想从知识库里查什么？' },
   ],
-  requirement_clarify: [
-    { name: 'projectName', label: '项目名称', type: 'text' },
-    { name: 'requirement', label: '需求原文', type: 'textarea', rows: 10, primary: true, placeholder: '粘贴需求描述' },
-  ],
   api_test_design: [
     { name: 'projectName', label: '项目名称', type: 'text' },
     { name: 'apiDescription', label: '接口说明', type: 'textarea', rows: 8, primary: true, placeholder: '接口路径、参数、返回结构' },
@@ -110,6 +150,32 @@ export const CAPABILITY_FORMS: Record<string, CapabilityField[]> = {
     { name: 'changeScope', label: '变更范围', type: 'textarea', rows: 6, primary: true },
     { name: 'metricsJson', label: '质量数据', type: 'textarea', rows: 5, placeholder: '用例通过率、缺陷数等' },
   ],
+  automation_script: [
+    { name: 'projectName', label: '项目名称', type: 'text' },
+    { name: 'targetType', label: '目标类型', type: 'select', options: TARGET_TYPES, defaultValue: 'web' },
+    { name: 'framework', label: '自动化框架', type: 'select', options: AUTOMATION_FRAMEWORKS, defaultValue: 'selenium' },
+    { name: 'language', label: '开发语言', type: 'select', options: SCRIPT_LANGUAGES, defaultValue: 'python' },
+    {
+      name: 'appPlatforms',
+      label: 'APP 平台',
+      type: 'multiselect',
+      options: APP_PLATFORMS,
+      dependsOn: { field: 'targetType', values: ['app'] },
+    },
+    { name: 'scenario', label: '测试场景', type: 'textarea', rows: 8, primary: true, placeholder: '要自动化的业务流程与校验点' },
+    { name: 'baseUrl', label: '服务地址', type: 'text', placeholder: '例如：https://www.example.com' },
+    { name: 'extraRequirements', label: '补充要求', type: 'textarea', rows: 4, placeholder: '例如：失败截图、等待策略、账号信息' },
+  ],
+  performance_script: [
+    { name: 'projectName', label: '项目名称', type: 'text' },
+    { name: 'scenario', label: '压测场景', type: 'textarea', rows: 8, primary: true, placeholder: '压测的业务流程与接口' },
+    { name: 'baseUrl', label: '服务地址', type: 'text', placeholder: '例如：https://api.example.com' },
+    { name: 'threads', label: '并发线程数', type: 'number', defaultValue: '20' },
+    { name: 'duration', label: '持续时间（秒）', type: 'number', defaultValue: '60' },
+    { name: 'rampUp', label: '爬坡时间（秒）', type: 'number', defaultValue: '10' },
+    { name: 'dataFile', label: '数据文件', type: 'text', placeholder: 'CSV 路径，没有可留空' },
+    { name: 'extraRequirements', label: '补充要求', type: 'textarea', rows: 4, placeholder: '例如：登录前置、思考时间、断言点' },
+  ],
 }
 
 /** 取某个能力下变量对应的中文标签，用于卡片上展示输入项。 */
@@ -127,4 +193,39 @@ export function primaryFieldOf(capability: string): string {
   }
   const textarea = fields.find((item) => item.type === 'textarea')
   return textarea ? textarea.name : (fields[0]?.name ?? '')
+}
+
+/** 当前取值下需要展示的字段：带 dependsOn 的字段按依赖字段的取值决定是否出现。 */
+export function visibleFields(
+  capability: string,
+  values: Record<string, string>,
+): CapabilityField[] {
+  return (CAPABILITY_FORMS[capability] ?? []).filter((field) => {
+    if (!field.dependsOn) {
+      return true
+    }
+    return field.dependsOn.values.includes(values[field.dependsOn.field] ?? '')
+  })
+}
+
+/** 当前取值下可选的候选项：候选项的 showFor 决定它在哪几种取值下出现。 */
+export function visibleOptions(
+  field: CapabilityField,
+  values: Record<string, string>,
+): CapabilityOption[] {
+  const options = field.options ?? []
+  return options.filter((option) => {
+    if (!option.showFor) {
+      return true
+    }
+    return Object.entries(option.showFor).every(
+      ([name, allowed]) => allowed.includes(values[name] ?? ''),
+    )
+  })
+}
+
+/** 候选项提交给模型时用的文本。 */
+export function optionPromptText(field: CapabilityField, value: string): string {
+  const option = (field.options ?? []).find((item) => item.value === value)
+  return option?.promptText ?? value
 }

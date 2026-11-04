@@ -561,8 +561,8 @@ def check_workbench(api: Api, project_id: int) -> None:
     check("缺陷状态分桶总和等于缺陷总数",
           sum(overview["bugStatus"].values()) == bugs["total"],
           str(overview["bugStatus"]))
-    check("快捷入口包含 18 个 AI 能力",
-          len([s for s in overview["shortcuts"] if s["group"] == "AI 能力"]) == 18,
+    check("快捷入口包含 19 个 AI 能力",
+          len([s for s in overview["shortcuts"] if s["group"] == "AI 能力"]) == 19,
           str(len(overview["shortcuts"])))
     check("待审池数量可从概览读到", isinstance(overview["pendingKnowledge"], int),
           str(overview["pendingKnowledge"]))
@@ -660,11 +660,15 @@ def check_meta(api: Api) -> None:
     enums = api.data("GET", "/api/v1/meta/enums")
     check("枚举字典含缺陷状态机", "bugTransitions" in enums, str(sorted(enums.keys())))
     caps = api.data("GET", "/api/v1/meta/capabilities")
-    check("能力目录含 18 项", len(caps) == 18, str(len(caps)))
+    check("能力目录含 19 项", len(caps) == 19, str(len(caps)))
     codes = {item["code"] for item in caps}
-    check("能力目录覆盖 16 个实验室能力 + 2 个辅助能力",
-          "requirement_review" in codes and "knowledge_qa" in codes and "prompt_optimize" in codes
-          and "api_test_design" in codes and "risk_assessment" in codes,
+    check("能力目录覆盖需求确认与新增脚本能力",
+          "requirement_confirm" in codes and "knowledge_qa" in codes and "prompt_optimize" in codes
+          and "api_test_design" in codes and "risk_assessment" in codes
+          and "automation_script" in codes and "performance_script" in codes,
+          str(sorted(codes)))
+    check("旧需求评审编号已下线",
+          "requirement_review" not in codes and "requirement_clarify" not in codes,
           str(sorted(codes)))
 
 
@@ -675,9 +679,9 @@ def json_dump(value: object) -> str:
 
 # ---------------- AI 实验室 ----------------
 
-#: 实验室能力的样例变量（10 个主能力 + 6 个提示词库扩展能力）
+#: 实验室能力的样例变量（10 个主能力 + 6 个提示词库能力 + 2 个脚本能力）
 LAB_SAMPLES: dict[str, JsonDict] = {
-    "requirement_review": {"requirement": "手机号+验证码登录，验证码 5 分钟有效", "projectName": "示例电商"},
+    "requirement_confirm": {"requirement": "手机号+验证码登录，验证码 5 分钟有效", "projectName": "示例电商"},
     "testpoint_generation": {"requirement": "手机号+验证码登录", "projectName": "示例电商", "moduleCount": "3"},
     "case_generation": {"requirement": "手机号+验证码登录", "projectName": "示例电商", "caseTypes": "functional", "count": "5"},
     "xmind_to_case": {"xmindOutline": "登录\n  验证码\n    超时", "projectName": "示例电商", "caseTypes": "functional"},
@@ -696,7 +700,6 @@ LAB_SAMPLES: dict[str, JsonDict] = {
     "project_progress_board": {
         "projectName": "示例电商", "progressData": "完成 60%", "period": "第 3 周", "milestones": "登录上线",
     },
-    "requirement_clarify": {"projectName": "示例电商", "requirement": "手机号+验证码登录"},
     "api_test_design": {
         "projectName": "示例电商",
         "apiDescription": "POST /api/v1/orders 提交订单，参数 productId、quantity",
@@ -714,6 +717,17 @@ LAB_SAMPLES: dict[str, JsonDict] = {
     "risk_assessment": {
         "projectName": "示例电商", "changeScope": "支付回调改造",
         "metricsJson": "{\"passRate\": 0.92}",
+    },
+    "automation_script": {
+        "projectName": "示例电商", "targetType": "web（网页 / Web 端）", "framework": "selenium",
+        "language": "Python", "appPlatforms": "（未提供）",
+        "scenario": "登录后查询订单列表", "baseUrl": "https://www.example.com",
+        "extraRequirements": "失败时截图",
+    },
+    "performance_script": {
+        "projectName": "示例电商", "scenario": "下单接口压测", "baseUrl": "https://api.example.com",
+        "threads": "20", "duration": "60", "rampUp": "10", "dataFile": "（未提供）",
+        "extraRequirements": "（未提供）",
     },
 }
 
@@ -794,12 +808,12 @@ def check_lab(api: Api, project_id: int, feature_id: int) -> None:
 
 def _check_lab_inner(api: Api, project_id: int, feature_id: int) -> None:
     caps = api.data("GET", "/api/v1/lab/capabilities")
-    check("能力目录含 18 项", len(caps) == 18, str(len(caps)))
+    check("能力目录含 19 项", len(caps) == 19, str(len(caps)))
     main_caps = api.data("GET", "/api/v1/lab/main-capabilities")
-    check("实验室主能力 10 个 + 扩展能力 6 个", len(main_caps) == 16, str(len(main_caps)))
-    check("主能力与扩展能力分开标注",
-          sum(1 for item in main_caps if item.get("category") == "core") == 10
-          and sum(1 for item in main_caps if item.get("category") == "extended") == 6,
+    check("实验室主能力 17 个", len(main_caps) == 17, str(len(main_caps)))
+    check("扩展能力已并入核心能力",
+          sum(1 for item in main_caps if item.get("category") == "core") == 17
+          and sum(1 for item in main_caps if item.get("category") == "extended") == 0,
           str([item.get("category") for item in main_caps]))
     check("能力目录含提示词编号",
           all(item.get("promptCode") for item in main_caps), str(main_caps[:1]))
@@ -813,7 +827,7 @@ def _check_lab_inner(api: Api, project_id: int, feature_id: int) -> None:
     check("提示词库可列出 20 个模板", len(prompts) >= 20, str(len(prompts)))
 
     # 缺变量 → 120102 并列出缺失名
-    body = api.expect("缺必填变量返回 120102", "POST", "/api/v1/lab/requirement_review/run",
+    body = api.expect("缺必填变量返回 120102", "POST", "/api/v1/lab/requirement_confirm/run",
                       ErrorCode.PROMPT_VAR_MISSING, {"variables": {"projectName": "示例电商"}})
     missing = (body.get("data") or {}).get("missing")
     check("120102 列出缺失变量名", missing == ["requirement"], str(missing))
@@ -822,7 +836,7 @@ def _check_lab_inner(api: Api, project_id: int, feature_id: int) -> None:
                ErrorCode.PARAM_ERROR, {"variables": {}})
 
     # 功能点未启用该能力 → 140105
-    api.expect("功能点未绑定该能力返回 140105", "POST", "/api/v1/lab/requirement_review/run",
+    api.expect("功能点未绑定该能力返回 140105", "POST", "/api/v1/lab/requirement_confirm/run",
                ErrorCode.ILLEGAL_OPERATION,
                {"moduleId": feature_id, "variables": {"requirement": "登录", "projectName": "示例电商"}})
     api.expect("功能点停用该能力返回 140105", "POST", "/api/v1/lab/log_analysis/run",
@@ -861,7 +875,7 @@ def _check_lab_inner(api: Api, project_id: int, feature_id: int) -> None:
     # 任务与会话落库
     task = api.data("GET", f"/api/v1/lab/tasks/{task_ids[0]}")
     check("任务状态为 success", task.get("status") == "success", str(task.get("status")))
-    check("任务记录能力编号", task.get("capability") == "requirement_review", str(task.get("capability")))
+    check("任务记录能力编号", task.get("capability") == "requirement_confirm", str(task.get("capability")))
     tasks = api.data("GET", "/api/v1/lab/tasks?pageSize=100")
     check("任务列表可查", tasks["total"] >= len(task_ids), str(tasks["total"]))
 
@@ -874,8 +888,8 @@ def _check_lab_inner(api: Api, project_id: int, feature_id: int) -> None:
           str(detail.get("messages"))[:200])
 
     # 流式：start → delta → usage → done，seq 单调
-    resp = api.client.post("/api/v1/lab/requirement_review/stream", json={
-        "variables": LAB_SAMPLES["requirement_review"],
+    resp = api.client.post("/api/v1/lab/requirement_confirm/stream", json={
+        "variables": LAB_SAMPLES["requirement_confirm"],
     })
     check("流式响应类型为 text/event-stream",
           "text/event-stream" in (resp.headers.get("Content-Type") or ""),
@@ -890,8 +904,8 @@ def _check_lab_inner(api: Api, project_id: int, feature_id: int) -> None:
     check("流式 done 帧带产出", bool(frames[-1].get("output")), str(frames[-1])[:200])
 
     # 客户端中断 → 任务落库为 cancelled
-    resp2 = api.client.post("/api/v1/lab/requirement_review/stream", json={
-        "variables": LAB_SAMPLES["requirement_review"],
+    resp2 = api.client.post("/api/v1/lab/requirement_confirm/stream", json={
+        "variables": LAB_SAMPLES["requirement_confirm"],
     })
     stream = cast(Any, resp2.response)
     next(stream)
@@ -901,8 +915,8 @@ def _check_lab_inner(api: Api, project_id: int, feature_id: int) -> None:
 
     # 错密钥 → 只有一个 error 帧
     os.environ["AITP_AI_API_KEY"] = "sk-wrong-key"
-    resp3 = api.client.post("/api/v1/lab/requirement_review/stream", json={
-        "variables": LAB_SAMPLES["requirement_review"],
+    resp3 = api.client.post("/api/v1/lab/requirement_confirm/stream", json={
+        "variables": LAB_SAMPLES["requirement_confirm"],
     })
     error_frames = [f for f in _sse_frames(resp3.response) if f.get("type") == "error"]
     check("错密钥只产出 1 个 error 帧", len(error_frames) == 1, str(len(error_frames)))
@@ -1188,7 +1202,7 @@ def check_workbench_entries(api: Api) -> None:
         "triggers": ["需求", "用例"],
         "required": ["requirement"],
         "workflow": [
-            {"capability": "requirement_review", "name": "需求评审", "variables": {}},
+            {"capability": "requirement_confirm", "name": "需求确认", "variables": {}},
             {"capability": "case_generation", "name": "生成用例", "variables": {}},
         ],
     })

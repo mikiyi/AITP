@@ -84,7 +84,7 @@ stop.bat          :: Windows
 
 | 能力 | 标识 | 说明 |
 |---|---|---|
-| 需求评审 | `requirement_review` | 评审需求描述的完整性、可测性与歧义 |
+| 需求确认 | `requirement_confirm` | 确认需求是否清晰可测，产出待确认问题与验收标准建议 |
 | 测试点脑图 | `testpoint_generation` | 从需求拆出测试点并输出脑图大纲 |
 | 用例生成 | `case_generation` | 生成可执行的测试用例 |
 | XMind 转用例 | `xmind_to_case` | 把 xmind 大纲转成测试用例 |
@@ -94,12 +94,13 @@ stop.bat          :: Windows
 | 回归清单 | `regression_generation` | 基于改动范围产出回归范围 |
 | 报告生成 | `report_generation` | 产出测试报告草稿 |
 | 进度看板 | `project_progress_board` | 汇总项目进度与风险 |
-| 需求澄清 | `requirement_clarify` | 把含糊需求转成待确认问题清单 |
 | 接口测试设计 | `api_test_design` | 为接口设计覆盖正常、异常与安全的用例 |
 | 测试计划 | `test_plan` | 为版本定测试范围、策略与准入准出标准 |
 | 用例评审 | `case_review` | 评审用例覆盖率与质量并给出修改建议 |
 | 缺陷归类 | `bug_classification` | 判断缺陷类型、严重级别与归属模块 |
 | 风险评估 | `risk_assessment` | 按变更范围与质量数据评估发布风险 |
+| 自动化脚本生成 | `automation_script` | 按目标类型与框架生成可直接运行的 Python 自动化脚本 |
+| 性能脚本生成 | `performance_script` | 生成可直接运行的 JMeter（.jmx）性能测试脚本 |
 | 知识问答 | `knowledge_qa` | 基于正式知识库回答并给引用 |
 | 提示词优化 | `prompt_optimize` | 把粗略描述改写成结构化提示词 |
 

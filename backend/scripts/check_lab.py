@@ -119,7 +119,7 @@ def build_app(workdir: pathlib.Path) -> Flask:
 # ---------------- 能力输入样例 ----------------
 
 CAPABILITY_SAMPLES: list[tuple[str, JsonDict]] = [
-    ("requirement_review", {"requirement": "手机号+验证码登录，验证码 60 秒有效", "projectName": "示例电商"}),
+    ("requirement_confirm", {"requirement": "手机号+验证码登录，验证码 60 秒有效", "projectName": "示例电商"}),
     ("testpoint_generation", {"requirement": "手机号+验证码登录", "projectName": "示例电商", "moduleCount": "3"}),
     ("case_generation", {"requirement": "手机号+验证码登录", "caseTypes": "functional", "count": "3", "projectName": "示例电商"}),
     ("xmind_to_case", {"xmindOutline": "登录\n  正常流程\n    登录成功", "caseTypes": "functional", "projectName": "示例电商"}),
@@ -290,7 +290,7 @@ def check_knowledge_flow(api: Api) -> None:
         "summary": "验收产出物",
         "category": "general",
         "sourceType": "ai_output",
-        "producer": "requirement_review",
+        "producer": "requirement_confirm",
     })
     after = api.data("GET", "/api/v1/knowledge/articles?pageSize=100")
     drafts_after = api.data("GET", "/api/v1/knowledge/drafts?pageSize=100")
@@ -325,7 +325,7 @@ def check_offline(api: Api) -> None:
         check("无模型时仍能给出能力候选", bool(data.get("capabilityRoutes")), str(data)[:200])
         check("无模型时仍能给出功能点候选", bool(data.get("moduleRoutes")), str(data)[:200])
 
-        _, body = api.call("POST", "/api/v1/lab/requirement_review/run", {
+        _, body = api.call("POST", "/api/v1/lab/requirement_confirm/run", {
             "variables": {"requirement": "手机号登录", "projectName": "示例电商"},
         })
         check("无模型时执行能力给出可读提示",
