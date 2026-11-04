@@ -48,6 +48,7 @@ CASES: tuple[tuple[str, str], ...] = (
     ("risk_assessment", "评估一下这次发布的上线风险"),
     ("automation_script", "我给网页版微信写一个web自动化的demo脚本"),
     ("performance_script", "我给微信写一个发朋友圈的性能测试的demo脚本"),
+    ("test_data_generation", "帮我造一批测试数据，假数据要覆盖订单状态的边界值和异常组合"),
     ("prompt_optimize", "帮我对下来语句进行“从需求拆解测试点，输出 JSON 树用于渲染脑图”提示词优化"),
 )
 
@@ -83,7 +84,7 @@ def _top(text: str) -> tuple[str, float]:
 def check_coverage(checker: Checker) -> None:
     cards = set(LAB_CAPABILITIES)
     covered = {code for code, _ in CASES}
-    checker.check("能力卡片数量", len(LAB_CAPABILITIES) == 18, f"实际 {len(LAB_CAPABILITIES)} 张")
+    checker.check("能力卡片数量", len(LAB_CAPABILITIES) == 19, f"实际 {len(LAB_CAPABILITIES)} 张")
     checker.check(
         "用例覆盖全部卡片",
         cards == covered,
@@ -170,8 +171,8 @@ def check_regressions(checker: Checker) -> None:
     checker.check("冒号后内容不改变意图", top == "prompt_optimize", f"实际第一：{top}（{score}）")
 
     # 单泛词不能压过双命中
-    routes = score_capabilities("我给微信写一个发朋友圈的性能测试的demo脚本", 6)
-    ranking = [item["capability"] for item in routes]
+    scored = score_capabilities("我给微信写一个发朋友圈的性能测试的demo脚本", 6)
+    ranking = [item["capability"] for item in scored]
     checker.check("性能测试优先于脚本", ranking[:1] == ["performance_script"], str(ranking))
 
     # 能力名在正文中视为强命中

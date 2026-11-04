@@ -11,11 +11,24 @@
     </div>
 
     <p v-if="spec" class="cap-sub">
-      <span class="cap-sub__prompt">{{ spec.promptCode }}</span>
-      <span class="cap-sub__desc">{{ spec.promptDescription || spec.goal }}</span>
+      <span class="cap-sub__prompt">{{ dataMode === 'files' ? '本地构造' : spec.promptCode }}</span>
+      <span class="cap-sub__desc">{{ capSubDesc }}</span>
     </p>
 
-    <div class="cap-layout">
+    <!-- 测试数据生成分两条路径：SQL 走大模型，文件走本地构造，两者输入完全不同 -->
+    <el-radio-group
+      v-if="capability === 'test_data_generation'"
+      v-model="dataMode"
+      class="cap-mode"
+      size="small"
+    >
+      <el-radio-button value="sql">SQL 造数</el-radio-button>
+      <el-radio-button value="files">测试文件生成</el-radio-button>
+    </el-radio-group>
+
+    <TestDataFilesPanel v-if="dataMode === 'files'" :module-id="moduleId" />
+
+    <div v-else class="cap-layout">
       <div class="panel panel-pad cap-input">
         <el-form label-width="120px" label-position="right">
           <el-form-item label="功能点">
@@ -401,7 +414,7 @@
                 @click="openHistory(item)"
               >
                 <div class="cap-history__item-top">
-                  <span class="cap-history__time">{{ formatRecordTime(item.createdAt) }}</span>
+                  <span class="cap-history__time">{{ dateTimeText(item.createdAt) }}</span>
                   <el-tag size="small" :type="reviewTagType(item)" effect="plain">
                     {{ reviewText(item) }}
                   </el-tag>
@@ -436,7 +449,7 @@
               <div class="cap-history__view-head">
                 <div class="cap-history__view-meta">
                   <el-tag size="small" type="warning" effect="plain">历史记录</el-tag>
-                  <span class="muted">{{ formatRecordTime(historyDetail.createdAt) }}</span>
+                  <span class="muted">{{ dateTimeText(historyDetail.createdAt) }}</span>
                   <span v-if="historyDetail.model" class="muted">模型：{{ historyDetail.model }}</span>
                   <span v-if="historyDetail.latencyMs" class="muted">耗时 {{ historyDetail.latencyMs }} ms</span>
                 </div>
@@ -652,6 +665,7 @@ import {
 import MarkdownView from '@/components/MarkdownView.vue'
 import MindMap from '@/components/MindMap.vue'
 import PromptOptimizer from '@/components/PromptOptimizer.vue'
+import TestDataFilesPanel from './TestDataFilesPanel.vue'
 import { automationApi, caseApi, knowledgeApi, labApi, recordApi, reportApi, requirementApi, templateApi } from '@/api'
 import { streamPost, type DegradeInfo } from '@/api/stream'
 import type {
@@ -670,6 +684,7 @@ import { useBadgeStore } from '@/stores/badges'
 import { DEFAULT_KNOWLEDGE_CATEGORY, useKnowledgeCategoryStore } from '@/stores/knowledgeCategory'
 import { useLabStore } from '@/stores/lab'
 import { textareaHint } from '@/utils/inputHints'
+import { dateTimeText } from '@/utils/format'
 import { CAPABILITY_FORMS, optionPromptText, primaryFieldOf, visibleFields, visibleOptions } from './capabilityForms'
 import { findNodeByPath, subtreeText, testpointToMindNodes } from './mindmap'
 
@@ -691,11 +706,19 @@ const spec = computed(
 const fields = computed(() => visibleFields(capability.value, values))
 const moduleOptions = computed(() => labStore.moduleOptions)
 const primaryField = computed(() => primaryFieldOf(capability.value))
+/** 文件分支不经过模型，副标题要说清是本机构造，否则用户会以为在等 AI 产出。 */
+const capSubDesc = computed(() =>
+  dataMode.value === 'files'
+    ? '按格式、大小与命名规则在本机批量生成测试文件，不联网、不经过大模型'
+    : (spec.value?.promptDescription || spec.value?.goal || ''),
+)
 
 const values = reactive<Record<string, string>>({})
 /** 多选字段的选中项，单独存一份数组，提交时再拼成字符串。 */
 const multiValues = reactive<Record<string, string[]>>({})
 const moduleId = ref<number | null>(null)
+/** 测试数据生成的两条路径：SQL 造数走大模型，测试文件走本机构造。 */
+const dataMode = ref<'sql' | 'files'>('sql')
 
 const running = ref(false)
 const output = ref('')
@@ -1033,15 +1056,6 @@ function downloadHistory(): void {
   downloadText(text, `${capability.value}-${stamp || 'history'}.md`)
 }
 
-/** 执行记录里的时间统一是 UTC ISO，这里转成本地时间给用户看。 */
-function formatRecordTime(value: string): string {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return value
-  }
-  return date.toLocaleString('zh-CN', { hour12: false })
-}
-
 function reviewText(row: AiRecord): string {
   if (row.reviewStatus === 'approved') return '已采纳'
   if (row.reviewStatus === 'rejected') return '已驳回'
@@ -1220,6 +1234,7 @@ function resetValues(): void {
   }
   const moduleQuery = Number(route.query.moduleId ?? 0)
   moduleId.value = moduleQuery > 0 ? moduleQuery : null
+  dataMode.value = route.query.mode === 'files' ? 'files' : 'sql'
   if (moduleId.value) {
     labStore.currentModuleId = moduleId.value
   }
@@ -1780,6 +1795,11 @@ watch(
   border: 1px solid var(--aitp-border);
   border-radius: 4px;
   background: var(--aitp-subtle);
+}
+
+/* 两条生成路径的切换：SQL 走模型，文件走本机 */
+.cap-mode {
+  margin: 0 0 12px;
 }
 
 .cap-field-label {

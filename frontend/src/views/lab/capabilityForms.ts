@@ -61,6 +61,17 @@ const APP_PLATFORMS: CapabilityOption[] = [
   { label: 'Android', value: 'android', promptText: 'Android' },
 ]
 
+/** 造数 SQL 的目标数据库方言：写错方言产出的语句直接执行不了。 */
+const SQL_DIALECTS: CapabilityOption[] = [
+  { label: 'MySQL 8', value: 'MySQL 8.0', promptText: 'MySQL 8.0' },
+  { label: 'MariaDB', value: 'MariaDB 10.6', promptText: 'MariaDB 10.6' },
+  { label: 'PostgreSQL 16', value: 'PostgreSQL 16', promptText: 'PostgreSQL 16' },
+  { label: 'SQLite 3', value: 'SQLite 3', promptText: 'SQLite 3' },
+  { label: 'Oracle 19c', value: 'Oracle 19c', promptText: 'Oracle 19c' },
+  { label: 'SQL Server 2019', value: 'SQL Server 2019', promptText: 'SQL Server 2019' },
+  { label: 'ClickHouse', value: 'ClickHouse', promptText: 'ClickHouse' },
+]
+
 export const CAPABILITY_FORMS: Record<string, CapabilityField[]> = {
   prompt_optimize: [
     { name: 'rawText', label: '原始提示词', type: 'textarea', rows: 10, primary: true, placeholder: '写下你现在的提示词，AI 会改写成结构化、可直接执行的版本' },
@@ -180,6 +191,20 @@ export const CAPABILITY_FORMS: Record<string, CapabilityField[]> = {
     { name: 'rampUp', label: '爬坡时间（秒）', type: 'number', defaultValue: '10' },
     { name: 'dataFile', label: '数据文件', type: 'text', placeholder: 'CSV 路径，没有可留空' },
     { name: 'extraRequirements', label: '补充要求', type: 'textarea', rows: 4, placeholder: '例如：登录前置、思考时间、断言点' },
+  ],
+  test_data_generation: [
+    { name: 'dialect', label: '目标数据库', type: 'select', options: SQL_DIALECTS, defaultValue: 'MySQL 8.0' },
+    {
+      name: 'intent',
+      label: '数据需求描述',
+      type: 'textarea',
+      rows: 8,
+      primary: true,
+      placeholder: '例如：给订单表造 30 条数据，覆盖待支付/已支付/已取消三种状态，其中 2 条金额为 0，1 条下单时间是三年前',
+    },
+    { name: 'schemaDesc', label: '表结构说明', type: 'textarea', rows: 6, placeholder: '粘贴建表语句或字段清单，包含主键、外键与唯一约束' },
+    { name: 'rowCount', label: '期望条数', type: 'number', defaultValue: '20' },
+    { name: 'projectName', label: '项目名称', type: 'text' },
   ],
 }
 

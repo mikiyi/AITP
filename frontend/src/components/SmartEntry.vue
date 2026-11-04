@@ -177,6 +177,7 @@ const CAPABILITY_LABELS: Record<string, string> = {
   risk_assessment: '风险评估',
   automation_script: '自动化脚本生成',
   performance_script: '性能脚本生成',
+  test_data_generation: '测试数据生成',
 }
 
 function labelOf(code: string): string {

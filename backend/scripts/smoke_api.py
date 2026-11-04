@@ -665,7 +665,7 @@ def check_meta(api: Api) -> None:
     enums = api.data("GET", "/api/v1/meta/enums")
     check("枚举字典含缺陷状态机", "bugTransitions" in enums, str(sorted(enums.keys())))
     caps = api.data("GET", "/api/v1/meta/capabilities")
-    check("能力目录含 19 项", len(caps) == 19, str(len(caps)))
+    check("能力目录含 20 项", len(caps) == 20, str(len(caps)))
     codes = {item["code"] for item in caps}
     check("能力目录覆盖需求确认与新增脚本能力",
           "requirement_confirm" in codes and "knowledge_qa" in codes and "prompt_optimize" in codes
@@ -684,7 +684,7 @@ def json_dump(value: object) -> str:
 
 # ---------------- AI 实验室 ----------------
 
-#: 实验室能力的样例变量（10 个主能力 + 6 个提示词库能力 + 2 个脚本能力）
+#: 实验室能力的样例变量（10 个主能力 + 6 个提示词库能力 + 2 个脚本能力 + 1 个造数能力）
 LAB_SAMPLES: dict[str, JsonDict] = {
     "requirement_confirm": {"requirement": "手机号+验证码登录，验证码 5 分钟有效", "projectName": "示例电商"},
     "testpoint_generation": {"requirement": "手机号+验证码登录", "projectName": "示例电商", "moduleCount": "3"},
@@ -733,6 +733,11 @@ LAB_SAMPLES: dict[str, JsonDict] = {
         "projectName": "示例电商", "scenario": "下单接口压测", "baseUrl": "https://api.example.com",
         "threads": "20", "duration": "60", "rampUp": "10", "dataFile": "（未提供）",
         "extraRequirements": "（未提供）",
+    },
+    "test_data_generation": {
+        "projectName": "示例电商", "dialect": "MySQL 8.0",
+        "intent": "给订单表造 20 条数据，覆盖三种订单状态与金额为 0 的边界值",
+        "schemaDesc": "orders(id, user_id, amount, status, created_at)", "rowCount": "20",
     },
 }
 
@@ -813,11 +818,11 @@ def check_lab(api: Api, project_id: int, feature_id: int) -> None:
 
 def _check_lab_inner(api: Api, project_id: int, feature_id: int) -> None:
     caps = api.data("GET", "/api/v1/lab/capabilities")
-    check("能力目录含 19 项", len(caps) == 19, str(len(caps)))
+    check("能力目录含 20 项", len(caps) == 20, str(len(caps)))
     main_caps = api.data("GET", "/api/v1/lab/main-capabilities")
-    check("实验室主能力 18 个", len(main_caps) == 18, str(len(main_caps)))
+    check("实验室主能力 19 个", len(main_caps) == 19, str(len(main_caps)))
     check("扩展能力已并入核心能力",
-          sum(1 for item in main_caps if item.get("category") == "core") == 18
+          sum(1 for item in main_caps if item.get("category") == "core") == 19
           and sum(1 for item in main_caps if item.get("category") == "extended") == 0,
           str([item.get("category") for item in main_caps]))
     check("能力目录含提示词编号",

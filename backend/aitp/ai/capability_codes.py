@@ -34,6 +34,9 @@ CAP_RISK_ASSESSMENT = "risk_assessment"
 CAP_AUTOMATION_SCRIPT = "automation_script"
 CAP_PERFORMANCE_SCRIPT = "performance_script"
 
+# 测试数据生成：SQL 分支走大模型，文件分支全程本地
+CAP_TEST_DATA_GENERATION = "test_data_generation"
+
 # 输出格式
 OUTPUT_MARKDOWN = "markdown"
 OUTPUT_JSON = "json"
@@ -72,6 +75,8 @@ def features_of(code: str, spec: "CapabilitySpec") -> list[dict[str, str]]:
         items.append({"key": "adopt_report", "label": "采纳为报告"})
     if code in AUTOMATION_CAPABILITIES:
         items.append({"key": "automation", "label": "加入自动化"})
+    if code == CAP_TEST_DATA_GENERATION:
+        items.append({"key": "test_files", "label": "测试文件本地生成"})
     items.append({"key": "knowledge", "label": "加入知识库"})
     items.append({"key": "history", "label": "历史产出"})
     return items
@@ -247,6 +252,14 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
             "duration", "rampUp", "dataFile", "extraRequirements",
         ),
     ),
+    CAP_TEST_DATA_GENERATION: CapabilitySpec(
+        CAP_TEST_DATA_GENERATION, "测试数据生成",
+        "按描述生成可执行的造数 SQL，或按格式与大小批量生成本地测试文件",
+        ("测试数据", "造数", "造数据", "假数据", "样本数据", "模拟数据",
+         "mock数据", "mock 数据", "testdata", "测试文件", "大文件", "空文件"),
+        prompt_code="test-data-generation",
+        variables=("dialect", "intent", "projectName", "schemaDesc", "rowCount"),
+    ),
 }
 
 CAPABILITY_CODES: tuple[str, ...] = tuple(CAPABILITIES.keys())
@@ -259,7 +272,7 @@ BINDABLE_CAPABILITIES: tuple[str, ...] = (
     CAP_KNOWLEDGE_QA,
     CAP_API_TEST_DESIGN, CAP_TEST_PLAN,
     CAP_CASE_REVIEW, CAP_BUG_CLASSIFICATION, CAP_RISK_ASSESSMENT,
-    CAP_AUTOMATION_SCRIPT, CAP_PERFORMANCE_SCRIPT,
+    CAP_AUTOMATION_SCRIPT, CAP_PERFORMANCE_SCRIPT, CAP_TEST_DATA_GENERATION,
 )
 
 #: AI 实验室首页展示的主能力（质量闭环主干）
@@ -269,7 +282,8 @@ LAB_CAPABILITIES: tuple[str, ...] = (
     CAP_REGRESSION_GENERATION, CAP_REPORT_GENERATION, CAP_PROJECT_PROGRESS_BOARD,
     CAP_API_TEST_DESIGN, CAP_TEST_PLAN,
     CAP_CASE_REVIEW, CAP_BUG_CLASSIFICATION, CAP_RISK_ASSESSMENT,
-    CAP_AUTOMATION_SCRIPT, CAP_PERFORMANCE_SCRIPT, CAP_PROMPT_OPTIMIZE,
+    CAP_AUTOMATION_SCRIPT, CAP_PERFORMANCE_SCRIPT, CAP_TEST_DATA_GENERATION,
+    CAP_PROMPT_OPTIMIZE,
 )
 
 #: 扩展能力位：此前提示词库里的补充能力已全部并入核心能力，保留空位以兼容既有引用

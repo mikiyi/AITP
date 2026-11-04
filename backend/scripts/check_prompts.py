@@ -69,6 +69,11 @@ SAMPLES: dict[str, dict[str, Any]] = {
         "threads": "20", "duration": "60", "rampUp": "10",
         "dataFile": "无", "extraRequirements": "无",
     },
+    "test-data-generation": {
+        "projectName": "示例电商", "dialect": "MySQL 8.0",
+        "intent": "给订单表造一批数据，覆盖三种订单状态和金额为 0 的边界值",
+        "schemaDesc": "orders(id, user_id, amount, status, created_at)", "rowCount": "20",
+    },
 }
 
 

@@ -140,6 +140,11 @@ CAPABILITY_SAMPLES: list[tuple[str, JsonDict]] = [
         "projectName": "示例电商", "progressData": "用例完成 60%",
         "period": "2026 第 45 周", "milestones": "11-20 提测",
     }),
+    ("test_data_generation", {
+        "projectName": "示例电商", "dialect": "MySQL 8.0",
+        "intent": "给订单表造 20 条数据，覆盖三种订单状态与金额为 0 的边界值",
+        "schemaDesc": "orders(id, user_id, amount, status, created_at)", "rowCount": "20",
+    }),
 ]
 
 JSON_CAPABILITIES = {"testpoint_generation", "case_generation", "xmind_to_case", "regression_generation"}

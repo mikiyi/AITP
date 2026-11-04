@@ -58,6 +58,9 @@ import type {
   SelfCheckResult,
   SystemConfigItem,
   TestCase,
+  TestDataBatch,
+  TestDataBatchPage,
+  TestDataCatalog,
   Todo,
   TodoPage,
   TodoStats,
@@ -498,6 +501,18 @@ export const sqlAnalysisApi = {
   update: (id: number, body: Record<string, unknown>) =>
     put<SqlAnalysis>(`/sql-analyses/${id}`, body),
   remove: (id: number) => del(`/sql-analyses/${id}`),
+}
+
+/** 测试数据生成：文件分支全程本地，不经过大模型。 */
+export const testDataApi = {
+  catalog: () => get<TestDataCatalog>('/test-data/formats'),
+  generate: (body: Record<string, unknown>) => post<TestDataBatch>('/test-data/files', body),
+  batches: (query: Record<string, unknown> = {}) =>
+    get<TestDataBatchPage>('/test-data/batches', query as never),
+  batch: (id: number) => get<TestDataBatch>(`/test-data/batches/${id}`),
+  removeBatch: (id: number) => del(`/test-data/batches/${id}`),
+  fileUrl: (id: number) => `/api/v1/test-data/files/${id}/download`,
+  archiveUrl: (id: number) => `/api/v1/test-data/batches/${id}/archive`,
 }
 
 /** 设置：AI 档案、系统配置、枚举。 */

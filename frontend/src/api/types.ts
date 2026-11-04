@@ -1149,3 +1149,66 @@ export interface KnowledgeAnswer {
   egressWarning: string
   reviewRequired: boolean
 }
+
+/** 测试数据生成：一种可生成的文件格式。 */
+export interface TestDataFormat {
+  ext: string
+  label: string
+  category: string
+  mediaType: string
+  minBytes: number
+  builder: string
+  mode: string
+  modeLabel: string
+  /** 下拉里展示的「.ext｜名称」。 */
+  name: string
+}
+
+/** 测试数据生成的格式目录，一次性拉全后在前端模糊匹配。 */
+export interface TestDataCatalog {
+  total: number
+  formats: TestDataFormat[]
+  categories: Array<{ name: string; count: number }>
+  modes: Array<{ mode: string; label: string; count: number }>
+}
+
+/** 批次里生成的单个文件。 */
+export interface TestDataFile {
+  id: Id
+  batchId: Id
+  fileName: string
+  ext: string
+  sizeBytes: number
+  /** 是否逐字节命中请求大小。 */
+  exact: boolean
+  note: string
+  relPath: string
+  createdAt?: string
+}
+
+/** 一次生成 = 一个批次：同格式、同命名规则、N 个文件。 */
+export interface TestDataBatch {
+  id: Id
+  projectId: Id
+  moduleId: Id | null
+  batchNo: string
+  ext: string
+  formatLabel: string
+  buildMode: string
+  /** 为空表示按该格式最小规格产出。 */
+  sizeBytes: number | null
+  fileCount: number
+  createdFiles: number
+  totalBytes: number
+  namePrefix: string
+  nameSuffix: string
+  tokenMode: string
+  tokenLabel: string
+  dirName: string
+  remark: string
+  createdAt?: string
+  updatedAt?: string
+  files?: TestDataFile[]
+}
+
+export type TestDataBatchPage = PagePayload<TestDataBatch>

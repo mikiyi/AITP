@@ -64,6 +64,7 @@ AI_TASK_TYPE = (
     "general_chat",
     "automation_script",
     "performance_script",
+    "test_data_generation",
 )
 
 # 缺陷状态机：允许的流转
