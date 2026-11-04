@@ -45,6 +45,14 @@ PROVIDERS: dict[str, ProviderSpec] = {
         default_model="deepseek-chat",
         env_key=("AITP_AI_API_KEY", "DEEPSEEK_API_KEY"),
     ),
+    "sensenova": ProviderSpec(
+        name="sensenova",
+        label="商汤日日新",
+        protocol=PROTOCOL_OPENAI_COMPAT,
+        default_base_url="https://token.sensenova.cn/v1",
+        default_model="sensenova-6.8-flash",
+        env_key=("AITP_AI_API_KEY", "SENSENOVA_API_KEY"),
+    ),
     "custom": ProviderSpec(
         name="custom",
         label="自定义兼容接口",
@@ -90,3 +98,4 @@ DEGRADE_AUTH_FAILED = "auth_failed"
 DEGRADE_NO_CREDENTIAL = "no_credential"
 DEGRADE_MODEL_MISSING = "model_missing"
 DEGRADE_KEY_UNREADABLE = "key_unreadable"
+DEGRADE_EMPTY_OUTPUT = "empty_output"

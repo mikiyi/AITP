@@ -199,6 +199,8 @@ def create_profile() -> Response:
     api_key = optional_str(data.get("apiKey"), "apiKey", 500)
     if api_key:
         repo.save_api_key(new_id, api_key)
+    if data.get("isDefault"):
+        repo.clear_other_defaults(new_id)
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_CONFIG, audit_service.RESOURCE_AI_PROFILE, new_id, name,
           {"provider": provider, "hasApiKey": bool(api_key)})
@@ -241,6 +243,8 @@ def update_profile(pk: str) -> Response:
         final_provider = str(payload.get("provider") or row.get("provider") or "")
         payload.update(_local_key_rule(PROVIDERS.get(final_provider), _env_key_columns(data, row)))
     repo.update(target, payload)
+    if payload.get("is_default"):
+        repo.clear_other_defaults(target)
     api_key = optional_str(data.get("apiKey"), "apiKey", 500)
     if api_key:
         repo.save_api_key(target, api_key)

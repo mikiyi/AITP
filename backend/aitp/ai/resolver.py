@@ -85,6 +85,8 @@ def _env_base_url(provider: str) -> str:
         return _env_first("DASHSCOPE_BASE_URL")
     if provider == "openai":
         return _env_first("OPENAI_BASE_URL")
+    if provider == "sensenova":
+        return _env_first("SENSENOVA_BASE_URL")
     return ""
 
 
@@ -98,6 +100,8 @@ def _env_api_key(provider: str) -> str:
         return _env_first("DASHSCOPE_API_KEY")
     if provider == "deepseek":
         return _env_first("DEEPSEEK_API_KEY")
+    if provider == "sensenova":
+        return _env_first("SENSENOVA_API_KEY")
     return ""
 
 

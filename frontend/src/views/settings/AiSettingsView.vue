@@ -291,6 +291,14 @@
           <pre class="check-result__pre">{{ checkResult.reply || '(空回复)' }}</pre>
         </div>
         <el-alert
+          v-if="checkResult.ok && checkResult.hint"
+          type="warning"
+          :closable="false"
+          show-icon
+          :title="checkResult.hint"
+          class="check-result__alert"
+        />
+        <el-alert
           v-else
           type="error"
           :closable="false"

@@ -79,7 +79,8 @@ class OpenAICompatAdapter(BaseAdapter):
         choices = payload.get("choices") or []
         message = (choices[0].get("message") if choices else {}) or {}
         content = message.get("content") or ""
-        reasoning = message.get("reasoning_content") or ""
+        # 推理模型的思考字段不统一：OpenAI/DeepSeek 用 reasoning_content，商汤日日新用 reasoning
+        reasoning = message.get("reasoning_content") or message.get("reasoning") or ""
         finish_reason = (choices[0].get("finish_reason") if choices else None) or "stop"
         usage = self._parse_usage(payload.get("usage"))
 

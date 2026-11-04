@@ -43,6 +43,13 @@ SOURCE_LABELS: dict[str, str] = {
 
 PROBE_PROMPT = "请只回复两个字：就绪"
 REPLY_LIMIT = 500
+# 推理模型（商汤日日新 / DeepSeek-R1 等）会先把额度花在思考上，
+# 探测预算给小了正文就是空的，自检看着"通过"却没有任何回复可用
+PROBE_MAX_TOKENS = 512
+_EMPTY_REPLY_HINT = (
+    "服务可正常访问，但本次没有返回正文，上面展示的是推理内容。"
+    "推理模型需要更多输出额度，请把「单次最大 Token」调大后重试。"
+)
 
 # 请求字段 → 档案字段（档案表用的是下划线列名）
 _OVERRIDE_COLUMNS: tuple[tuple[str, str], ...] = (
@@ -249,7 +256,7 @@ def self_check(conn: sqlite3.Connection, params: dict[str, Any]) -> dict[str, An
     try:
         result = AIClient(config).chat(
             [Message(role="user", content=PROBE_PROMPT)],
-            max_tokens=32,
+            max_tokens=PROBE_MAX_TOKENS,
         )
     except Exception as exc:  # noqa: BLE001 - 自检要把失败原因原样回传
         latency = int((time.perf_counter() - started) * 1000)
@@ -266,14 +273,18 @@ def self_check(conn: sqlite3.Connection, params: dict[str, Any]) -> dict[str, An
         })
         return payload
 
+    latency = int((time.perf_counter() - started) * 1000)
+    content = (result.content or "").strip()
+    # 推理模型正文为空时，把思考片段回显出来，否则用户只看到一个空盒子
+    reply = (content or (result.reasoning or "").strip())[:REPLY_LIMIT]
     payload = _config_summary(config)
     payload.update({
         "ok": True,
         "reason": "",
         "message": "自检通过",
-        "hint": "",
-        "latencyMs": result.latency_ms or int((time.perf_counter() - started) * 1000),
-        "reply": (result.content or "").strip()[:REPLY_LIMIT],
+        "hint": "" if content else _EMPTY_REPLY_HINT,
+        "latencyMs": result.latency_ms or latency,
+        "reply": reply,
         "usage": result.usage.as_dict(),
         "draft": draft,
     })

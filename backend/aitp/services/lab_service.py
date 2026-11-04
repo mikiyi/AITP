@@ -28,7 +28,7 @@ from ..ai.client import chat_with_fallback, stream_with_fallback
 from ..ai.resolver import resolve_candidates
 from ..ai.safety import build_safety_prompt, mark_review_required, needs_human_review
 from ..ai.types import ChatResult, Message, ResolvedAIConfig, StreamEvent
-from ..common.constants import EGRESS_NONE, EGRESS_THIRD_PARTY
+from ..common.constants import DEGRADE_EMPTY_OUTPUT, EGRESS_NONE, EGRESS_THIRD_PARTY
 from ..errors import AppError, ErrorCode
 from ..prompts.registry import get_registry
 from ..repositories.module_repo import ModuleCapabilityRepository, ModuleRepository
@@ -312,6 +312,15 @@ def execute_run(plan: RunPlan) -> CapabilityRun:
         output = mark_review_required(output)
 
     egress, warning = _egress_of(outcome.config)
+    if not text.strip() and not outcome.degrade.degraded:
+        # 推理模型常把输出额度全花在思考上，正文为空时不能只留一个空白产出框
+        outcome.degrade.degraded = True
+        outcome.degrade.reason = DEGRADE_EMPTY_OUTPUT
+        outcome.degrade.to_config = result.model or outcome.config.model
+        outcome.degrade.message = (
+            "模型没有返回正文（推理内容可能已占满输出额度）。"
+            "请在「AI 配置」里调大该档案的「单次最大 Token」后重试。"
+        )
     return CapabilityRun(
         capability=plan.capability,
         label=plan.spec.label,

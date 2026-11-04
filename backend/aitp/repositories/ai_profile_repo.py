@@ -36,6 +36,13 @@ class AIProfileRepository(BaseRepository):
         ).fetchone()
         return dict(row) if row else None
 
+    def clear_other_defaults(self, keep_id: int) -> None:
+        """保证「默认档案」全局唯一，否则列表里会出现两个默认标记。"""
+        self.conn.execute(
+            "UPDATE sys_ai_profile SET is_default = 0 WHERE is_default = 1 AND id <> ?",
+            (keep_id,),
+        )
+
     def list_active(self) -> RowList:
         """启用中的档案，按优先级降序（本地模型与云端模型一起排）。"""
         rows = self.conn.execute(
