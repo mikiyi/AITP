@@ -24,9 +24,7 @@
               <el-icon><component :is="node.icon" /></el-icon>
               <span :class="{ 'is-active-group': isGroupActive(node, activePath) }">{{ node.title }}</span>
             </template>
-            <el-menu-item v-for="child in node.children" :key="child.path" :index="child.path">
-              {{ child.title }}
-            </el-menu-item>
+            <el-menu-item v-for="child in node.children" :key="child.path" :index="child.path">{{ child.title }}</el-menu-item>
           </el-sub-menu>
         </template>
       </el-menu>
@@ -454,6 +452,15 @@ onUnmounted(() => {
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: #c6ccd6 transparent;
+
+  /*
+   * 层级对齐（Element Plus 按 base + 层级 × levelPadding 算缩进）：
+   *   一级文字起点 = 20(基础内边距) + 24(图标宽) + 5(图标右间距) = 49px
+   *   二级文字起点 = 49 + 28(再缩进 2 个字符位) = 77px
+   * 所以 levelPadding 取 77 - 20 = 57px，一级保持 20px 不变。
+   */
+  --el-menu-base-level-padding: 20px;
+  --el-menu-level-padding: 57px;
 }
 
 /* 滚动条做得明显一点，菜单长的时候一眼能看出可以往下滚 */
