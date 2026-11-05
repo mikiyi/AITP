@@ -243,6 +243,10 @@
         <template v-if="form.useEnvKey && !isLocalProvider">
           <el-form-item label="变量名" required>
             <el-input v-model="form.envKeyName" placeholder="例如 OPENAI_API_KEY" />
+            <div class="field-hint">
+              <el-icon><InfoFilled /></el-icon>
+              <span>只能包含字母、数字与下划线，且不能以数字开头，不能用连字符（-）。例如 mysensenva_key。</span>
+            </div>
           </el-form-item>
           <el-form-item label="变量范围">
             <el-radio-group v-model="form.envKeyScope">

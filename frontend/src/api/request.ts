@@ -50,7 +50,8 @@ export const API_BASE = '/api/v1'
 export function explainCode(code: number, fallback: string): string {
   switch (code) {
     case ErrorCode.PARAM_ERROR:
-      return '参数不合法，请检查后重试'
+      // 后端通常已返回具体原因（如「环境变量名只能…」），优先展示，别用笼统文案盖掉
+      return fallback && fallback !== '请求失败' ? fallback : '参数不合法，请检查后重试'
     case ErrorCode.RESOURCE_NOT_FOUND:
       return '目标不存在或已被删除'
     case ErrorCode.RESOURCE_REFERENCED:
