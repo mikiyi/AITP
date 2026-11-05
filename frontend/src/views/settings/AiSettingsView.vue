@@ -27,14 +27,20 @@
             <el-radio :value="true">true</el-radio>
             <el-radio :value="false">false</el-radio>
           </el-radio-group>
-          <div class="muted ai-config-hint">
-            true：首选模型不可用时，按优先级自动换用下一个可用模型，页面只弹 3 秒提示；false：首选模型失败就直接报错，不自动切换。
+          <div class="ai-config-hint">
+            <el-icon class="ai-config-hint__icon"><InfoFilled /></el-icon>
+            <span class="ai-config-hint__text">
+              true：首选模型不可用时，按优先级自动换用下一个可用模型，页面只弹 3 秒提示；false：首选模型失败就直接报错，不自动切换。
+            </span>
           </div>
         </el-form-item>
         <el-form-item label="默认超时（秒）">
           <el-input v-model="aiTimeoutDefault" placeholder="整数，单位秒，默认 60" style="width: 200px" />
-          <div class="muted ai-config-hint">
-            整数，单位秒，默认 60。单次 AI 调用超过这个时长即判定超时。云端接口一般 30~60，本地小模型可放宽到 120~300。
+          <div class="ai-config-hint">
+            <el-icon class="ai-config-hint__icon"><InfoFilled /></el-icon>
+            <span class="ai-config-hint__text">
+              整数，单位秒，默认 60。单次 AI 调用超过这个时长即判定超时。云端接口一般 30~60，本地小模型可放宽到 120~300。
+            </span>
           </div>
         </el-form-item>
       </el-form>
@@ -779,9 +785,26 @@ onMounted(loadAll)
 }
 
 .ai-config-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  /* form-item 内容区是横排 flex，提示需要独占一行落到参数框下方 */
+  flex: 1 1 100%;
+  margin-top: 8px;
   font-size: 12px;
   line-height: 1.6;
-  margin-top: 4px;
+  color: var(--aitp-text-weak);
+}
+
+.ai-config-hint__icon {
+  margin-top: 2px;
+  flex-shrink: 0;
+  color: var(--el-color-primary);
+  opacity: 0.85;
+}
+
+.ai-config-hint__text {
+  flex: 1;
 }
 
 .section-head {
