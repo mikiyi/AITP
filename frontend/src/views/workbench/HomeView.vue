@@ -123,7 +123,7 @@
         <el-table :data="recentTasks" size="small" empty-text="暂无 AI 任务">
           <el-table-column prop="capability" label="能力" min-width="150">
             <template #default="scope">
-              {{ scope.row.capability || scope.row.taskType || '-' }}
+              {{ scope.row.sessionTitle || scope.row.capability || scope.row.taskType || '-' }}
             </template>
           </el-table-column>
           <el-table-column prop="status" label="状态" width="100">
@@ -328,9 +328,29 @@ function goToEnvSettings(): void {
   void router.push('/settings/environments')
 }
 
+// 饼图状态 key → 中文标签（与用例/缺陷列表页的状态文案保持一致）
+const CASE_STATUS_LABELS: Record<string, string> = {
+  not_executed: '未执行',
+  pass: '通过',
+  fail: '失败',
+  blocked: '阻塞',
+}
+const BUG_STATUS_LABELS: Record<string, string> = {
+  open: '新建',
+  assigned: '已指派',
+  fixed: '已修复',
+  retest: '待验证',
+  reopened: '重新打开',
+  closed: '已关闭',
+  rejected: '已拒绝',
+}
+
 const caseOption = computed<EChartsOption>(() => {
   const source = overview.value?.caseStatus ?? {}
-  const data = Object.entries(source).map(([name, value]) => ({ name, value }))
+  const data = Object.entries(source).map(([name, value]) => ({
+    name: CASE_STATUS_LABELS[name] ?? name,
+    value,
+  }))
   return {
     textStyle: { color: text.value },
     tooltip: {
@@ -359,7 +379,10 @@ const caseOption = computed<EChartsOption>(() => {
 
 const bugOption = computed<EChartsOption>(() => {
   const source = overview.value?.bugStatus ?? {}
-  const data = Object.entries(source).map(([name, value]) => ({ name, value }))
+  const data = Object.entries(source).map(([name, value]) => ({
+    name: BUG_STATUS_LABELS[name] ?? name,
+    value,
+  }))
   return {
     textStyle: { color: text.value },
     tooltip: {

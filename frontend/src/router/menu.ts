@@ -137,7 +137,7 @@ export const MENU_NODES: MenuNode[] = [
     title: '设置',
     icon: Setting,
     children: [
-      { path: '/settings', title: '设置总览', icon: DataLine },
+      { path: '/settings', title: '操作日志', icon: DataLine },
       { path: '/settings/ai', title: 'AI 设置', icon: Cpu },
       { path: '/settings/knowledge', title: '知识库设置', icon: Collection },
       { path: '/settings/modules', title: '模块树设置', icon: Menu },

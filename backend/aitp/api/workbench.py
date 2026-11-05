@@ -134,17 +134,31 @@ def overview() -> Response:
     bug_counts = BugRepository(conn).status_counts(int(project_id) if project_id else None)
     bug_status = {status: bug_counts.get(status, 0) for status in BUG_STATUS}
 
+    task_rows = AITaskRepository(conn).list_all(None, None, limit=5)
+    # 「能力」列显示会话标题（与会话记录页的「会话」列一致），没有会话时回落到能力编号
+    session_ids = {int(r["session_id"]) for r in task_rows if r.get("session_id")}
+    session_titles: dict[int, str] = {}
+    if session_ids:
+        placeholders = ", ".join("?" for _ in session_ids)
+        for row in conn.execute(
+            f"SELECT id, title FROM biz_ai_session WHERE id IN ({placeholders})",
+            tuple(session_ids),
+        ).fetchall():
+            session_titles[int(row["id"])] = str(row["title"] or "")
     recent_tasks = [
         {
             "id": row["id"],
             "taskType": row["task_type"],
             "capability": row.get("capability"),
+            "sessionTitle": session_titles.get(
+                int(row["session_id"]), ""
+            ) if row.get("session_id") else "",
             "status": row["status"],
             "moduleId": row.get("module_id"),
             "createdAt": row["created_at"],
             "finishedAt": row.get("finished_at"),
         }
-        for row in AITaskRepository(conn).list_all(None, None, limit=5)
+        for row in task_rows
     ]
 
     return ok({

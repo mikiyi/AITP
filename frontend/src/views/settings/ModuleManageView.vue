@@ -10,6 +10,19 @@
       </div>
     </div>
 
+    <div class="panel panel-pad module-types-panel">
+      <div class="module-types-head">
+        <h3>层级角色名</h3>
+        <el-button type="primary" size="small" :loading="savingTypes" @click="saveModuleTypes">保存</el-button>
+      </div>
+      <el-form label-width="140px" inline>
+        <el-form-item label="模块层级角色名">
+          <el-input v-model="moduleTypes" placeholder="module,submodule,feature" style="width: 280px" />
+          <div class="muted module-types-hint">逗号分隔，依次对应模块、子模块、功能</div>
+        </el-form-item>
+      </el-form>
+    </div>
+
     <div class="module-layout">
       <div class="panel panel-pad module-tree-panel">
         <ModuleTree :nodes="tree" :loading="loading" @select="onSelect" />
@@ -110,7 +123,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import ModuleTree from '@/components/ModuleTree.vue'
-import { labApi, moduleApi } from '@/api'
+import { labApi, moduleApi, settingsApi } from '@/api'
 import type { CapabilitySpec, ModuleNode } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 
@@ -127,6 +140,10 @@ const projectId = ref<number | null>(null)
 const tree = ref<ModuleNode[]>([])
 const loading = ref(false)
 const current = ref<ModuleNode | null>(null)
+
+const MODULE_TYPES_KEY = 'module.default_types'
+const moduleTypes = ref('module,submodule,feature')
+const savingTypes = ref(false)
 
 const saving = ref(false)
 const moving = ref(false)
@@ -360,15 +377,64 @@ watch(
   { immediate: true },
 )
 
+/** 加载模块层级角色名配置。 */
+async function loadModuleTypes(): Promise<void> {
+  try {
+    const configs = await settingsApi.config()
+    moduleTypes.value =
+      configs.find((item) => item.key === MODULE_TYPES_KEY)?.value || 'module,submodule,feature'
+  } catch {
+    // 加载失败保留默认值，不阻塞模块树
+  }
+}
+
+async function saveModuleTypes(): Promise<void> {
+  savingTypes.value = true
+  try {
+    await settingsApi.updateConfig([
+      { key: MODULE_TYPES_KEY, value: moduleTypes.value.trim(), valueType: 'string' },
+    ])
+    ElMessage.success('已保存')
+    await loadModuleTypes()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '保存失败')
+  } finally {
+    savingTypes.value = false
+  }
+}
+
 onMounted(() => {
   if (!projectId.value && appStore.currentProjectId) {
     projectId.value = appStore.currentProjectId
   }
   void loadTree()
+  void loadModuleTypes()
 })
 </script>
 
 <style scoped>
+.module-types-panel {
+  margin-bottom: 14px;
+}
+
+.module-types-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.module-types-head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.module-types-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 4px;
+}
+
 .module-layout {
   display: grid;
   grid-template-columns: minmax(280px, 360px) 1fr;

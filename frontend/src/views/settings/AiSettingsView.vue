@@ -16,6 +16,27 @@
       class="page-alert"
     />
 
+    <div class="panel panel-pad ai-config-panel">
+      <div class="section-head">
+        <h3>AI 调用参数</h3>
+        <el-button type="primary" size="small" :loading="savingConfig" @click="saveAiConfig">保存</el-button>
+      </div>
+      <el-form label-width="160px">
+        <el-form-item label="自动降级">
+          <el-switch v-model="aiDegradeEnabled" />
+          <div class="muted ai-config-hint">
+            可填 true 或 false。true：首选模型不可用时，按优先级自动换用下一个可用模型，页面只弹 3 秒提示；false：首选模型失败就直接报错，不自动切换。
+          </div>
+        </el-form-item>
+        <el-form-item label="默认超时（秒）">
+          <el-input v-model="aiTimeoutDefault" placeholder="整数，单位秒，默认 60" style="width: 200px" />
+          <div class="muted ai-config-hint">
+            整数，单位秒，默认 60。单次 AI 调用超过这个时长即判定超时。云端接口一般 30~60，本地小模型可放宽到 120~300。
+          </div>
+        </el-form-item>
+      </el-form>
+    </div>
+
     <div class="panel panel-pad">
       <div class="section-head">
         <h3>当前生效配置</h3>
@@ -354,6 +375,12 @@ const profiles = ref<AiProfile[]>([])
 const providers = ref<ProviderSpec[]>([])
 const loading = ref(false)
 
+const AI_DEGRADE_KEY = 'ai.degrade.enabled'
+const AI_TIMEOUT_KEY = 'ai.timeout.default'
+const aiDegradeEnabled = ref(true)
+const aiTimeoutDefault = ref('60')
+const savingConfig = ref(false)
+
 const dialogVisible = ref(false)
 const saving = ref(false)
 const editing = ref<AiProfile | null>(null)
@@ -448,10 +475,41 @@ async function loadStatus(): Promise<void> {
   }
 }
 
+/** 加载 AI 调用参数配置。 */
+async function loadAiConfig(): Promise<void> {
+  try {
+    const configs = await settingsApi.config()
+    const find = (key: string): string =>
+      configs.find((item) => item.key === key)?.value ?? ''
+    aiDegradeEnabled.value = find(AI_DEGRADE_KEY).toLowerCase() !== 'false'
+    const timeout = find(AI_TIMEOUT_KEY)
+    aiTimeoutDefault.value = timeout || '60'
+  } catch {
+    // 加载失败保留默认值
+  }
+}
+
+async function saveAiConfig(): Promise<void> {
+  savingConfig.value = true
+  try {
+    await settingsApi.updateConfig([
+      { key: AI_DEGRADE_KEY, value: aiDegradeEnabled.value ? 'true' : 'false', valueType: 'bool' },
+      { key: AI_TIMEOUT_KEY, value: aiTimeoutDefault.value.trim(), valueType: 'int' },
+    ])
+    ElMessage.success('已保存')
+    await loadAiConfig()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '保存失败')
+  } finally {
+    savingConfig.value = false
+  }
+}
+
 function loadAll(): void {
   void loadProviders()
   void load()
   void loadStatus()
+  void loadAiConfig()
 }
 
 function onProviderChange(name: string): void {
@@ -701,6 +759,16 @@ onMounted(loadAll)
 <style scoped>
 .page-alert {
   margin-bottom: 12px;
+}
+
+.ai-config-panel {
+  margin-bottom: 14px;
+}
+
+.ai-config-hint {
+  font-size: 12px;
+  line-height: 1.6;
+  margin-top: 4px;
 }
 
 .section-head {

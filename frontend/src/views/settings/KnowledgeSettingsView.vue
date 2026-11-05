@@ -30,11 +30,6 @@
           <el-switch v-model="autoReindex" />
           <div class="muted form-hint">开启后启动会扫描知识库目录，按文件内容重建索引</div>
         </el-form-item>
-
-        <el-form-item label="模块层级角色名">
-          <el-input v-model="moduleTypes" placeholder="module,submodule,feature" />
-          <div class="muted form-hint">逗号分隔，依次对应模块、子模块、功能</div>
-        </el-form-item>
       </el-form>
 
       <el-descriptions :column="4" border size="small" class="storage-info">
@@ -84,7 +79,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check, FolderOpened, Refresh, RefreshRight } from '@element-plus/icons-vue'
-import { knowledgeApi, settingsApi } from '@/api'
+import { knowledgeApi } from '@/api'
 import type { KnowledgeStorage } from '@/api/types'
 
 const storage = ref<KnowledgeStorage>({
@@ -106,18 +101,15 @@ const migrateTarget = ref('')
 const storagePath = ref('')
 const fileMode = ref('mirror')
 const autoReindex = ref(false)
-const moduleTypes = ref('module,submodule,feature')
 
 async function load(): Promise<void> {
   loading.value = true
   try {
-    const [info, configs] = await Promise.all([knowledgeApi.storage(), settingsApi.config()])
+    const info = await knowledgeApi.storage()
     storage.value = info
     storagePath.value = info.storagePath
     fileMode.value = info.fileMode || 'mirror'
     autoReindex.value = info.autoReindex
-    moduleTypes.value =
-      configs.find((item) => item.key === 'module.default_types')?.value || 'module,submodule,feature'
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载失败')
   } finally {
@@ -133,9 +125,6 @@ async function save(): Promise<void> {
       fileMode: fileMode.value,
       autoReindex: autoReindex.value,
     })
-    await settingsApi.updateConfig([
-      { key: 'module.default_types', value: moduleTypes.value.trim(), valueType: 'string' },
-    ])
     ElMessage.success('已保存')
     await load()
   } catch (err) {

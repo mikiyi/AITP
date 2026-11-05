@@ -183,7 +183,7 @@ const routes: RouteRecordRaw[] = [
     path: '/settings',
     name: 'settings',
     component: () => import('@/views/settings/SettingsView.vue'),
-    meta: { title: '系统设置', icon: 'Setting' },
+    meta: { title: '操作日志', icon: 'Setting' },
   },
   {
     path: '/settings/ai',
