@@ -23,9 +23,12 @@
       </div>
       <el-form label-width="160px">
         <el-form-item label="自动降级">
-          <el-switch v-model="aiDegradeEnabled" />
+          <el-radio-group v-model="aiDegradeEnabled">
+            <el-radio :value="true">true</el-radio>
+            <el-radio :value="false">false</el-radio>
+          </el-radio-group>
           <div class="muted ai-config-hint">
-            可填 true 或 false。true：首选模型不可用时，按优先级自动换用下一个可用模型，页面只弹 3 秒提示；false：首选模型失败就直接报错，不自动切换。
+            true：首选模型不可用时，按优先级自动换用下一个可用模型，页面只弹 3 秒提示；false：首选模型失败就直接报错，不自动切换。
           </div>
         </el-form-item>
         <el-form-item label="默认超时（秒）">
