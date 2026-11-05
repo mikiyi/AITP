@@ -76,7 +76,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onActivated, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check, FolderOpened, Refresh, RefreshRight } from '@element-plus/icons-vue'
 import { knowledgeApi } from '@/api'
@@ -180,6 +180,9 @@ async function doMigrate(): Promise<void> {
 }
 
 onMounted(() => {
+  void load()
+})
+onActivated(() => {
   void load()
 })
 </script>

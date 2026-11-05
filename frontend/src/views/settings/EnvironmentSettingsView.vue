@@ -131,7 +131,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onActivated, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Back, Lock, Plus } from '@element-plus/icons-vue'
@@ -317,6 +317,9 @@ async function remove(row: TestEnv): Promise<void> {
 }
 
 onMounted(() => {
+  void load()
+})
+onActivated(() => {
   void load()
 })
 </script>

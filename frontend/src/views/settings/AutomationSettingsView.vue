@@ -57,7 +57,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onActivated, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Back } from '@element-plus/icons-vue'
@@ -109,6 +109,9 @@ async function save(): Promise<void> {
 }
 
 onMounted(() => {
+  void load()
+})
+onActivated(() => {
   void load()
 })
 </script>

@@ -119,7 +119,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import ModuleTree from '@/components/ModuleTree.vue'
@@ -407,6 +407,10 @@ onMounted(() => {
   if (!projectId.value && appStore.currentProjectId) {
     projectId.value = appStore.currentProjectId
   }
+  void loadTree()
+  void loadModuleTypes()
+})
+onActivated(() => {
   void loadTree()
   void loadModuleTypes()
 })
