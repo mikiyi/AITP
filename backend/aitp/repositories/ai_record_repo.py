@@ -68,3 +68,12 @@ class AIRecordRepository(BaseRepository):
             (status,),
         ).fetchone()
         return int(row[0])
+
+    def count_by_prompt_code(self) -> dict[str, int]:
+        """统计每个提示词编号被使用的次数，用于提示词库按使用频次排序。"""
+        rows = self.conn.execute(
+            "SELECT prompt_code, COUNT(*) AS c FROM biz_ai_record"
+            " WHERE is_deleted = 0 AND prompt_code IS NOT NULL AND prompt_code != ''"
+            " GROUP BY prompt_code",
+        ).fetchall()
+        return {str(r["prompt_code"]): int(r["c"]) for r in rows}

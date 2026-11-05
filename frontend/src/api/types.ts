@@ -968,6 +968,8 @@ export interface PromptTemplate {
   optional: string[]
   path: string
   mtime: number
+  /** 该提示词被使用的次数，用于提示词库按使用频次排序。 */
+  useCount?: number
   body?: string
 }
 

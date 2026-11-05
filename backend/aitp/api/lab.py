@@ -238,7 +238,16 @@ def list_capabilities() -> Response:
 
 @bp.get("/prompts")
 def list_prompts() -> Response:
-    return ok(list_templates())
+    """提示词列表：带每个提示词的使用次数，供提示词库按使用频次排序。"""
+    from ..repositories.ai_record_repo import AIRecordRepository
+
+    counts = AIRecordRepository(db()).count_by_prompt_code()
+    result = []
+    for item in list_templates():
+        item = dict(item)
+        item["useCount"] = counts.get(item["code"], 0)
+        result.append(item)
+    return ok(result)
 
 
 @bp.get("/prompts/<code>")

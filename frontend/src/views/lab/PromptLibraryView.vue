@@ -31,7 +31,12 @@
       >
         <div class="prompt-card__head">
           <span class="prompt-card__title">{{ item.title }}</span>
-          <el-tag size="small" effect="plain">{{ item.code }}</el-tag>
+          <span class="prompt-card__tags">
+            <el-tag size="small" effect="plain" :type="item.useCount ? 'success' : 'info'">
+              用过 {{ item.useCount ?? 0 }} 次
+            </el-tag>
+            <el-tag size="small" effect="plain">{{ item.code }}</el-tag>
+          </span>
         </div>
         <p class="prompt-card__desc">{{ item.description || '（无说明）' }}</p>
         <div class="prompt-card__vars">
@@ -94,14 +99,21 @@ const current = ref<PromptTemplate | null>(null)
 
 const filtered = computed(() => {
   const key = keyword.value.trim().toLowerCase()
-  if (!key) {
-    return templates.value
-  }
-  return templates.value.filter((item) =>
-    [item.code, item.title, item.description].some((field) =>
-      String(field ?? '').toLowerCase().includes(key),
-    ),
-  )
+  const list = key
+    ? templates.value.filter((item) =>
+        [item.code, item.title, item.description].some((field) =>
+          String(field ?? '').toLowerCase().includes(key),
+        ),
+      )
+    : templates.value
+  // 用得越多越靠前；次数相同按名称首字母排序
+  return [...list].sort((a, b) => {
+    const diff = (b.useCount ?? 0) - (a.useCount ?? 0)
+    if (diff !== 0) {
+      return diff
+    }
+    return a.title.localeCompare(b.title, 'zh-Hans-CN')
+  })
 })
 
 function optionalOf(item: PromptTemplate, name: string): boolean {
@@ -177,6 +189,13 @@ onMounted(load)
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+.prompt-card__tags {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .prompt-card__title {
