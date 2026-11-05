@@ -39,11 +39,12 @@ FILTERS = {
     "severity": "severity",
     "bugType": "bug_type",
     "assignee": "assignee",
+    "versionId": "version_id",
 }
 WRITE_FIELDS = {
     "title", "severity", "status", "priority", "bug_type", "description",
     "expected_result", "actual_result", "assignee", "reporter", "version", "env",
-    "module", "module_id",
+    "module", "module_id", "version_id",
 }
 
 

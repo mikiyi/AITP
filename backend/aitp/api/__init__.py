@@ -18,6 +18,7 @@ def register_blueprints(app: Flask) -> None:
     from .meta import bp as meta_bp
     from .modules import bp as modules_bp
     from .projects import bp as projects_bp
+    from .project_versions import bp as project_versions_bp
     from .relations import bp as relations_bp
     from .regressions import bp as regressions_bp
     from .reports import bp as reports_bp
@@ -40,6 +41,7 @@ def register_blueprints(app: Flask) -> None:
         (search_bp, "/api/v1/search"),
         (sql_analyses_bp, "/api/v1/sql-analyses"),
         (projects_bp, "/api/v1/projects"),
+        (project_versions_bp, "/api/v1/project-versions"),
         (requirements_bp, "/api/v1/requirements"),
         (modules_bp, "/api/v1/modules"),
         (cases_bp, "/api/v1/test-cases"),

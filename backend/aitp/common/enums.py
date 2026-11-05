@@ -4,6 +4,9 @@ from __future__ import annotations
 
 PROJECT_STATUS = ("active", "archived")
 
+#: 项目版本状态：规划中 → 进行中 → 已发布
+PROJECT_VERSION_STATUS = ("planning", "in_progress", "released")
+
 REQUIREMENT_STATUS = ("draft", "reviewing", "approved", "implemented", "rejected")
 
 # 用例类型与编号前缀一一对应，沿用 testSKill\generate_test_cases.py 的 6 张用例表

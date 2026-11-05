@@ -43,10 +43,12 @@ FILTERS = {
     "priority": "priority",
     "status": "status",
     "source": "source",
+    "versionId": "version_id",
 }
 WRITE_FIELDS = {
     "project_id", "requirement_id", "module_id", "title", "case_type", "priority",
     "status", "preconditions", "expected_result", "actual_result", "tags", "source", "creator",
+    "version_id",
 }
 
 

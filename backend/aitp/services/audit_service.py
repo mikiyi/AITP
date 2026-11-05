@@ -56,6 +56,7 @@ RESOURCE_KNOWLEDGE_CATEGORY = "knowledge_category"
 RESOURCE_SQL_ANALYSIS = "sql_analysis"
 RESOURCE_TEST_DATA = "test_data"
 RESOURCE_TEST_ENV = "test_env"
+RESOURCE_PROJECT_VERSION = "project_version"
 
 _MAX_DETAIL_CHARS = 2000
 

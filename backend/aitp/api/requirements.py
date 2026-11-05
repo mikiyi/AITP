@@ -31,8 +31,8 @@ from .helpers import (
 
 bp = Blueprint("requirements", __name__)
 
-FILTERS = {"projectId": "project_id", "status": "status", "priority": "priority"}
-WRITE_FIELDS = {"title", "content", "source", "version", "status", "priority", "tags", "project_id"}
+FILTERS = {"projectId": "project_id", "status": "status", "priority": "priority", "versionId": "version_id"}
+WRITE_FIELDS = {"title", "content", "source", "version", "status", "priority", "tags", "project_id", "version_id"}
 
 REQUIREMENT_TABULAR_COLUMNS: tuple[tuple[str, str], ...] = (
     ("reqNo", "需求编号"),

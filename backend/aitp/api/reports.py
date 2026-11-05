@@ -9,7 +9,7 @@ from flask import Blueprint, Response, request
 
 from ..common.enums import (BUG_SEVERITY, BUG_STATUS, CASE_PRIORITY, CASE_STATUS,
                              CASE_TYPE, REPORT_SECTION, REPORT_STATUS, REPORT_TYPE)
-from ..common.validators import check_choice, optional_str, require_int, require_str
+from ..common.validators import check_choice, optional_int, optional_str, require_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.base import dumps, loads
@@ -23,7 +23,7 @@ from .helpers import (audit, body, commit, db, keyword_of, page_args, page_paylo
 
 bp = Blueprint("reports", __name__)
 
-FILTERS = {"projectId": "project_id", "reportType": "report_type", "status": "status"}
+FILTERS = {"projectId": "project_id", "reportType": "report_type", "status": "status", "versionId": "version_id"}
 
 
 def _to_public(row: dict[str, Any]) -> dict[str, Any]:
@@ -255,6 +255,7 @@ def create_report() -> Response:
         "content": optional_str(data.get("content"), "content", 500000),
         "status": "draft",
         "creator": optional_str(data.get("creator"), "creator", 64),
+        "version_id": optional_int(data.get("versionId"), "versionId"),
     })
     _sync_knowledge_refs(conn, new_id, _ref_ids(data))
     commit(conn)
