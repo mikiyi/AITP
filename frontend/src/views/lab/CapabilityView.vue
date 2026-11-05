@@ -871,7 +871,9 @@ function saveBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = filename
+  // 文件名兜底：后端没回传文件名时给个默认名，避免浏览器用一串 GUID 命名、
+  // 且文件没有扩展名导致双击打不开。
+  link.download = filename || '导出文件'
   link.click()
   URL.revokeObjectURL(url)
 }
@@ -1562,7 +1564,8 @@ function downloadText(text: string, filename: string): void {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = filename
+  // 文件名兜底：保证下载的文件始终带 .md 扩展名
+  link.download = filename || `产出-${new Date().toISOString().slice(0, 10)}.md`
   link.click()
   URL.revokeObjectURL(url)
 }
