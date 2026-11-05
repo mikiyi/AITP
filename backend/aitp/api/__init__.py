@@ -26,6 +26,7 @@ def register_blueprints(app: Flask) -> None:
     from .sql_analyses import bp as sql_analyses_bp
     from .settings import bp as settings_bp
     from .test_data import bp as test_data_bp
+    from .test_envs import bp as test_envs_bp
     from .todos import bp as todos_bp
     from .validation import bp as validation_bp
     from .workbench import bp as workbench_bp
@@ -50,6 +51,7 @@ def register_blueprints(app: Flask) -> None:
         (relations_bp, "/api/v1/relations"),
         (todos_bp, "/api/v1/todos"),
         (test_data_bp, "/api/v1/test-data"),
+        (test_envs_bp, "/api/v1/test-envs"),
         (automation_bp, "/api/v1/automation"),
         (validation_bp, "/api/v1/validation"),
         (settings_bp, "/api/v1/settings"),

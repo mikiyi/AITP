@@ -33,6 +33,10 @@
         <span class="settings-card__title">性能测试管理设置</span>
         <span class="settings-card__desc">JMeter 安装目录与启动参数</span>
       </button>
+      <button class="settings-card panel" type="button" @click="router.push('/settings/environments')">
+        <span class="settings-card__title">测试环境配置</span>
+        <span class="settings-card__desc">应用与数据库服务器，加密存储仅本机健康监测</span>
+      </button>
     </div>
 
     <div class="panel panel-pad settings-block">

@@ -642,6 +642,55 @@ export interface RestoreResult {
   appliedMigrations: number[]
 }
 
+/** 测试环境配置：一套命名环境（应用服务器 + 数据库服务器），口令只回掩码。 */
+export interface TestEnvApp {
+  baseUrl: string
+  healthPath: string
+}
+
+export interface TestEnvDb {
+  type: string
+  host: string
+  port: number | null
+  name: string
+  username: string
+  passwordMasked: string
+  hasPassword: boolean
+}
+
+export interface TestEnv {
+  id: number
+  name: string
+  description: string
+  app: TestEnvApp
+  db: TestEnvDb
+  isDefault: boolean
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface TestEnvListResult {
+  list: TestEnv[]
+  dbTypes: string[]
+  dbDefaultPorts: Record<string, number>
+}
+
+/** 单套环境的健康探测结果；探测纯本机发起，不进大模型。 */
+export interface TestEnvProbeItem {
+  ok: boolean
+  status: string
+  httpStatus?: number
+  latencyMs: number
+  message: string
+}
+
+export interface TestEnvProbe {
+  app: TestEnvProbeItem
+  db: TestEnvProbeItem
+  overall: 'healthy' | 'unhealthy'
+}
+
 /** AI 执行记录里的一条证据：产出物引用到的条目，已回库核对。 */
 export interface AiRecordEvidence {
   kind: string

@@ -228,6 +228,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '性能测试管理设置', hidden: true },
   },
   {
+    path: '/settings/environments',
+    name: 'settings-environments',
+    component: () => import('@/views/settings/EnvironmentSettingsView.vue'),
+    meta: { title: '测试环境配置', hidden: true },
+  },
+  {
     path: '/:pathMatch(.*)*',
     name: 'not-found',
     component: () => import('@/views/error/NotFoundView.vue'),

@@ -145,6 +145,7 @@ export const MENU_NODES: MenuNode[] = [
       { path: '/settings/backup', title: '数据备份与还原设置', icon: FolderOpened },
       { path: '/settings/automation', title: '自动化管理设置', icon: SetUp },
       { path: '/settings/performance', title: '性能测试管理设置', icon: TrendCharts },
+      { path: '/settings/environments', title: '测试环境配置', icon: Connection },
     ],
   },
 ]

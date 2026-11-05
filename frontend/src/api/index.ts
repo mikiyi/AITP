@@ -57,6 +57,9 @@ import type {
   SearchResult,
   SelfCheckResult,
   SystemConfigItem,
+  TestEnv,
+  TestEnvListResult,
+  TestEnvProbe,
   TestCase,
   TestDataBatch,
   TestDataBatchPage,
@@ -561,6 +564,24 @@ export const badgeApi = {
     post<{ section: string; cleared: number }>(`/badges/${section}/clear`),
   increase: (section: string, count = 1) =>
     post(`/badges/${section}/increase`, { count }),
+}
+
+/** 测试环境配置：多套命名环境，供首页环境健康监测使用。口令只回掩码，绝不进大模型。 */
+export const testEnvApi = {
+  list: () => get<TestEnvListResult>('/test-envs'),
+  get: (id: number) => get<TestEnv>(`/test-envs/${id}`),
+  create: (body: Record<string, unknown>) => post<TestEnv>('/test-envs', body),
+  update: (id: number, body: Record<string, unknown>) => put<TestEnv>(`/test-envs/${id}`, body),
+  remove: (id: number) => del<{ id: number; deleted: boolean }>(`/test-envs/${id}`),
+  setPassword: (id: number, password: string) =>
+    post<{ id: number; passwordMasked: string; hasPassword: boolean }>(
+      `/test-envs/${id}/password`,
+      { password },
+    ),
+  /** 对已保存环境做健康探测。 */
+  probe: (id: number) => post<TestEnvProbe>(`/test-envs/${id}/probe`),
+  /** 对未保存的草稿配置试连。 */
+  probeDraft: (body: Record<string, unknown>) => post<TestEnvProbe>('/test-envs/probe-draft', body),
 }
 
 /** 测试文档模板：按类别（测试用例 / 测试报告 / 测试点脑图）维护产出物模板。 */
