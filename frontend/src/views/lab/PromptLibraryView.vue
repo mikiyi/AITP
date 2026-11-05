@@ -32,9 +32,6 @@
         <div class="prompt-card__head">
           <span class="prompt-card__title">{{ item.title }}</span>
           <span class="prompt-card__tags">
-            <el-tag size="small" effect="plain" :type="item.useCount ? 'success' : 'info'">
-              用过 {{ item.useCount ?? 0 }} 次
-            </el-tag>
             <el-tag size="small" effect="plain">{{ item.code }}</el-tag>
           </span>
         </div>
@@ -43,6 +40,11 @@
           <el-tag v-for="name in item.variables" :key="name" size="small" :type="optionalOf(item, name) ? 'info' : 'warning'">
             {{ name }}
           </el-tag>
+        </div>
+        <div class="prompt-card__foot">
+          <span class="prompt-card__usage" :class="{ 'is-zero': !item.useCount }">
+            用过 {{ item.useCount ?? 0 }} 次
+          </span>
         </div>
       </div>
       <el-empty v-if="!filtered.length && !loading" description="没有匹配的提示词" :image-size="80" />
@@ -214,6 +216,22 @@ onMounted(load)
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+/* 使用次数放卡片右下角 */
+.prompt-card__foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.prompt-card__usage {
+  font-size: 12px;
+  color: var(--aitp-text-weak);
+}
+
+.prompt-card__usage.is-zero {
+  opacity: 0.6;
 }
 
 .var-tag {

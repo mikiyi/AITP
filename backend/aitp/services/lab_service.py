@@ -30,6 +30,7 @@ from ..ai.safety import build_safety_prompt, mark_review_required, needs_human_r
 from ..ai.types import ChatResult, Message, ResolvedAIConfig, StreamEvent
 from ..common.constants import DEGRADE_EMPTY_OUTPUT, EGRESS_NONE, EGRESS_THIRD_PARTY
 from ..errors import AppError, ErrorCode
+from ..db.connection import get_db
 from ..prompts.registry import get_registry
 from ..repositories.module_repo import ModuleCapabilityRepository, ModuleRepository
 
@@ -496,10 +497,22 @@ def capability_card(spec: CapabilitySpec) -> dict[str, Any]:
 
 
 def capability_cards(codes: Iterable[str] | None = None) -> list[dict[str, Any]]:
-    """能力卡片列表；不传 codes 时返回全部能力。"""
+    """能力卡片列表；不传 codes 时返回全部能力。每张卡片带使用次数。"""
+    from ..repositories.ai_record_repo import AIRecordRepository
+
     if codes is None:
         codes = tuple(CAPABILITIES.keys())
-    return [capability_card(CAPABILITIES[code]) for code in codes]
+    use_counts: dict[str, int] = {}
+    try:
+        use_counts = AIRecordRepository(get_db()).count_by_capability()
+    except Exception:  # noqa: BLE001 - 统计失败不该让能力目录整个失败
+        use_counts = {}
+    result = []
+    for code in codes:
+        card = capability_card(CAPABILITIES[code])
+        card["useCount"] = use_counts.get(code, 0)
+        result.append(card)
+    return result
 
 
 # ---------------- 智能路由 ----------------

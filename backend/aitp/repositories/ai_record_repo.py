@@ -77,3 +77,12 @@ class AIRecordRepository(BaseRepository):
             " GROUP BY prompt_code",
         ).fetchall()
         return {str(r["prompt_code"]): int(r["c"]) for r in rows}
+
+    def count_by_capability(self) -> dict[str, int]:
+        """统计每个能力被使用的次数，用于能力总览卡片标注使用频次。"""
+        rows = self.conn.execute(
+            "SELECT capability, COUNT(*) AS c FROM biz_ai_record"
+            " WHERE is_deleted = 0 AND capability IS NOT NULL AND capability != ''"
+            " GROUP BY capability",
+        ).fetchall()
+        return {str(r["capability"]): int(r["c"]) for r in rows}

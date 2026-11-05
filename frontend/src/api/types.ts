@@ -332,6 +332,8 @@ export interface CapabilitySpec {
   category: string
   /** 卡片上展示的能力特性：导出 Excel/Word、采纳、入库、模板、历史产出等 */
   features: Array<{ key: string; label: string }>
+  /** 该能力被使用的次数，用于能力卡片右上角标注使用频次。 */
+  useCount?: number
   /** 提示词库里的标题 */
   promptTitle: string
   /** 提示词库里的说明 */

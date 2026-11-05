@@ -27,14 +27,24 @@
         >
           <div class="lab-card__head">
             <span class="lab-card__title">{{ item.label }}</span>
-            <el-tag
-              v-if="item.category === 'extended'"
-              size="small"
-              type="info"
-              effect="plain"
-            >
-              扩展
-            </el-tag>
+            <span class="lab-card__head-tags">
+              <span
+                v-if="item.category !== 'extended'"
+                class="lab-card__usage"
+                :class="{ 'is-zero': !item.useCount }"
+                :title="`该能力被使用过 ${item.useCount ?? 0} 次`"
+              >
+                用过 {{ item.useCount ?? 0 }} 次
+              </span>
+              <el-tag
+                v-if="item.category === 'extended'"
+                size="small"
+                type="info"
+                effect="plain"
+              >
+                扩展
+              </el-tag>
+            </span>
           </div>
 
           <p class="lab-card__goal">{{ item.promptDescription || item.goal }}</p>
@@ -235,8 +245,27 @@ onMounted(() => {
 .lab-card__head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* 右上角：使用次数 / 扩展标记 */
+.lab-card__head-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.lab-card__usage {
+  font-size: 12px;
+  color: var(--el-color-primary);
+}
+
+.lab-card__usage.is-zero {
+  color: var(--aitp-text-weak);
+  opacity: 0.6;
 }
 
 .lab-card__title {
