@@ -117,7 +117,7 @@ import { Plus } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
-import { bugApi, moduleApi } from '@/api'
+import { bugApi, moduleApi, projectVersionApi } from '@/api'
 import type { Bug, ModuleOption } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 
@@ -172,7 +172,31 @@ const bugTypeOptions = ['functional', 'interface', 'boundary', 'security', 'ui',
 
 const moduleOptions = ref<ModuleOption[]>([])
 
-const extraQuery = computed(() => ({ projectId: appStore.currentProjectId ?? undefined }))
+const extraQuery = computed(() => ({
+  projectId: appStore.currentProjectId ?? undefined,
+  versionId: selectedVersionId.value ?? undefined,
+}))
+
+/** 当前项目下的版本清单，供版本下拉筛选。 */
+const versionOptions = ref<Array<{ label: string; value: number }>>([])
+const selectedVersionId = ref<number | null>(null)
+
+async function loadVersionOptions(): Promise<void> {
+  const pid = appStore.currentProjectId
+  if (!pid) {
+    versionOptions.value = []
+    return
+  }
+  try {
+    const result = await projectVersionApi.list(pid)
+    versionOptions.value = result.list.map((v) => ({
+      label: v.versionCode + (v.name ? ` ${v.name}` : ''),
+      value: v.id as number,
+    }))
+  } catch {
+    versionOptions.value = []
+  }
+}
 
 const columns: ColumnDef[] = [
   { prop: 'bugNo', label: '编号', width: 100 },
@@ -184,11 +208,12 @@ const columns: ColumnDef[] = [
   { prop: 'id', label: '操作', width: 210, slot: 'actions' },
 ]
 
-const searchFields: SearchField[] = [
+const searchFields = computed<SearchField[]>(() => [
   { prop: 'keyword', label: '标题 / 编号' },
   { prop: 'status', label: '状态', type: 'select', options: bugStatusOptions },
   { prop: 'severity', label: '严重度', type: 'select', options: ['P0', 'P1', 'P2', 'P3'].map((p) => ({ label: p, value: p })) },
-]
+  { prop: 'versionId', label: '版本', type: 'select', options: versionOptions.value },
+])
 
 function fetcher(query: Record<string, unknown>) {
   return bugApi.list(query)
@@ -402,6 +427,7 @@ async function loadOptions(): Promise<void> {
 
 watch(() => appStore.currentProjectId, () => {
   void loadOptions()
+  void loadVersionOptions()
   tableRef.value?.reload()
 }, { immediate: true })
 </script>

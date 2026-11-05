@@ -92,17 +92,37 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
-import { requirementApi } from '@/api'
+import { projectVersionApi, requirementApi } from '@/api'
 import type { Requirement } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 
 const appStore = useAppStore()
+
+/** 当前项目下的版本清单，供版本下拉筛选。 */
+const versionOptions = ref<Array<{ label: string; value: number }>>([])
+
+async function loadVersionOptions(): Promise<void> {
+  const pid = appStore.currentProjectId
+  if (!pid) {
+    versionOptions.value = []
+    return
+  }
+  try {
+    const result = await projectVersionApi.list(pid)
+    versionOptions.value = result.list.map((v) => ({
+      label: v.versionCode + (v.name ? ` ${v.name}` : ''),
+      value: v.id as number,
+    }))
+  } catch {
+    versionOptions.value = []
+  }
+}
 
 const knowledgeVisible = ref(false)
 const knowledgePayload = reactive({
@@ -133,11 +153,16 @@ const columns: ColumnDef[] = [
   { prop: 'id', label: '操作', width: 210, slot: 'actions' },
 ]
 
-const searchFields: SearchField[] = [
+const searchFields = computed<SearchField[]>(() => [
   { prop: 'keyword', label: '标题 / 编号' },
   { prop: 'status', label: '状态', type: 'select', options: requirementStatusOptions.map((s) => ({ label: s, value: s })) },
   { prop: 'priority', label: '优先级', type: 'select', options: ['P0', 'P1', 'P2', 'P3'].map((p) => ({ label: p, value: p })) },
-]
+  { prop: 'versionId', label: '版本', type: 'select', options: versionOptions.value },
+])
+
+onMounted(() => {
+  void loadVersionOptions()
+})
 
 function fetcher(query: Record<string, unknown>) {
   return requirementApi.list(query)
