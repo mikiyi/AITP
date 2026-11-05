@@ -57,17 +57,23 @@
       </el-descriptions>
       <div v-if="status.candidates.length" class="candidates">
         <span class="muted">降级顺序：</span>
-        <el-tag
-          v-for="item in status.candidates"
-          :key="`${item.profileId}-${item.model}`"
-          class="candidates__item"
-          size="small"
-          effect="plain"
-          :type="item.isLocal ? 'warning' : 'primary'"
-        >
-          {{ item.profileName || item.provider }}/{{ item.model || '未指定' }}
-          （优先级 {{ item.priority }}）
-        </el-tag>
+        <div class="candidates__list">
+          <div
+            v-for="(item, index) in status.candidates"
+            :key="`${item.profileId}-${item.model}`"
+            class="candidates__row"
+          >
+            <span class="candidates__order">{{ index + 1 }}</span>
+            <el-tag
+              size="small"
+              effect="plain"
+              :type="item.isLocal ? 'warning' : 'primary'"
+            >
+              {{ item.profileName || item.provider }}/{{ item.model || '未指定' }}
+            </el-tag>
+            <span class="muted candidates__priority">优先级 {{ item.priority }}</span>
+          </div>
+        </div>
       </div>
       <div v-if="status.error" class="muted status-error">{{ status.error }}</div>
     </div>
@@ -784,15 +790,38 @@ onMounted(loadAll)
 }
 
 .candidates {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
   margin-top: 10px;
 }
 
-.candidates__item {
-  margin-right: 0;
+.candidates__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.candidates__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.candidates__order {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.candidates__priority {
+  font-size: 12px;
 }
 
 .status-error {
