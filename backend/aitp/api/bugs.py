@@ -15,6 +15,7 @@ from ..repositories.bug_repo import BugRepository
 from ..repositories.test_case_repo import TestCaseRepository
 from ..services import audit_service, tabular_export
 from .helpers import (
+    attach_version_codes,
     audit,
     batch_soft_delete,
     body,
@@ -62,6 +63,7 @@ def _to_public(row: dict[str, Any]) -> dict[str, Any]:
         "id": row.get("id"),
         "projectId": row.get("project_id"),
         "moduleId": row.get("module_id"),
+        "versionId": row.get("version_id"),
         "bugNo": row.get("bug_no"),
         "title": row.get("title"),
         "severity": row.get("severity"),
@@ -91,7 +93,7 @@ def list_bugs() -> Response:
     filters = query_filters(FILTERS)
     page = repo.list(filters, keyword_of() or None, page_num=page_num, page_size=page_size)
     payload = page_payload(page)
-    payload["list"] = [_to_public(_with_steps(row)) for row in payload["list"]]
+    payload["list"] = attach_version_codes(conn, [_to_public(_with_steps(row)) for row in payload["list"]])
     return ok(payload)
 
 
@@ -203,6 +205,18 @@ def update_bug(pk: str) -> Response:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "缺陷不存在")
     data = body()
     payload = {k: v for k, v in data.items() if k in WRITE_FIELDS}
+    if "versionId" in data:
+        payload["version_id"] = data["versionId"]
+    if "moduleId" in data:
+        payload["module_id"] = data["moduleId"]
+    if "projectId" in data:
+        payload["project_id"] = data["projectId"]
+    if "bugType" in data:
+        payload["bug_type"] = data["bugType"]
+    if "expectedResult" in data:
+        payload["expected_result"] = data["expectedResult"]
+    if "actualResult" in data:
+        payload["actual_result"] = data["actualResult"]
     if "severity" in payload:
         payload["severity"] = check_choice(payload["severity"], BUG_SEVERITY, "severity", row["severity"])
     if "bug_type" in payload:

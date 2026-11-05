@@ -109,6 +109,32 @@ def pick(source: dict[str, Any], allowed: Iterable[str]) -> dict[str, Any]:
     return {k: v for k, v in source.items() if k in allowed_set}
 
 
+def attach_version_codes(
+    conn: sqlite3.Connection,
+    rows: list[dict[str, Any]],
+    field: str = "versionId",
+    code_field: str = "versionCode",
+) -> list[dict[str, Any]]:
+    """给资产列表批量补版本号，用于前端列表列展示。一次查询，不逐行打点。"""
+    ids = {
+        int(row[field])
+        for row in rows
+        if row.get(field) not in (None, "")
+    }
+    if not ids:
+        return rows
+    placeholders = ",".join("?" for _ in ids)
+    sql = f"SELECT id, version_code, name FROM biz_project_version WHERE id IN ({placeholders})"
+    mapping: dict[int, str] = {}
+    for row in conn.execute(sql, list(ids)):
+        name = row["name"] or ""
+        mapping[int(row["id"])] = f"{row['version_code']} {name}".strip()
+    for row in rows:
+        raw = row.get(field)
+        row[code_field] = mapping.get(int(raw), "") if raw not in (None, "") else ""
+    return rows
+
+
 def download_response(
     content: bytes,
     filename: str,

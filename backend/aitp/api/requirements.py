@@ -14,6 +14,7 @@ from ..repositories.project_repo import ProjectRepository
 from ..repositories.requirement_repo import RequirementRepository
 from ..services import audit_service, tabular_export
 from .helpers import (
+    attach_version_codes,
     audit,
     batch_soft_delete,
     body,
@@ -52,6 +53,7 @@ def _to_public(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": row.get("id"),
         "projectId": row.get("project_id"),
+        "versionId": row.get("version_id"),
         "reqNo": row.get("req_no"),
         "title": row.get("title"),
         "content": row.get("content"),
@@ -74,7 +76,7 @@ def list_requirements() -> Response:
     filters = query_filters(FILTERS)
     page = repo.list(filters, keyword_of() or None, page_num=page_num, page_size=page_size)
     payload = page_payload(page)
-    payload["list"] = [_to_public(row) for row in payload["list"]]
+    payload["list"] = attach_version_codes(conn, [_to_public(row) for row in payload["list"]])
     return ok(payload)
 
 
@@ -152,6 +154,10 @@ def update_requirement(pk: str) -> Response:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "需求不存在")
     data = body()
     payload = {k: v for k, v in data.items() if k in WRITE_FIELDS}
+    if "versionId" in data:
+        payload["version_id"] = data["versionId"]
+    if "projectId" in data:
+        payload["project_id"] = data["projectId"]
     if "status" in payload:
         payload["status"] = check_choice(payload["status"], REQUIREMENT_STATUS, "status", row["status"])
     repo.update(target, payload)

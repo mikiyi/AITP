@@ -19,6 +19,7 @@ from ..repositories.test_case_repo import TestCaseRepository
 from ..services import audit_service, nav_badge_service
 from ..services import tabular_export, xlsx_exporter, xlsx_importer
 from .helpers import (
+    attach_version_codes,
     audit,
     batch_soft_delete,
     body,
@@ -58,6 +59,7 @@ def _to_public(row: dict[str, Any]) -> dict[str, Any]:
         "projectId": row.get("project_id"),
         "requirementId": row.get("requirement_id"),
         "moduleId": row.get("module_id"),
+        "versionId": row.get("version_id"),
         "caseNo": row.get("case_no"),
         "title": row.get("title"),
         "caseType": row.get("case_type"),
@@ -136,7 +138,7 @@ def list_cases() -> Response:
     filters = query_filters(FILTERS)
     page = repo.list_detail(filters, keyword_of() or None, page_num=page_num, page_size=page_size)
     payload = page_payload(page)
-    payload["list"] = [_to_public(row) for row in payload["list"]]
+    payload["list"] = attach_version_codes(conn, [_to_public(row) for row in payload["list"]])
     return ok(payload)
 
 
@@ -442,6 +444,20 @@ def update_case(pk: str) -> Response:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "测试用例不存在")
     data = body()
     payload = {k: v for k, v in data.items() if k in WRITE_FIELDS}
+    if "versionId" in data:
+        payload["version_id"] = data["versionId"]
+    if "moduleId" in data:
+        payload["module_id"] = data["moduleId"]
+    if "requirementId" in data:
+        payload["requirement_id"] = data["requirementId"]
+    if "projectId" in data:
+        payload["project_id"] = data["projectId"]
+    if "caseType" in data:
+        payload["case_type"] = data["caseType"]
+    if "expectedResult" in data:
+        payload["expected_result"] = data["expectedResult"]
+    if "actualResult" in data:
+        payload["actual_result"] = data["actualResult"]
     if "case_type" in payload:
         payload["case_type"] = check_choice(payload["case_type"], CASE_TYPE, "case_type", row["case_type"])
     if "priority" in payload:

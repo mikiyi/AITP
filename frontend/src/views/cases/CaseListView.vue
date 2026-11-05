@@ -62,6 +62,11 @@
             <el-option v-for="item in appStore.projects" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
+        <el-form-item label="版本">
+          <el-select v-model="form.versionId" placeholder="选择版本" clearable filterable style="width: 100%">
+            <el-option v-for="item in formVersionOptions" :key="item.value" :label="item.label" :value="item.value" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="功能点">
           <el-select v-model="form.moduleId" placeholder="选择功能点" clearable filterable>
             <el-option v-for="item in moduleOptions" :key="item.id" :label="item.path" :value="item.id" />
@@ -338,6 +343,7 @@ const columns: ColumnDef[] = [
   { prop: 'priority', label: '优先级', width: 90, slot: 'priority' },
   { prop: 'status', label: '执行状态', width: 100, slot: 'status' },
   { prop: 'moduleId', label: '功能点', minWidth: 160, slot: 'moduleId' },
+  { prop: 'versionCode', label: '版本', width: 130 },
   { prop: 'id', label: '操作', width: 210, slot: 'actions' },
 ]
 
@@ -402,6 +408,7 @@ const form = reactive({
   projectId: null as number | null,
   moduleId: null as number | null,
   requirementId: null as number | null,
+  versionId: null as number | null,
   caseType: 'functional',
   priority: 'P2',
   status: 'not_executed',
@@ -414,6 +421,34 @@ const form = reactive({
 
 const extraFields = computed<ExtraField[]>(() => EXTRA_FIELDS[form.caseType] ?? [])
 
+/** 表单里的版本下拉跟随表单中选的项目，切换项目时重新拉取该项目的版本。 */
+const formVersionOptions = ref<Array<{ label: string; value: number }>>([])
+const formVersionProjectId = ref<number | null>(null)
+/** 编辑回显时要保留的版本 id，等选项拉完再赋值，避免被 watch 清空。 */
+const pendingVersionId = ref<number | null>(null)
+
+watch(() => form.projectId, async (pid) => {
+  form.versionId = pendingVersionId.value
+  pendingVersionId.value = null
+  if (!pid) {
+    formVersionOptions.value = []
+    formVersionProjectId.value = null
+    return
+  }
+  formVersionProjectId.value = pid
+  try {
+    const result = await projectVersionApi.list(pid)
+    if (formVersionProjectId.value === pid) {
+      formVersionOptions.value = result.list.map((v) => ({
+        label: v.versionCode + (v.name ? ` ${v.name}` : ''),
+        value: v.id as number,
+      }))
+    }
+  } catch {
+    formVersionOptions.value = []
+  }
+}, { immediate: true })
+
 function openCreate(): void {
   editing.value = null
   Object.assign(form, {
@@ -421,6 +456,7 @@ function openCreate(): void {
     projectId: appStore.currentProjectId,
     moduleId: null,
     requirementId: null,
+    versionId: null,
     caseType: 'functional',
     priority: 'P2',
     status: 'not_executed',
@@ -437,6 +473,7 @@ async function openEdit(row: TestCase): Promise<void> {
   try {
     const detail = await caseApi.get(row.id)
     editing.value = detail
+    pendingVersionId.value = (detail as any).versionId ?? null
     Object.assign(form, {
       title: detail.title ?? '',
       projectId: detail.projectId ?? null,

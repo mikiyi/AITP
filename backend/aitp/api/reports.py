@@ -18,7 +18,7 @@ from ..repositories.project_repo import ProjectRepository
 from ..repositories.report_repo import ReportRepository
 from ..services import nav_badge_service
 from ..services import audit_service, report_exporter
-from .helpers import (audit, body, commit, db, keyword_of, page_args, page_payload,
+from .helpers import (attach_version_codes, audit, body, commit, db, keyword_of, page_args, page_payload,
                      path_int, query_filters)
 
 bp = Blueprint("reports", __name__)
@@ -30,6 +30,7 @@ def _to_public(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": row.get("id"),
         "projectId": row.get("project_id"),
+        "versionId": row.get("version_id"),
         "reportNo": row.get("report_no"),
         "title": row.get("title"),
         "reportType": row.get("report_type"),
@@ -219,7 +220,7 @@ def list_reports() -> Response:
     filters = query_filters(FILTERS)
     page = repo.list(filters, keyword_of() or None, page_num=page_num, page_size=page_size)
     payload = page_payload(page)
-    payload["list"] = [_to_public(row) for row in payload["list"]]
+    payload["list"] = attach_version_codes(conn, [_to_public(row) for row in payload["list"]])
     return ok(payload)
 
 
@@ -284,6 +285,8 @@ def update_report(pk: str) -> Response:
         payload["report_type"] = check_choice(data["reportType"], REPORT_TYPE, "reportType", row["report_type"])
     if "status" in data:
         payload["status"] = check_choice(data["status"], REPORT_STATUS, "status", row["status"])
+    if "versionId" in data:
+        payload["version_id"] = optional_int(data["versionId"], "versionId")
     repo.update(target, payload)
     if "knowledgeRefs" in data:
         _sync_knowledge_refs(conn, target, _ref_ids(data))

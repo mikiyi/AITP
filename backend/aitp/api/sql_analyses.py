@@ -13,7 +13,7 @@ from typing import Any
 
 from flask import Blueprint, Response
 
-from ..common.validators import check_choice, optional_str, require_int, require_str
+from ..common.validators import check_choice, optional_int, optional_str, require_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.project_repo import ProjectRepository
@@ -24,6 +24,7 @@ from ..repositories.sql_analysis_repo import (
 )
 from ..services import audit_service
 from .helpers import (
+    attach_version_codes,
     audit,
     body,
     commit,
@@ -37,7 +38,7 @@ from .helpers import (
 
 bp = Blueprint("sql_analyses", __name__)
 
-FILTERS = {"projectId": "project_id", "riskLevel": "risk_level", "source": "source"}
+FILTERS = {"projectId": "project_id", "riskLevel": "risk_level", "source": "source", "versionId": "version_id"}
 
 #: 可写字段（白名单）
 _TITLE_MAX = 300
@@ -53,7 +54,7 @@ def list_sql_analyses() -> Response:
     filters = query_filters(FILTERS)
     page = repo.list(filters, keyword_of() or None, page_num=page_num, page_size=page_size)
     payload = page_payload(page)
-    payload["list"] = [decorate(row) for row in payload["list"]]
+    payload["list"] = attach_version_codes(conn, [decorate(row) for row in payload["list"]])
     return ok(payload)
 
 
@@ -79,6 +80,7 @@ def create_sql_analysis() -> Response:
     new_id = repo.insert({
         "project_id": project_id,
         "module_id": data.get("moduleId"),
+        "version_id": optional_int(data.get("versionId"), "versionId"),
         "sql_no": repo.next_sql_no(project_id),
         "title": title,
         "sql_text": optional_str(data.get("sqlText"), "sqlText", _SQL_MAX),
@@ -112,6 +114,8 @@ def update_sql_analysis(pk: str) -> Response:
         payload["project_id"] = project_id
     if "moduleId" in data:
         payload["module_id"] = data.get("moduleId")
+    if "versionId" in data:
+        payload["version_id"] = optional_int(data.get("versionId"), "versionId")
     if "sqlText" in data:
         payload["sql_text"] = optional_str(data.get("sqlText"), "sqlText", _SQL_MAX)
     if "analysis" in data:

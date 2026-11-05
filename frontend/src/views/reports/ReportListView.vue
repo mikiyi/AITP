@@ -43,6 +43,11 @@
             <el-option v-for="item in appStore.projects" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
+        <el-form-item label="版本">
+          <el-select v-model="form.versionId" placeholder="选择版本" clearable style="width: 100%">
+            <el-option v-for="item in formVersionOptions" :key="item.value" :label="item.label" :value="item.value" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="报告类型">
           <el-select v-model="form.reportType">
             <el-option v-for="item in typeOptions" :key="item.value" :label="item.label" :value="item.value" />
@@ -112,13 +117,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { MagicStick, Plus } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
-import { reportApi } from '@/api'
+import { projectVersionApi, reportApi } from '@/api'
 import type { Report } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 
@@ -158,16 +163,40 @@ const columns: ColumnDef[] = [
   { prop: 'id', label: '操作', width: 210, slot: 'actions' },
 ]
 
-const searchFields: SearchField[] = [
+const extraQuery = computed(() => ({
+  projectId: appStore.currentProjectId ?? undefined,
+  versionId: selectedVersionId.value ?? undefined,
+}))
+
+const versionOptions = ref<Array<{ label: string; value: number }>>([])
+const selectedVersionId = ref<number | null>(null)
+
+async function loadVersionOptions(): Promise<void> {
+  const pid = appStore.currentProjectId
+  if (!pid) { versionOptions.value = []; return }
+  try {
+    const result = await projectVersionApi.list(pid)
+    versionOptions.value = result.list.map((v) => ({
+      label: v.versionCode + (v.name ? ` ${v.name}` : ''),
+      value: v.id as number,
+    }))
+  } catch { versionOptions.value = [] }
+}
+
+watch(() => appStore.currentProjectId, () => {
+  selectedVersionId.value = null
+  void loadVersionOptions()
+}, { immediate: true })
+
+const searchFields = computed<SearchField[]>(() => [
   { prop: 'keyword', label: '标题 / 编号' },
   { prop: 'reportType', label: '类型', type: 'select', options: typeOptions },
   { prop: 'status', label: '状态', type: 'select', options: [
     { label: '草稿', value: 'draft' },
     { label: '已发布', value: 'published' },
   ] },
-]
-
-const extraQuery = computed(() => ({ projectId: appStore.currentProjectId ?? undefined }))
+  { prop: 'versionId', label: '版本', type: 'select', options: versionOptions.value },
+])
 
 function fetcher(query: Record<string, unknown>) {
   return reportApi.list(query)
@@ -183,14 +212,39 @@ const period = ref<[string, string] | null>(null)
 const form = reactive({
   title: '',
   projectId: null as number | null,
+  versionId: null as number | null,
   reportType: 'iteration',
   content: '',
 })
+
+/** 表单里的版本下拉跟随表单中选的项目。 */
+const formVersionOptions = ref<Array<{ label: string; value: number }>>([])
+const formVersionProjectId = ref<number | null>(null)
+
+watch(() => form.projectId, async (pid) => {
+  form.versionId = null
+  if (!pid) {
+    formVersionOptions.value = []
+    formVersionProjectId.value = null
+    return
+  }
+  formVersionProjectId.value = pid
+  try {
+    const result = await projectVersionApi.list(pid)
+    if (formVersionProjectId.value === pid) {
+      formVersionOptions.value = result.list.map((v) => ({
+        label: v.versionCode + (v.name ? ` ${v.name}` : ''),
+        value: v.id as number,
+      }))
+    }
+  } catch { formVersionOptions.value = [] }
+}, { immediate: true })
 
 function openCreate(): void {
   Object.assign(form, {
     title: '',
     projectId: appStore.currentProjectId,
+    versionId: null,
     reportType: 'iteration',
     content: '',
   })

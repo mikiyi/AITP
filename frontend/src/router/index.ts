@@ -204,6 +204,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '模块树设置', hidden: true },
   },
   {
+    path: '/settings/versions',
+    name: 'settings-versions',
+    component: () => import('@/views/settings/VersionManageView.vue'),
+    meta: { title: '项目版本管理', hidden: true },
+  },
+  {
     path: '/settings/templates',
     name: 'settings-templates',
     component: () => import('@/views/settings/DocTemplateSettingsView.vue'),

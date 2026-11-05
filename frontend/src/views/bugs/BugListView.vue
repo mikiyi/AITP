@@ -56,6 +56,11 @@
             <el-option v-for="item in moduleOptions" :key="item.id" :label="item.path" :value="item.id" />
           </el-select>
         </el-form-item>
+        <el-form-item label="项目版本">
+          <el-select v-model="form.versionId" clearable placeholder="选择版本" style="width: 100%">
+            <el-option v-for="item in formVersionOptions" :key="item.value" :label="item.label" :value="item.value" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="严重程度">
           <el-select v-model="form.severity">
             <el-option v-for="item in ['P0', 'P1', 'P2', 'P3']" :key="item" :label="item" :value="item" />
@@ -205,6 +210,7 @@ const columns: ColumnDef[] = [
   { prop: 'status', label: '状态', width: 100, slot: 'status' },
   { prop: 'assignee', label: '指派', width: 100 },
   { prop: 'moduleId', label: '功能点', minWidth: 140, slot: 'moduleId' },
+  { prop: 'versionCode', label: '版本', width: 130 },
   { prop: 'id', label: '操作', width: 210, slot: 'actions' },
 ]
 
@@ -274,6 +280,7 @@ const form = reactive({
   title: '',
   projectId: null as number | null,
   moduleId: null as number | null,
+  versionId: null as number | null,
   severity: 'P2',
   status: 'open',
   bugType: 'functional',
@@ -292,6 +299,7 @@ function openCreate(): void {
     title: '',
     projectId: appStore.currentProjectId,
     moduleId: null,
+    versionId: null,
     severity: 'P2',
     status: 'open',
     bugType: 'functional',
@@ -310,6 +318,7 @@ async function openEdit(row: Bug): Promise<void> {
   try {
     const detail = await bugApi.get(row.id)
     editing.value = detail
+    pendingVersionId.value = (detail as any).versionId ?? null
     Object.assign(form, {
       title: detail.title ?? '',
       projectId: detail.projectId ?? null,
@@ -429,5 +438,32 @@ watch(() => appStore.currentProjectId, () => {
   void loadOptions()
   void loadVersionOptions()
   tableRef.value?.reload()
+}, { immediate: true })
+
+/** 表单里的版本下拉跟随表单中选的项目。 */
+const formVersionOptions = ref<Array<{ label: string; value: number }>>([])
+const formVersionProjectId = ref<number | null>(null)
+const pendingVersionId = ref<number | null>(null)
+
+watch(() => form.projectId, async (pid) => {
+  form.versionId = pendingVersionId.value
+  pendingVersionId.value = null
+  if (!pid) {
+    formVersionOptions.value = []
+    formVersionProjectId.value = null
+    return
+  }
+  formVersionProjectId.value = pid
+  try {
+    const result = await projectVersionApi.list(pid)
+    if (formVersionProjectId.value === pid) {
+      formVersionOptions.value = result.list.map((v) => ({
+        label: v.versionCode + (v.name ? ` ${v.name}` : ''),
+        value: v.id as number,
+      }))
+    }
+  } catch {
+    formVersionOptions.value = []
+  }
 }, { immediate: true })
 </script>

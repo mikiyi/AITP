@@ -52,6 +52,11 @@
             />
           </el-select>
         </el-form-item>
+        <el-form-item label="版本">
+          <el-select v-model="form.versionId" placeholder="选择版本" clearable style="width: 100%">
+            <el-option v-for="item in formVersionOptions" :key="item.value" :label="item.label" :value="item.value" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="优先级">
           <el-select v-model="form.priority">
             <el-option v-for="item in ['P0', 'P1', 'P2', 'P3']" :key="item" :label="item" :value="item" />
@@ -92,7 +97,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
@@ -104,7 +109,7 @@ import { useAppStore } from '@/stores/app'
 
 const appStore = useAppStore()
 
-/** 当前项目下的版本清单，供版本下拉筛选。 */
+/** 列表筛选用的版本清单，跟随右上角当前项目。 */
 const versionOptions = ref<Array<{ label: string; value: number }>>([])
 
 async function loadVersionOptions(): Promise<void> {
@@ -148,6 +153,7 @@ const columns: ColumnDef[] = [
   { prop: 'title', label: '标题', minWidth: 180 },
   { prop: 'priority', label: '优先级', width: 90, slot: 'priority' },
   { prop: 'status', label: '状态', width: 100, slot: 'status' },
+  { prop: 'versionCode', label: '版本', width: 130 },
   { prop: 'source', label: '来源', width: 120 },
   { prop: 'updatedAt', label: '更新时间', width: 170 },
   { prop: 'id', label: '操作', width: 210, slot: 'actions' },
@@ -164,6 +170,8 @@ onMounted(() => {
   void loadVersionOptions()
 })
 
+watch(() => appStore.currentProjectId, () => { void loadVersionOptions() })
+
 function fetcher(query: Record<string, unknown>) {
   return requirementApi.list(query)
 }
@@ -179,10 +187,38 @@ const form = reactive({
   title: '',
   content: '',
   projectId: null as number | null,
+  versionId: null as number | null,
   priority: 'P1',
   status: 'draft',
   source: '',
 })
+
+/** 表单里的版本下拉跟随表单中选的项目。 */
+const formVersionOptions = ref<Array<{ label: string; value: number }>>([])
+const formVersionProjectId = ref<number | null>(null)
+const pendingVersionId = ref<number | null>(null)
+
+watch(() => form.projectId, async (pid) => {
+  form.versionId = pendingVersionId.value
+  pendingVersionId.value = null
+  if (!pid) {
+    formVersionOptions.value = []
+    formVersionProjectId.value = null
+    return
+  }
+  formVersionProjectId.value = pid
+  try {
+    const result = await projectVersionApi.list(pid)
+    if (formVersionProjectId.value === pid) {
+      formVersionOptions.value = result.list.map((v) => ({
+        label: v.versionCode + (v.name ? ` ${v.name}` : ''),
+        value: v.id as number,
+      }))
+    }
+  } catch {
+    formVersionOptions.value = []
+  }
+}, { immediate: true })
 
 function priorityTag(priority: string): 'danger' | 'warning' | 'info' | 'primary' {
   if (priority === 'P0') {
@@ -214,6 +250,7 @@ function openCreate(): void {
     title: '',
     content: '',
     projectId: appStore.currentProjectId,
+    versionId: null,
     priority: 'P1',
     status: 'draft',
     source: '',
@@ -223,6 +260,7 @@ function openCreate(): void {
 
 function openEdit(row: Requirement): void {
   editing.value = row
+  pendingVersionId.value = (row as any).versionId ?? null
   Object.assign(form, {
     title: row.title ?? '',
     content: row.content ?? '',

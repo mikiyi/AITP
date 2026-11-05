@@ -68,6 +68,11 @@
             <el-option v-for="item in appStore.projects" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
+        <el-form-item label="版本">
+          <el-select v-model="form.versionId" placeholder="选择版本" clearable style="width: 100%">
+            <el-option v-for="item in formVersionOptions" :key="item.value" :label="item.label" :value="item.value" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="风险级别">
           <el-radio-group v-model="form.riskLevel">
             <el-radio value="none">无风险</el-radio>
@@ -106,13 +111,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
 import MarkdownView from '@/components/MarkdownView.vue'
-import { sqlAnalysisApi } from '@/api'
+import { projectVersionApi, sqlAnalysisApi } from '@/api'
 import type { SqlAnalysis } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 
@@ -147,7 +152,24 @@ const searchFields = computed<SearchField[]>(() => [
     type: 'select',
     options: appStore.projects.map((item) => ({ label: item.name, value: item.id })),
   },
+  { prop: 'versionId', label: '版本', type: 'select', options: versionOptions.value },
 ])
+
+const versionOptions = ref<Array<{ label: string; value: number }>>([])
+
+async function loadVersionOptions(): Promise<void> {
+  const pid = appStore.currentProjectId
+  if (!pid) { versionOptions.value = []; return }
+  try {
+    const result = await projectVersionApi.list(pid)
+    versionOptions.value = result.list.map((v) => ({
+      label: v.versionCode + (v.name ? ` ${v.name}` : ''),
+      value: v.id as number,
+    }))
+  } catch { versionOptions.value = [] }
+}
+
+watch(() => appStore.currentProjectId, () => { void loadVersionOptions() }, { immediate: true })
 
 function fetcher(query: Record<string, unknown>) {
   return sqlAnalysisApi.list(query)
@@ -185,16 +207,44 @@ const editing = ref<SqlAnalysis | null>(null)
 const form = reactive({
   title: '',
   projectId: null as number | null,
+  versionId: null as number | null,
   riskLevel: 'none',
   sqlText: '',
   analysis: '',
 })
 
+/** 表单里的版本下拉跟随表单中选的项目。 */
+const formVersionOptions = ref<Array<{ label: string; value: number }>>([])
+const formVersionProjectId = ref<number | null>(null)
+const pendingVersionId = ref<number | null>(null)
+
+watch(() => form.projectId, async (pid) => {
+  form.versionId = pendingVersionId.value
+  pendingVersionId.value = null
+  if (!pid) {
+    formVersionOptions.value = []
+    formVersionProjectId.value = null
+    return
+  }
+  formVersionProjectId.value = pid
+  try {
+    const result = await projectVersionApi.list(pid)
+    if (formVersionProjectId.value === pid) {
+      formVersionOptions.value = result.list.map((v) => ({
+        label: v.versionCode + (v.name ? ` ${v.name}` : ''),
+        value: v.id as number,
+      }))
+    }
+  } catch { formVersionOptions.value = [] }
+}, { immediate: true })
+
 function openCreate(): void {
   editing.value = null
+  pendingVersionId.value = null
   Object.assign(form, {
     title: '',
     projectId: appStore.currentProjectId ?? null,
+    versionId: null,
     riskLevel: 'none',
     sqlText: '',
     analysis: '',
@@ -204,6 +254,7 @@ function openCreate(): void {
 
 function openEdit(row: SqlAnalysis): void {
   editing.value = row
+  pendingVersionId.value = (row as any).versionId ?? null
   Object.assign(form, {
     title: row.title,
     projectId: row.projectId,
@@ -228,6 +279,7 @@ async function save(): Promise<void> {
     const payload = {
       title: form.title.trim(),
       projectId: form.projectId,
+      versionId: form.versionId,
       riskLevel: form.riskLevel,
       sqlText: form.sqlText,
       analysis: form.analysis,

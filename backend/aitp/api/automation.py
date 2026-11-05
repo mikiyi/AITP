@@ -58,13 +58,14 @@ FILTERS = {
     "status": "status",
     "framework": "framework",
     "source": "source",
+    "versionId": "version_id",
 }
 
 #: 创建 / 更新时可写字段
 WRITE_FIELDS = {
     "name", "category", "targetType", "framework", "language", "appPlatforms",
     "projectId", "moduleId", "description", "content", "source",
-    "runMode", "entryCommand", "timeoutSeconds", "status", "remark",
+    "runMode", "entryCommand", "timeoutSeconds", "status", "remark", "versionId",
 }
 
 #: Markdown 代码块提取：```xml ... ``` 或 ```jmx ... ```
@@ -143,6 +144,8 @@ def _write_payload(data: dict[str, Any]) -> dict[str, Any]:
         payload["project_id"] = _optional_int(data.get("projectId"))
     if "moduleId" in data:
         payload["module_id"] = _optional_int(data.get("moduleId"))
+    if "versionId" in data:
+        payload["version_id"] = _optional_int(data.get("versionId"))
     if "timeoutSeconds" in data:
         timeout = _optional_int(data.get("timeoutSeconds"))
         payload["timeout_seconds"] = timeout if timeout and timeout > 0 else None
