@@ -304,7 +304,7 @@ async function loadOverviewVersions(): Promise<void> {
   try {
     const result = await projectVersionApi.list(pid)
     overviewVersionOptions.value = result.list.map((v) => ({
-      label: v.versionCode + (v.name ? ` ${v.name}` : ''),
+      label: v.versionCode,
       value: v.id as number,
     }))
   } catch {

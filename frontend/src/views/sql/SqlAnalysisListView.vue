@@ -129,6 +129,8 @@ const columns: ColumnDef[] = [
   { prop: 'title', label: '标题', minWidth: 190 },
   { prop: 'riskLevel', label: '风险级别', width: 100, slot: 'riskLevel' },
   { prop: 'projectId', label: '项目', width: 140, slot: 'projectId' },
+  { prop: 'versionCode', label: '版本号', width: 100 },
+  { prop: 'versionName', label: '版本名称', width: 120 },
   { prop: 'sqlText', label: 'SQL', minWidth: 200, slot: 'sqlText' },
   { prop: 'updatedAt', label: '更新时间', width: 170 },
   { prop: 'id', label: '操作', width: 260, slot: 'actions', fixed: 'right' },
@@ -163,7 +165,7 @@ async function loadVersionOptions(): Promise<void> {
   try {
     const result = await projectVersionApi.list(pid)
     versionOptions.value = result.list.map((v) => ({
-      label: v.versionCode + (v.name ? ` ${v.name}` : ''),
+      label: v.versionCode,
       value: v.id as number,
     }))
   } catch { versionOptions.value = [] }
@@ -231,7 +233,7 @@ watch(() => form.projectId, async (pid) => {
     const result = await projectVersionApi.list(pid)
     if (formVersionProjectId.value === pid) {
       formVersionOptions.value = result.list.map((v) => ({
-        label: v.versionCode + (v.name ? ` ${v.name}` : ''),
+        label: v.versionCode,
         value: v.id as number,
       }))
     }

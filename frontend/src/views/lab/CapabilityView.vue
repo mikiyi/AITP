@@ -1004,7 +1004,7 @@ watch(() => adoptAssetForm.projectId, async (pid) => {
     const result = await projectVersionApi.list(pid)
     if (adoptVersionProjectId.value === pid) {
       adoptVersionOptions.value = result.list.map((v) => ({
-        label: v.versionCode + (v.name ? ` ${v.name}` : ''),
+        label: v.versionCode,
         value: v.id as number,
       }))
     }

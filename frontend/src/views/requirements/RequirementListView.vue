@@ -121,7 +121,7 @@ async function loadVersionOptions(): Promise<void> {
   try {
     const result = await projectVersionApi.list(pid)
     versionOptions.value = result.list.map((v) => ({
-      label: v.versionCode + (v.name ? ` ${v.name}` : ''),
+      label: v.versionCode,
       value: v.id as number,
     }))
   } catch {
@@ -218,7 +218,7 @@ watch(() => form.projectId, async (pid) => {
     const result = await projectVersionApi.list(pid)
     if (formVersionProjectId.value === pid) {
       formVersionOptions.value = result.list.map((v) => ({
-        label: v.versionCode + (v.name ? ` ${v.name}` : ''),
+        label: v.versionCode,
         value: v.id as number,
       }))
     }
