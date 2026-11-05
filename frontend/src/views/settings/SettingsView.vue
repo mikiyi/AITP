@@ -16,7 +16,10 @@
         :max-height="560"
         sync-query
         query-prefix="audit_"
-      />
+      >
+        <template #action="{ row }">{{ actionLabel(row.action) }}</template>
+        <template #resourceType="{ row }">{{ resourceLabel(row.resourceType) }}</template>
+      </BaseProTable>
     </div>
   </div>
 </template>
@@ -78,8 +81,8 @@ const AUDIT_RESOURCE_OPTIONS = [
 const auditColumns: ColumnDef[] = [
   { prop: 'createdAt', label: '时间', width: 170 },
   { prop: 'actor', label: '操作者', width: 110 },
-  { prop: 'action', label: '动作', width: 120 },
-  { prop: 'resourceType', label: '资源类型', width: 140 },
+  { prop: 'action', label: '动作', width: 120, slot: 'action' },
+  { prop: 'resourceType', label: '资源类型', width: 140, slot: 'resourceType' },
   { prop: 'resourceLabel', label: '资源', minWidth: 200 },
   { prop: 'result', label: '结果', width: 90 },
   { prop: 'traceId', label: 'TraceId', width: 200 },
@@ -89,6 +92,14 @@ const auditSearchFields: SearchField[] = [
   { prop: 'action', label: '动作', type: 'select', options: AUDIT_ACTION_OPTIONS },
   { prop: 'resourceType', label: '资源类型', type: 'select', options: AUDIT_RESOURCE_OPTIONS },
 ]
+
+function actionLabel(value: string): string {
+  return AUDIT_ACTION_OPTIONS.find((item) => item.value === value)?.label ?? value
+}
+
+function resourceLabel(value: string): string {
+  return AUDIT_RESOURCE_OPTIONS.find((item) => item.value === value)?.label ?? value
+}
 
 function auditFetcher(query: Record<string, unknown>) {
   return settingsApi.auditLogs(query)
