@@ -44,6 +44,8 @@ import type {
   PipelineResult,
   PreflightResult,
   Project,
+  ProjectVersion,
+  ProjectVersionListResult,
   PromptTemplate,
   Regression,
   RegressionItem,
@@ -203,6 +205,17 @@ export const projectApi = {
   create: (body: Partial<Project>) => post<Project>('/projects', body),
   update: (id: number, body: Partial<Project>) => put<Project>(`/projects/${id}`, body),
   remove: (id: number) => del(`/projects/${id}`),
+}
+
+/** 项目版本：一个项目下可建多套版本，各测试资产通过 versionId 关联。 */
+export const projectVersionApi = {
+  list: (projectId: number) =>
+    get<ProjectVersionListResult>('/project-versions', { projectId } as never),
+  get: (id: number) => get<ProjectVersion>(`/project-versions/${id}`),
+  create: (body: Partial<ProjectVersion>) => post<ProjectVersion>('/project-versions', body),
+  update: (id: number, body: Partial<ProjectVersion>) =>
+    put<ProjectVersion>(`/project-versions/${id}`, body),
+  remove: (id: number) => del(`/project-versions/${id}`),
 }
 
 /** 需求。 */

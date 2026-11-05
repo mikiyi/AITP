@@ -13,6 +13,25 @@ export interface Project {
   updatedAt?: string
 }
 
+/** 项目版本：一个项目下可建多套版本，各测试资产通过 versionId 关联。 */
+export interface ProjectVersion {
+  id: Id
+  projectId: Id
+  versionCode: string
+  name: string
+  description: string
+  status: string
+  sortOrder: number
+  assetCount?: number
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface ProjectVersionListResult {
+  list: ProjectVersion[]
+  statusOptions: Array<{ value: string; label: string }>
+}
+
 export interface Requirement {
   id: Id
   projectId: Id
