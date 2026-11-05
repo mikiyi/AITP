@@ -253,11 +253,11 @@ function statusLabel(status: string): string {
 
 function openCreate(): void {
   editing.value = null
+  pendingVersionId.value = null
   Object.assign(form, {
     title: '',
     content: '',
     projectId: appStore.currentProjectId,
-    versionId: null,
     priority: 'P1',
     status: 'draft',
     source: '',

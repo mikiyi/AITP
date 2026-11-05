@@ -219,7 +219,8 @@ const columns: ColumnDef[] = [
   { prop: 'status', label: '状态', width: 100, slot: 'status' },
   { prop: 'assignee', label: '指派', width: 100 },
   { prop: 'moduleId', label: '功能点', minWidth: 140, slot: 'moduleId' },
-  { prop: 'versionCode', label: '版本', width: 130 },
+  { prop: 'versionCode', label: '版本号', width: 110 },
+  { prop: 'versionName', label: '版本名称', width: 120 },
   { prop: 'id', label: '操作', width: 210, slot: 'actions' },
 ]
 
@@ -304,6 +305,8 @@ const form = reactive({
 
 function openCreate(): void {
   editing.value = null
+  const fq = tableRef.value?.filterQuery() ?? {}
+  pendingVersionId.value = fq.versionId ? Number(fq.versionId) : null
   Object.assign(form, {
     title: '',
     projectId: appStore.currentProjectId,

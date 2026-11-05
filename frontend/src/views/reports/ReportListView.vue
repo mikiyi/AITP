@@ -241,10 +241,11 @@ watch(() => form.projectId, async (pid) => {
 }, { immediate: true })
 
 function openCreate(): void {
+  const fq = tableRef.value?.filterQuery() ?? {}
   Object.assign(form, {
     title: '',
     projectId: appStore.currentProjectId,
-    versionId: null,
+    versionId: fq.versionId ? Number(fq.versionId) : null,
     reportType: 'iteration',
     content: '',
   })

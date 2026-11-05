@@ -343,7 +343,8 @@ const columns: ColumnDef[] = [
   { prop: 'priority', label: '优先级', width: 90, slot: 'priority' },
   { prop: 'status', label: '执行状态', width: 100, slot: 'status' },
   { prop: 'moduleId', label: '功能点', minWidth: 160, slot: 'moduleId' },
-  { prop: 'versionCode', label: '版本', width: 130 },
+  { prop: 'versionCode', label: '版本号', width: 110 },
+  { prop: 'versionName', label: '版本名称', width: 120 },
   { prop: 'id', label: '操作', width: 210, slot: 'actions' },
 ]
 
@@ -451,6 +452,8 @@ watch(() => form.projectId, async (pid) => {
 
 function openCreate(): void {
   editing.value = null
+  const fq = tableRef.value?.filterQuery() ?? {}
+  pendingVersionId.value = fq.versionId ? Number(fq.versionId) : null
   Object.assign(form, {
     title: '',
     projectId: appStore.currentProjectId,
