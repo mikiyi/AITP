@@ -23,6 +23,8 @@ SECTIONS: tuple[str, ...] = (
     "automation_api",
     "automation_performance",
     "sql_analyses",
+    # 知识库待审数不走 sys_nav_badge 累加，而是实时读待审池真实行数
+    "knowledge",
 )
 
 
@@ -34,13 +36,26 @@ def _check(section: str) -> str:
 
 
 def list_badges(conn: sqlite3.Connection) -> dict[str, int]:
-    """返回全部分区的未读数；没记录的按 0 处理。"""
+    """返回全部分区的未读数；没记录的按 0 处理。
+
+    knowledge 分区特殊：它不代表「未读累加」，而是待审池的真实条数，
+    所以直接查 biz_knowledge_draft 里 pending 的行数，不读写 sys_nav_badge。
+    """
     counts = {section: 0 for section in SECTIONS}
     for row in conn.execute("SELECT section, unread FROM sys_nav_badge"):
         section = str(row["section"])
         if section in counts:
             counts[section] = int(row["unread"] or 0)
+    counts["knowledge"] = pending_knowledge_count(conn)
     return counts
+
+
+def pending_knowledge_count(conn: sqlite3.Connection) -> int:
+    """待审池的真实条数：驱动知识库导航角标，>0 才显示。"""
+    row = conn.execute(
+        "SELECT COUNT(*) FROM biz_knowledge_draft WHERE is_deleted = 0 AND review_status = 'pending'"
+    ).fetchone()
+    return int(row[0]) if row else 0
 
 
 def increase(conn: sqlite3.Connection, section: str, count: int = 1) -> int:

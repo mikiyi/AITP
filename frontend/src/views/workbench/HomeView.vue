@@ -156,12 +156,96 @@
         <ModuleTree :nodes="moduleTree" :loading="moduleLoading" @select="onModuleSelect" />
       </div>
     </div>
+
+    <!-- 测试环境健康监测：消费测试环境配置，本机探测应用/数据库可达性 -->
+    <div class="panel panel-pad home__section">
+      <div class="home__section-title">
+        测试环境健康监测
+        <span class="home__section-hint">按「测试环境配置」里的目标做本机可达性探测，信息不出本机</span>
+      </div>
+      <div class="home__env-toolbar">
+        <el-button
+          v-if="envRows.length"
+          size="small"
+          type="primary"
+          plain
+          :loading="envProbingAll"
+          @click="probeAll"
+        >
+          全部探测
+        </el-button>
+        <el-button size="small" plain @click="goToEnvSettings">
+          环境配置
+        </el-button>
+      </div>
+
+      <el-table v-if="envRows.length" :data="envRows" size="small" v-loading="envLoading">
+        <el-table-column label="环境" min-width="160">
+          <template #default="{ row }">
+            <div class="home__env-name">
+              {{ row.env.name }}
+              <el-tag v-if="row.env.isDefault" size="small" type="success" effect="plain">默认</el-tag>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="应用服务器" min-width="220">
+          <template #default="{ row }">
+            <span v-if="row.probe" class="home__env-status">
+              <el-tag :type="row.probe.app.ok ? 'success' : 'danger'" size="small" effect="plain">
+                {{ row.probe.app.ok ? '可达' : '不可达' }}
+              </el-tag>
+              <span class="home__env-latency">{{ row.probe.app.latencyMs }}ms</span>
+            </span>
+            <el-tag v-else size="small" type="info" effect="plain">待探测</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="数据库服务器" min-width="220">
+          <template #default="{ row }">
+            <span v-if="row.probe" class="home__env-status">
+              <el-tag :type="row.probe.db.ok ? 'success' : 'danger'" size="small" effect="plain">
+                {{ row.probe.db.ok ? '可达' : '不可达' }}
+              </el-tag>
+              <span class="home__env-latency">{{ row.probe.db.latencyMs }}ms</span>
+            </span>
+            <el-tag v-else size="small" type="info" effect="plain">待探测</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="整体" width="110">
+          <template #default="{ row }">
+            <el-tag
+              v-if="row.probe"
+              :type="row.probe.overall === 'healthy' ? 'success' : 'danger'"
+              size="small"
+              effect="plain"
+            >
+              {{ row.probe.overall === 'healthy' ? '健康' : '异常' }}
+            </el-tag>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="90">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" :loading="row.probing" @click="probeEnv(row)">
+              探测
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty
+        v-else
+        description="还没有配置测试环境"
+        :image-size="80"
+      >
+        <el-button type="primary" size="small" @click="goToEnvSettings">去配置测试环境</el-button>
+      </el-empty>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import type { EChartsOption } from 'echarts'
 import { dateTimeText } from '@/utils/format'
@@ -169,8 +253,8 @@ import MetricCard from '@/components/MetricCard.vue'
 import ModuleTree from '@/components/ModuleTree.vue'
 import QuickEntryGrid from '@/components/QuickEntryGrid.vue'
 import KnowledgeAssistant from '@/components/KnowledgeAssistant.vue'
-import { moduleApi, workbenchApi } from '@/api'
-import type { ModuleNode, QuickEntry, WorkbenchOverview } from '@/api/types'
+import { moduleApi, testEnvApi, workbenchApi } from '@/api'
+import type { ModuleNode, QuickEntry, TestEnv, TestEnvProbe, WorkbenchOverview } from '@/api/types'
 import { useEchart } from '@/composables/useEchart'
 import { useChartTheme } from '@/composables/useChartTheme'
 import { useAppStore } from '@/stores/app'
@@ -193,6 +277,56 @@ const assets = computed(() => overview.value?.assets ?? ({} as WorkbenchOverview
 const shortcuts = computed<QuickEntry[]>(() => overview.value?.shortcuts ?? [])
 const recentTasks = computed(() => overview.value?.recentTasks ?? [])
 const pendingKnowledge = computed(() => overview.value?.pendingKnowledge ?? 0)
+
+// ---- 测试环境健康监测 ----
+interface EnvProbeRow {
+  env: TestEnv
+  probe: TestEnvProbe | null
+  probing: boolean
+}
+const envRows = ref<EnvProbeRow[]>([])
+const envLoading = ref(false)
+const envProbingAll = ref(false)
+
+/** 拉环境清单；有多套时全部展示，每套可单独探测。 */
+async function loadEnvs(): Promise<void> {
+  envLoading.value = true
+  try {
+    const result = await testEnvApi.list()
+    envRows.value = result.list.map((env) => ({ env, probe: null, probing: false }))
+  } catch {
+    envRows.value = []
+  } finally {
+    envLoading.value = false
+  }
+}
+
+/** 单套探测。 */
+async function probeEnv(row: EnvProbeRow): Promise<void> {
+  row.probing = true
+  try {
+    row.probe = await testEnvApi.probe(row.env.id)
+  } catch {
+    row.probe = null
+    ElMessage.error(`「${row.env.name}」探测失败`)
+  } finally {
+    row.probing = false
+  }
+}
+
+/** 全部探测：并发跑，等所有结果回来。 */
+async function probeAll(): Promise<void> {
+  envProbingAll.value = true
+  try {
+    await Promise.all(envRows.value.map((row) => probeEnv(row)))
+  } finally {
+    envProbingAll.value = false
+  }
+}
+
+function goToEnvSettings(): void {
+  void router.push('/settings/environments')
+}
 
 const caseOption = computed<EChartsOption>(() => {
   const source = overview.value?.caseStatus ?? {}
@@ -301,8 +435,13 @@ function onModuleSelect(node: ModuleNode): void {
   void router.push({ path: '/settings/modules', query: { moduleId: String(node.id) } })
 }
 
-onMounted(() => {
+onMounted(async () => {
   void reload()
+  // 有配置测试环境时自动探测一次，进首页就能看到健康状态
+  await loadEnvs()
+  if (envRows.value.length) {
+    void probeAll()
+  }
 })
 </script>
 
@@ -315,6 +454,31 @@ onMounted(() => {
   margin-left: 10px;
   font-size: 12px;
   font-weight: 400;
+  color: var(--aitp-text-weak);
+}
+
+/* 测试环境健康监测卡片 */
+.home__env-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.home__env-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.home__env-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.home__env-latency {
+  font-size: 12px;
   color: var(--aitp-text-weak);
 }
 

@@ -14,7 +14,14 @@ export const SECTION_BY_PATH: Record<string, string> = {
   '/automation/app': 'automation_app',
   '/automation/api': 'automation_api',
   '/automation/performance': 'automation_performance',
+  '/knowledge': 'knowledge',
 }
+
+/**
+ * 不随「进入页面」清零的分区：它们的数字是实时状态而非未读累加。
+ * knowledge = 待审池真实条数，只有真正审核掉才会变，点进页面不该归零。
+ */
+const PERSISTENT_SECTIONS = new Set(['knowledge'])
 
 export function sectionOfPath(path: string): string {
   for (const [prefix, section] of Object.entries(SECTION_BY_PATH)) {
@@ -57,10 +64,10 @@ export const useBadgeStore = defineStore('badges', () => {
     return section ? items.value[section] ?? 0 : 0
   }
 
-  /** 进入某分区页面时清零；没有未读就不发请求。 */
+  /** 进入某分区页面时清零；持久分区（实时状态）与无未读的跳过。 */
   async function clearForPath(path: string): Promise<void> {
     const section = sectionOfPath(path)
-    if (!section || !(items.value[section] ?? 0)) {
+    if (!section || PERSISTENT_SECTIONS.has(section) || !(items.value[section] ?? 0)) {
       return
     }
     try {

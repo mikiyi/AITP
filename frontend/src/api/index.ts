@@ -371,6 +371,9 @@ export const labApi = {
     templateId?: number
     format?: 'xlsx' | 'docx'
   }) => postBlob('/lab/output/export', body) as Promise<BlobResult>,
+  /** 把测试点大纲导出成 .xmind 文件；前端整理好 {title, children[]} 树回传。 */
+  exportXmind: (body: { title: string; nodes: Array<Record<string, unknown>> }) =>
+    postBlob('/lab/output/export-xmind', body) as Promise<BlobResult>,
   route: (body: { text: string; projectId?: number; topK?: number }) =>
     post<RouteResponse>('/lab/route', body),
   parseXmind: (form: FormData) =>

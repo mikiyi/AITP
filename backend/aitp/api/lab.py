@@ -67,6 +67,9 @@ from .sse import (
 
 bp = Blueprint("lab", __name__)
 
+#: XMind 文件 MIME；本质是 zip，部分环境也接受 application/octet-stream
+XMIND_MIME = "application/vnd.xmind"
+
 #: 请求体里不是提示词变量的字段
 META_FIELDS = {"variables", "sessionId", "profileId", "moduleId", "title", "attachmentIds", "templateId"}
 
@@ -866,6 +869,54 @@ def parse_xmind() -> Response:
         "outlineText": xmind_parser.tree_to_outline_text(tree),
         "source": source,
     })
+
+
+@bp.post("/output/export-xmind")
+def export_capability_xmind() -> Response:
+    """把测试点大纲导出成 .xmind 文件。
+
+    前端把能力产出的测试点树（{name|title, children[], ...}）整理成统一
+    {title, children[]} 结构回传，后端不缓存中间文件，直接生成 .xmind 下载。
+    """
+    from datetime import datetime
+
+    from ..services import xmind_writer
+
+    data = body()
+    title = optional_str(data.get("title"), "title", 200) or "测试点脑图"
+    raw_nodes = data.get("nodes")
+    if not isinstance(raw_nodes, list) or not raw_nodes:
+        raise AppError(ErrorCode.PARAM_ERROR, "没有可导出的测试点节点")
+    normalized: list[dict[str, Any]] = []
+    for item in raw_nodes:
+        if not isinstance(item, dict):
+            continue
+        node = _normalize_xmind_node(item)
+        if node is not None:
+            normalized.append(node)
+    if not normalized:
+        raise AppError(ErrorCode.PARAM_ERROR, "测试点节点格式不正确，无法导出")
+
+    content = xmind_writer.build_xmind(title, normalized)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M")
+    filename = tabular_export.safe_filename(f"{title}-{stamp}", "xmind")
+    return download_response(content, filename, XMIND_MIME, len(normalized))
+
+
+def _normalize_xmind_node(item: dict[str, Any]) -> dict[str, Any] | None:
+    """把测试点节点（name/title 二选一）规整成 xmind_writer 认的 {title, children}。"""
+    title = str(item.get("title") or item.get("name") or "").strip()
+    if not title:
+        return None
+    children_raw = item.get("children") or []
+    children = []
+    if isinstance(children_raw, list):
+        for child in children_raw:
+            if isinstance(child, dict):
+                normalized = _normalize_xmind_node(child)
+                if normalized is not None:
+                    children.append(normalized)
+    return {"title": title, "children": children}
 
 
 # ---------------- 智能路由 ----------------

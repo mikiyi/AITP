@@ -239,12 +239,14 @@ import MetricCard from '@/components/MetricCard.vue'
 import { knowledgeApi, moduleApi, workbenchApi } from '@/api'
 import type { KnowledgeArticle, KnowledgeDraft, KnowledgeStorage, ModuleOption } from '@/api/types'
 import { useAppStore } from '@/stores/app'
+import { useBadgeStore } from '@/stores/badges'
 import { DEFAULT_KNOWLEDGE_CATEGORY, useKnowledgeCategoryStore } from '@/stores/knowledgeCategory'
 import { useReferenceGuard } from '@/composables/useReferenceGuard'
 import ReferenceBlockDialog from '@/components/ReferenceBlockDialog.vue'
 
 const router = useRouter()
 const appStore = useAppStore()
+const badgeStore = useBadgeStore()
 const categoryStore = useKnowledgeCategoryStore()
 
 const activeTab = ref('drafts')
@@ -335,6 +337,8 @@ async function refreshPending(): Promise<void> {
   } catch {
     pendingCount.value = 0
   }
+  // 待审数变了同步导航角标（knowledge 角标是实时状态，审核后立刻反映）
+  await badgeStore.load()
   await loadStorageStats()
 }
 

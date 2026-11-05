@@ -561,10 +561,15 @@ onUnmounted(() => {
   background: var(--aitp-scrollbar-hover);
 }
 
-/* 选中的入口：颜色比默认的浅蓝加深一档，并加粗，一眼能看出当前在哪 */
+/*
+ * 选中的入口：底纹色块 + 主题色字 + 加粗 + 左侧色条。
+ * 底纹是关键——鼠标挪开后字色变化不明显，靠底纹才能一眼看出当前在哪一页。
+ */
 .aitp-menu :deep(.el-menu-item.is-active) {
   color: var(--el-color-primary);
   font-weight: 700;
+  background: var(--el-color-primary-light-9);
+  border-radius: 4px;
 }
 
 .aitp-menu :deep(.el-menu-item.is-active .el-icon) {

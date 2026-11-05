@@ -248,6 +248,16 @@
             <el-button v-if="reasoning" link type="primary" @click="reasoningVisible = true">
               查看推理过程
             </el-button>
+            <!-- 产出格式切换：默认 markdown，可切 JSON 看结构化原文 -->
+            <el-radio-group
+              v-if="output"
+              v-model="outputViewFormat"
+              size="small"
+              class="cap-format-toggle"
+            >
+              <el-radio-button value="markdown">Markdown</el-radio-button>
+              <el-radio-button value="json">JSON</el-radio-button>
+            </el-radio-group>
           </template>
           <template v-else>
             <span class="muted">每次执行的原文都留在这里，可回看、复制、下载</span>
@@ -278,6 +288,15 @@
             @click="exportWord"
           >
             导出 Word
+          </el-button>
+          <el-button
+            v-if="capability === 'testpoint_generation'"
+            :icon="Download"
+            :loading="exportingXmind"
+            :disabled="!finished || !mindNodes.length"
+            @click="exportXmind"
+          >
+            导出 Xmind
           </el-button>
           <el-button :icon="Collection" :disabled="!finished || !output" @click="saveToKnowledge">
             加入知识库
@@ -367,21 +386,8 @@
               </el-button>
             </div>
 
-            <MindMap
-              v-if="mindNodes.length"
-              :nodes="mindNodes"
-              :height="460"
-              @node-context="onNodeContext"
-            />
-            <el-alert
-              v-if="mindNodes.length && (capability === 'xmind_to_case' || capability === 'testpoint_generation')"
-              type="info"
-              :closable="false"
-              show-icon
-              title="右键脑图节点可按该节点单独生成用例"
-              class="mindmap-hint"
-            />
-            <MarkdownView v-else-if="output && !isJson" :source="output" />
+            <!-- 所有能力默认看 markdown，JSON 类能力可在 markdown / JSON 间切换 -->
+            <MarkdownView v-if="output && outputViewFormat === 'markdown'" :source="output" />
             <pre v-else-if="output" class="cap-output__json">{{ prettyJson }}</pre>
             <el-empty v-if="!output && !mindNodes.length" :description="emptyDescription" :image-size="80" />
           </template>
@@ -663,7 +669,6 @@ import {
   Warning,
 } from '@element-plus/icons-vue'
 import MarkdownView from '@/components/MarkdownView.vue'
-import MindMap from '@/components/MindMap.vue'
 import PromptOptimizer from '@/components/PromptOptimizer.vue'
 import TestDataFilesPanel from './TestDataFilesPanel.vue'
 import { automationApi, caseApi, knowledgeApi, labApi, recordApi, reportApi, requirementApi, templateApi } from '@/api'
@@ -686,7 +691,7 @@ import { useLabStore } from '@/stores/lab'
 import { textareaHint } from '@/utils/inputHints'
 import { dateTimeText } from '@/utils/format'
 import { CAPABILITY_FORMS, optionPromptText, primaryFieldOf, visibleFields, visibleOptions } from './capabilityForms'
-import { findNodeByPath, subtreeText, testpointToMindNodes } from './mindmap'
+import { testpointToMindNodes } from './mindmap'
 
 const route = useRoute()
 const router = useRouter()
@@ -889,6 +894,36 @@ async function exportWord(): Promise<void> {
   }
 }
 
+const exportingXmind = ref(false)
+
+/** 测试点大纲导出成 .xmind：把解析好的测试点树回传后端生成文件。 */
+async function exportXmind(): Promise<void> {
+  if (!mindNodes.value.length) {
+    ElMessage.warning('暂无测试点可导出')
+    return
+  }
+  exportingXmind.value = true
+  try {
+    const nodes = toXmindNodes(mindNodes.value)
+    const title = (spec.value?.label || capability.value || '测试点脑图').trim() || '测试点脑图'
+    const result = await labApi.exportXmind({ title, nodes })
+    saveBlob(result.blob, result.filename || `${title}.xmind`)
+    ElMessage.success('已导出 Xmind')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '导出失败')
+  } finally {
+    exportingXmind.value = false
+  }
+}
+
+/** 把 MindNode 树转成后端 xmind_writer 认的 {title, children[]} 结构。 */
+function toXmindNodes(nodes: MindNode[]): Array<Record<string, unknown>> {
+  return nodes.map((node) => ({
+    title: node.title,
+    children: toXmindNodes(node.children ?? []),
+  }))
+}
+
 function downloadExcelArtifact(): void {
   const artifact = excelArtifact.value
   if (artifact) {
@@ -1075,7 +1110,8 @@ watch(outputTab, (tab) => {
   }
 })
 
-const isJson = computed(() => spec.value?.outputFormat === 'json')
+/** 产出展示格式：所有能力默认看 markdown，可切 JSON 看结构化原文。 */
+const outputViewFormat = ref<'markdown' | 'json'>('markdown')
 
 /**
  * 可选变量以提示词模板的 optional 声明为准（后端会填「（未提供）」占位），
@@ -1305,19 +1341,6 @@ async function parseOutlineText(): Promise<void> {
   } finally {
     parsing.value = false
   }
-}
-
-/** 脑图节点右键：按该节点单独生成用例。 */
-function onNodeContext(payload: { title: string; path: string[] }): void {
-  if (capability.value !== 'xmind_to_case' && capability.value !== 'testpoint_generation') {
-    return
-  }
-  const node = findNodeByPath(mindTree.value, payload.path)
-  const text = node ? subtreeText(node) : payload.path.join('\n')
-  void router.push({
-    path: '/lab/case_generation',
-    query: { text },
-  })
 }
 
 function onDegrade(info: DegradeInfo): void {
@@ -2113,10 +2136,6 @@ watch(
   font-family: 'Cascadia Mono', Consolas, monospace;
   font-size: 12px;
   margin: 0;
-}
-
-.mindmap-hint {
-  margin-top: 10px;
 }
 
 .cap-refs {
