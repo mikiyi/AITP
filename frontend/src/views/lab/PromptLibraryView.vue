@@ -179,6 +179,9 @@ onMounted(load)
   padding: 14px 16px;
   cursor: pointer;
   transition: border-color 0.15s;
+  /* 纵向布局：让「使用次数」固定贴在卡片右下角 */
+  display: flex;
+  flex-direction: column;
 }
 
 .prompt-card:hover {
@@ -218,20 +221,23 @@ onMounted(load)
   gap: 4px;
 }
 
-/* 使用次数放卡片右下角 */
+/* 使用次数固定贴在卡片右下角；有数据用主题绿，0 次用浅灰不抢眼 */
 .prompt-card__foot {
   display: flex;
   justify-content: flex-end;
-  margin-top: 10px;
+  margin-top: auto;
+  padding-top: 12px;
 }
 
 .prompt-card__usage {
   font-size: 12px;
-  color: var(--aitp-text-weak);
+  line-height: 1.4;
+  color: var(--el-color-success);
 }
 
 .prompt-card__usage.is-zero {
-  opacity: 0.6;
+  color: var(--aitp-text-weak);
+  opacity: 0.7;
 }
 
 .var-tag {
