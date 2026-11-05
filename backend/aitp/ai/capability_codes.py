@@ -49,6 +49,8 @@ CATEGORY_EXTENDED = "extended"
 EXPORT_EXCEL_CAPABILITIES = (CAP_CASE_GENERATION, CAP_XMIND_TO_CASE, CAP_API_TEST_DESIGN)
 #: 支持导出 Word 的能力：用例类 + 报告
 EXPORT_WORD_CAPABILITIES = (*EXPORT_EXCEL_CAPABILITIES, CAP_REPORT_GENERATION)
+#: 支持导出 Xmind 脑图文件的能力（产出测试点大纲，可下载 .xmind）
+EXPORT_XMIND_CAPABILITIES = (CAP_TESTPOINT_GENERATION,)
 #: 支持产出物模板的能力
 TEMPLATE_CAPABILITIES = (
     CAP_CASE_GENERATION, CAP_XMIND_TO_CASE, CAP_API_TEST_DESIGN,
@@ -65,10 +67,10 @@ def features_of(code: str, spec: "CapabilitySpec") -> list[dict[str, str]]:
         items.append({"key": "excel", "label": "导出 Excel"})
     if code in EXPORT_WORD_CAPABILITIES:
         items.append({"key": "word", "label": "导出 Word"})
+    if code in EXPORT_XMIND_CAPABILITIES:
+        items.append({"key": "xmind", "label": "导出 Xmind"})
     if code in TEMPLATE_CAPABILITIES:
         items.append({"key": "template", "label": "产出物模板"})
-    if spec.mindmap:
-        items.append({"key": "mindmap", "label": "脑图"})
     if spec.adoptable:
         items.append({"key": "adopt", "label": "采纳为用例"})
     if code == CAP_REPORT_GENERATION:
@@ -120,7 +122,7 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
         variables=("requirement", "projectName"),
     ),
     CAP_TESTPOINT_GENERATION: CapabilitySpec(
-        CAP_TESTPOINT_GENERATION, "测试点脑图", "从需求拆出测试点并输出脑图大纲",
+        CAP_TESTPOINT_GENERATION, "测试点脑图", "从需求拆出测试点大纲，可导出 Xmind 脑图文件",
         ("测试点", "脑图", "大纲", "测试思路", "testpoint", "测试场景", "测试维度"),
         prompt_code="testpoint-generation",
         variables=("requirement", "projectName", "moduleCount", "outputTemplate"),

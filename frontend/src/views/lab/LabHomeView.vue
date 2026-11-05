@@ -69,8 +69,8 @@
           <div class="lab-card__row">
             <span class="lab-card__row-label">输出</span>
             <span class="lab-card__vars">
-              <el-tag size="small" effect="plain">{{ outputText(item) }}</el-tag>
-              <el-tag v-if="item.mindmap" size="small" type="success" effect="plain">脑图</el-tag>
+              <el-tag size="small" effect="plain">Markdown</el-tag>
+              <el-tag size="small" effect="plain" type="info">JSON</el-tag>
             </span>
           </div>
 
@@ -159,13 +159,9 @@ function optionalVars(item: CapabilitySpec): string[] {
   return (item.optionalVariables ?? []).filter((name) => !SYSTEM_VARIABLES.has(name))
 }
 
-function outputText(item: CapabilitySpec): string {
-  return item.outputFormat === 'json' ? 'JSON' : 'Markdown'
-}
-
 /** 特性标签配色：导出 = 蓝，采纳 = 绿，其余 = 中性。 */
 function featureType(key: string): 'primary' | 'success' | 'info' {
-  if (key === 'excel' || key === 'word') {
+  if (key === 'excel' || key === 'word' || key === 'xmind') {
     return 'primary'
   }
   if (key === 'adopt' || key === 'adopt_report') {
