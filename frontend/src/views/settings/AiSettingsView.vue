@@ -352,7 +352,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Connection, InfoFilled, Plus, Refresh } from '@element-plus/icons-vue'
 import { settingsApi } from '@/api'
@@ -773,6 +773,15 @@ async function toggleActive(row: AiProfile, value: boolean): Promise<void> {
 }
 
 onMounted(loadAll)
+
+/**
+ * 页面被 keep-alive 缓存，切走再回来时不会重新加载。
+ * 这里在每次激活时重新拉已保存的配置，避免把未保存的改动
+ * 留在表单里，让人误以为不点保存也生效了。
+ */
+onActivated(() => {
+  void loadAiConfig()
+})
 </script>
 
 <style scoped>
