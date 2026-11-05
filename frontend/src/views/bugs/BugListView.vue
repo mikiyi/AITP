@@ -73,7 +73,7 @@
         </el-form-item>
         <el-form-item label="缺陷类型">
           <el-select v-model="form.bugType">
-            <el-option v-for="item in bugTypeOptions" :key="item" :label="item" :value="item" />
+            <el-option v-for="item in bugTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="指派人">
@@ -173,7 +173,16 @@ const bugStatusOptions = [
   { label: '已拒绝', value: 'rejected' },
 ]
 
-const bugTypeOptions = ['functional', 'interface', 'boundary', 'security', 'ui', 'exception', 'performance', 'other']
+const bugTypeOptions = [
+  { label: '功能', value: 'functional' },
+  { label: '接口', value: 'interface' },
+  { label: '边界', value: 'boundary' },
+  { label: '安全', value: 'security' },
+  { label: 'UI', value: 'ui' },
+  { label: '异常', value: 'exception' },
+  { label: '性能', value: 'performance' },
+  { label: '其他', value: 'other' },
+]
 
 const moduleOptions = ref<ModuleOption[]>([])
 

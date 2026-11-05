@@ -115,7 +115,7 @@ def attach_version_codes(
     field: str = "versionId",
     code_field: str = "versionCode",
 ) -> list[dict[str, Any]]:
-    """给资产列表批量补版本号，用于前端列表列展示。一次查询，不逐行打点。"""
+    """给资产列表批量补版本号与版本名称，用于前端列表列展示。一次查询，不逐行打点。"""
     ids = {
         int(row[field])
         for row in rows
@@ -125,13 +125,20 @@ def attach_version_codes(
         return rows
     placeholders = ",".join("?" for _ in ids)
     sql = f"SELECT id, version_code, name FROM biz_project_version WHERE id IN ({placeholders})"
-    mapping: dict[int, str] = {}
+    codes: dict[int, str] = {}
+    names: dict[int, str] = {}
     for row in conn.execute(sql, list(ids)):
-        name = row["name"] or ""
-        mapping[int(row["id"])] = f"{row['version_code']} {name}".strip()
+        codes[int(row["id"])] = str(row["version_code"] or "")
+        names[int(row["id"])] = str(row["name"] or "")
     for row in rows:
         raw = row.get(field)
-        row[code_field] = mapping.get(int(raw), "") if raw not in (None, "") else ""
+        if raw in (None, ""):
+            row[code_field] = ""
+            row["versionName"] = ""
+            continue
+        vid = int(raw)
+        row[code_field] = codes.get(vid, "")
+        row["versionName"] = names.get(vid, "")
     return rows
 
 

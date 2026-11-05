@@ -16,7 +16,7 @@
       >
         <template #status="{ row }">
           <el-tag :type="row.status === 'active' ? 'success' : 'info'" size="small" effect="plain">
-            {{ row.status }}
+            {{ row.status === 'archived' ? '归档' : '启用' }}
           </el-tag>
         </template>
         <template #actions="{ row }">

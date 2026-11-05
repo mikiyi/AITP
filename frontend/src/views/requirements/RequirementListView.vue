@@ -66,9 +66,9 @@
           <el-select v-model="form.status">
             <el-option
               v-for="item in requirementStatusOptions"
-              :key="item"
-              :label="item"
-              :value="item"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
             />
           </el-select>
         </el-form-item>
@@ -146,14 +146,21 @@ function openKnowledge(row: Requirement): void {
 }
 const tableRef = ref<TableExpose | null>(null)
 
-const requirementStatusOptions = ['draft', 'reviewing', 'approved', 'implemented', 'rejected']
+const requirementStatusOptions = [
+  { label: '草稿', value: 'draft' },
+  { label: '评审中', value: 'reviewing' },
+  { label: '已通过', value: 'approved' },
+  { label: '已实现', value: 'implemented' },
+  { label: '已否决', value: 'rejected' },
+]
 
 const columns: ColumnDef[] = [
   { prop: 'reqNo', label: '编号', width: 110 },
   { prop: 'title', label: '标题', minWidth: 180 },
   { prop: 'priority', label: '优先级', width: 90, slot: 'priority' },
   { prop: 'status', label: '状态', width: 100, slot: 'status' },
-  { prop: 'versionCode', label: '版本', width: 130 },
+  { prop: 'versionCode', label: '版本号', width: 110 },
+  { prop: 'versionName', label: '版本名称', width: 130 },
   { prop: 'source', label: '来源', width: 120 },
   { prop: 'updatedAt', label: '更新时间', width: 170 },
   { prop: 'id', label: '操作', width: 210, slot: 'actions' },
@@ -161,7 +168,7 @@ const columns: ColumnDef[] = [
 
 const searchFields = computed<SearchField[]>(() => [
   { prop: 'keyword', label: '标题 / 编号' },
-  { prop: 'status', label: '状态', type: 'select', options: requirementStatusOptions.map((s) => ({ label: s, value: s })) },
+  { prop: 'status', label: '状态', type: 'select', options: requirementStatusOptions },
   { prop: 'priority', label: '优先级', type: 'select', options: ['P0', 'P1', 'P2', 'P3'].map((p) => ({ label: p, value: p })) },
   { prop: 'versionId', label: '版本', type: 'select', options: versionOptions.value },
 ])
