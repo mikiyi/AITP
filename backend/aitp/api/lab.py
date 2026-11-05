@@ -480,6 +480,7 @@ def adopt_capability_output() -> Response:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "项目不存在")
     title = optional_str(data.get("title"), "title", 200) or f"{label_of(capability)} 产出"
     module_id = _optional_int(data.get("moduleId"), "moduleId")
+    version_id = _optional_int(data.get("versionId"), "versionId")
 
     if target == "requirement":
         req_repo = RequirementRepository(conn)
@@ -493,6 +494,7 @@ def adopt_capability_output() -> Response:
             "status": "draft",
             "priority": "P2",
             "tags": "",
+            "version_id": version_id,
         })
         section = "requirements"
         resource = audit_service.RESOURCE_REQUIREMENT
@@ -516,6 +518,7 @@ def adopt_capability_output() -> Response:
             "env": "",
             "module": "",
             "module_id": module_id,
+            "version_id": version_id,
         })
         section = "bugs"
         resource = audit_service.RESOURCE_BUG
@@ -524,6 +527,7 @@ def adopt_capability_output() -> Response:
         new_id = sql_repo.insert({
             "project_id": project_id,
             "module_id": module_id,
+            "version_id": version_id,
             "sql_no": sql_repo.next_sql_no(project_id),
             "title": title,
             "sql_text": _extract_sql_text(output),

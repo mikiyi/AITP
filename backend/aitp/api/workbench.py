@@ -100,21 +100,26 @@ def record_quick_entry_usage() -> Response:
 def overview() -> Response:
     conn = db()
     project_id = optional_int(request.args.get("projectId"), "projectId")
+    version_id = optional_int(request.args.get("versionId"), "versionId")
     scope_sql = " AND project_id = ?" if project_id else ""
-    scope_params: tuple[Any, ...] = (project_id,) if project_id else ()
+    scope_params: list[Any] = [project_id] if project_id else []
+    if version_id:
+        scope_sql += " AND version_id = ?"
+        scope_params.append(version_id)
+    scope_args: tuple[Any, ...] = tuple(scope_params)
 
-    case_total = _count(conn, f"SELECT COUNT(*) FROM biz_test_case WHERE is_deleted = 0{scope_sql}", scope_params)
+    case_total = _count(conn, f"SELECT COUNT(*) FROM biz_test_case WHERE is_deleted = 0{scope_sql}", scope_args)
     case_pass = _count(
         conn,
         f"SELECT COUNT(*) FROM biz_test_case WHERE is_deleted = 0 AND status = 'pass'{scope_sql}",
-        scope_params,
+        scope_args,
     )
-    bug_total = _count(conn, f"SELECT COUNT(*) FROM biz_bug WHERE is_deleted = 0{scope_sql}", scope_params)
-    bug_open = BugRepository(conn).open_bug_count(project_id)
+    bug_total = _count(conn, f"SELECT COUNT(*) FROM biz_bug WHERE is_deleted = 0{scope_sql}", scope_args)
+    bug_open = BugRepository(conn).open_bug_count(project_id, version_id)
     requirement_total = _count(
-        conn, f"SELECT COUNT(*) FROM biz_requirement WHERE is_deleted = 0{scope_sql}", scope_params
+        conn, f"SELECT COUNT(*) FROM biz_requirement WHERE is_deleted = 0{scope_sql}", scope_args
     )
-    report_total = _count(conn, f"SELECT COUNT(*) FROM biz_report WHERE is_deleted = 0{scope_sql}", scope_params)
+    report_total = _count(conn, f"SELECT COUNT(*) FROM biz_report WHERE is_deleted = 0{scope_sql}", scope_args)
     task_total = _count(conn, "SELECT COUNT(*) FROM biz_ai_task WHERE is_deleted = 0")
     task_success = _count(
         conn, "SELECT COUNT(*) FROM biz_ai_task WHERE is_deleted = 0 AND status = 'success'"
@@ -127,11 +132,11 @@ def overview() -> Response:
     case_status = {status: 0 for status in CASE_STATUS}
     for row in conn.execute(
         f"SELECT status, COUNT(*) AS c FROM biz_test_case WHERE is_deleted = 0{scope_sql} GROUP BY status",
-        scope_params,
+        scope_args,
     ).fetchall():
         case_status[row["status"]] = int(row["c"])
 
-    bug_counts = BugRepository(conn).status_counts(int(project_id) if project_id else None)
+    bug_counts = BugRepository(conn).status_counts(int(project_id) if project_id else None, version_id)
     bug_status = {status: bug_counts.get(status, 0) for status in BUG_STATUS}
 
     task_rows = AITaskRepository(conn).list_all(None, None, limit=5)

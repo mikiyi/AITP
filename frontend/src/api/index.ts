@@ -92,8 +92,8 @@ function exportUrl(path: string, query: Record<string, unknown>): string {
 export const workbenchApi = {
   /** 首页快捷入口点击上报，用于按使用频率排序。 */
   reportShortcut: (key: string) => post('/workbench/quick-entry/usage', { key }),
-  overview: (projectId?: number) =>
-    get<WorkbenchOverview>('/workbench/overview', { projectId }),
+  overview: (projectId?: number, versionId?: number) =>
+    get<WorkbenchOverview>('/workbench/overview', { projectId, versionId }),
   coverage: (projectId: number) => get('/workbench/coverage', { projectId }),
   entries: (query: Record<string, unknown> = {}) =>
     get<{ list: WorkbenchEntry[]; total: number }>('/workbench/entries', query as never),
@@ -376,6 +376,7 @@ export const labApi = {
     projectId: number
     title?: string
     moduleId?: number
+    versionId?: number
   }) => post<{ target: string; id: number; title: string }>('/lab/output/adopt', body),
   /** 把能力产出导出成 Excel（用例类能力）；失败时抛业务错误。 */
   exportOutput: (body: {

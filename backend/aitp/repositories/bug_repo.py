@@ -92,17 +92,20 @@ class BugRepository(BaseRepository):
         ).fetchall()
         return [int(r["case_id"]) for r in rows]
 
-    def status_counts(self, project_id: int | None = None) -> dict[str, int]:
+    def status_counts(self, project_id: int | None = None, version_id: int | None = None) -> dict[str, int]:
         sql = "SELECT status, COUNT(*) AS c FROM biz_bug WHERE is_deleted = 0"
         params: list[Any] = []
         if project_id is not None:
             sql += " AND project_id = ?"
             params.append(project_id)
+        if version_id is not None:
+            sql += " AND version_id = ?"
+            params.append(version_id)
         sql += " GROUP BY status"
         counts = {r["status"]: int(r["c"]) for r in self.conn.execute(sql, params).fetchall()}
         return counts
 
-    def open_bug_count(self, project_id: int | None = None) -> int:
+    def open_bug_count(self, project_id: int | None = None, version_id: int | None = None) -> int:
         placeholders = ", ".join("?" for _ in BUG_OPEN_STATUSES)
         sql = (
             "SELECT COUNT(*) FROM biz_bug WHERE is_deleted = 0"
@@ -112,4 +115,7 @@ class BugRepository(BaseRepository):
         if project_id is not None:
             sql += " AND project_id = ?"
             params.append(project_id)
+        if version_id is not None:
+            sql += " AND version_id = ?"
+            params.append(version_id)
         return int(self.conn.execute(sql, params).fetchone()[0])

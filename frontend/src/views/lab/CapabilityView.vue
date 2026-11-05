@@ -534,6 +534,11 @@
             />
           </el-select>
         </el-form-item>
+        <el-form-item v-if="adoptAssetTarget !== 'regression'" label="版本">
+          <el-select v-model="adoptAssetForm.versionId" placeholder="选择版本" clearable style="width: 100%">
+            <el-option v-for="item in adoptVersionOptions" :key="item.value" :label="item.label" :value="item.value" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="标题" required>
           <el-input v-model="adoptAssetForm.title" maxlength="200" />
         </el-form-item>
@@ -700,7 +705,7 @@ import {
 import MarkdownView from '@/components/MarkdownView.vue'
 import PromptOptimizer from '@/components/PromptOptimizer.vue'
 import TestDataFilesPanel from './TestDataFilesPanel.vue'
-import { automationApi, caseApi, knowledgeApi, labApi, recordApi, reportApi, requirementApi, templateApi } from '@/api'
+import { automationApi, caseApi, knowledgeApi, labApi, projectVersionApi, recordApi, reportApi, requirementApi, templateApi } from '@/api'
 import { streamPost, type DegradeInfo } from '@/api/stream'
 import type {
   AdoptCaseItem,
@@ -980,7 +985,32 @@ const adoptAssetTarget = ref<AssetTarget>('requirement')
 const adoptingAsset = ref(false)
 const adoptAssetForm = reactive({
   projectId: null as number | null,
+  versionId: null as number | null,
   title: '',
+})
+/** 采纳弹窗内版本下拉跟随弹窗中选的项目。 */
+const adoptVersionOptions = ref<Array<{ label: string; value: number }>>([])
+const adoptVersionProjectId = ref<number | null>(null)
+
+watch(() => adoptAssetForm.projectId, async (pid) => {
+  adoptAssetForm.versionId = null
+  if (!pid) {
+    adoptVersionOptions.value = []
+    adoptVersionProjectId.value = null
+    return
+  }
+  adoptVersionProjectId.value = pid
+  try {
+    const result = await projectVersionApi.list(pid)
+    if (adoptVersionProjectId.value === pid) {
+      adoptVersionOptions.value = result.list.map((v) => ({
+        label: v.versionCode + (v.name ? ` ${v.name}` : ''),
+        value: v.id as number,
+      }))
+    }
+  } catch {
+    adoptVersionOptions.value = []
+  }
 })
 
 /** 默认标题取产出第一行有效内容，去掉 Markdown 标题符号。 */
@@ -999,6 +1029,7 @@ function openAdoptAsset(target: AssetTarget): void {
   }
   adoptAssetTarget.value = target
   adoptAssetForm.projectId = appStore.currentProjectId
+  adoptAssetForm.versionId = null
   adoptAssetForm.title = defaultAssetTitle()
   adoptAssetVisible.value = true
 }
@@ -1021,6 +1052,7 @@ async function confirmAdoptAsset(): Promise<void> {
       projectId: adoptAssetForm.projectId,
       title: adoptAssetForm.title.trim(),
       moduleId: moduleId.value ?? undefined,
+      versionId: adoptAssetForm.versionId ?? undefined,
     })
     ElMessage.success(`已添加到${ASSET_LABEL[adoptAssetTarget.value]}：${result.title}`)
     adoptAssetVisible.value = false

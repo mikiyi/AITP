@@ -23,7 +23,19 @@
 
     <!-- 数据概览：资产卡 + 指标卡合成一个大边框，固定 6 列两行 -->
     <div class="panel panel-pad home__section">
-      <div class="home__section-title">数据概览</div>
+      <div class="home__section-title">
+        数据概览
+        <el-select
+          v-model="overviewVersionId"
+          placeholder="全部版本"
+          clearable
+          size="small"
+          style="margin-left: 10px; width: 180px"
+          @change="reload"
+        >
+          <el-option v-for="item in overviewVersionOptions" :key="item.value" :label="item.label" :value="item.value" />
+        </el-select>
+      </div>
       <div class="home__stats">
         <MetricCard
           label="项目"
@@ -243,7 +255,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
@@ -253,7 +265,7 @@ import MetricCard from '@/components/MetricCard.vue'
 import ModuleTree from '@/components/ModuleTree.vue'
 import QuickEntryGrid from '@/components/QuickEntryGrid.vue'
 import KnowledgeAssistant from '@/components/KnowledgeAssistant.vue'
-import { moduleApi, testEnvApi, workbenchApi } from '@/api'
+import { moduleApi, projectVersionApi, testEnvApi, workbenchApi } from '@/api'
 import type { ModuleNode, QuickEntry, TestEnv, TestEnvProbe, WorkbenchOverview } from '@/api/types'
 import { useEchart } from '@/composables/useEchart'
 import { useChartTheme } from '@/composables/useChartTheme'
@@ -277,6 +289,34 @@ const assets = computed(() => overview.value?.assets ?? ({} as WorkbenchOverview
 const shortcuts = computed<QuickEntry[]>(() => overview.value?.shortcuts ?? [])
 const recentTasks = computed(() => overview.value?.recentTasks ?? [])
 const pendingKnowledge = computed(() => overview.value?.pendingKnowledge ?? 0)
+
+// ---- 数据概览按版本筛选 ----
+const overviewVersionId = ref<number | null>(null)
+const overviewVersionOptions = ref<Array<{ label: string; value: number }>>([])
+
+async function loadOverviewVersions(): Promise<void> {
+  const pid = appStore.currentProjectId
+  if (!pid) {
+    overviewVersionOptions.value = []
+    overviewVersionId.value = null
+    return
+  }
+  try {
+    const result = await projectVersionApi.list(pid)
+    overviewVersionOptions.value = result.list.map((v) => ({
+      label: v.versionCode + (v.name ? ` ${v.name}` : ''),
+      value: v.id as number,
+    }))
+  } catch {
+    overviewVersionOptions.value = []
+  }
+}
+
+watch(() => appStore.currentProjectId, () => {
+  overviewVersionId.value = null
+  void loadOverviewVersions()
+  void reload()
+})
 
 // ---- 测试环境健康监测 ----
 interface EnvProbeRow {
@@ -428,7 +468,10 @@ async function reload(): Promise<void> {
   loading.value = true
   errorMessage.value = ''
   try {
-    overview.value = await workbenchApi.overview(appStore.currentProjectId ?? undefined)
+    overview.value = await workbenchApi.overview(
+      appStore.currentProjectId ?? undefined,
+      overviewVersionId.value ?? undefined,
+    )
   } catch (err) {
     errorMessage.value = err instanceof Error ? err.message : '加载失败'
   } finally {
@@ -459,6 +502,7 @@ function onModuleSelect(node: ModuleNode): void {
 }
 
 onMounted(async () => {
+  void loadOverviewVersions()
   void reload()
   // 有配置测试环境时自动探测一次，进首页就能看到健康状态
   await loadEnvs()
