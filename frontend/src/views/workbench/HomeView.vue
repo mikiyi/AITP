@@ -121,9 +121,9 @@
       <div class="panel panel-pad home__section">
         <div class="home__section-title">最近任务</div>
         <el-table :data="recentTasks" size="small" empty-text="暂无 AI 任务">
-          <el-table-column prop="capability" label="能力" min-width="150">
+          <el-table-column prop="capability" label="能力" min-width="300" class-name="home__task-cap-col">
             <template #default="scope">
-              {{ scope.row.sessionTitle || scope.row.capability || scope.row.taskType || '-' }}
+              <span class="home__task-cap">{{ scope.row.sessionTitle || scope.row.capability || scope.row.taskType || '-' }}</span>
             </template>
           </el-table-column>
           <el-table-column prop="status" label="状态" width="100">
@@ -133,7 +133,7 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="时间" min-width="170">
+          <el-table-column label="时间" width="180">
             <template #default="{ row }">{{ dateTimeText(row.createdAt) }}</template>
           </el-table-column>
         </el-table>
@@ -503,6 +503,13 @@ onMounted(async () => {
 .home__env-latency {
   font-size: 12px;
   color: var(--aitp-text-weak);
+}
+
+/* 最近任务「能力」列：拿满剩余宽度，长会话标题单行省略 */
+:deep(.home__task-cap-col .cell) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .home__stats {
