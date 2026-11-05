@@ -461,7 +461,36 @@
                 </div>
                 <div class="cap-history__view-actions">
                   <el-button link :icon="CopyDocument" @click="copyHistory">复制</el-button>
-                  <el-button link :icon="Download" @click="downloadHistory">下载</el-button>
+                  <el-button link :icon="Download" @click="downloadHistory">下载 Markdown</el-button>
+                  <el-button
+                    v-if="excelCapable"
+                    link
+                    :icon="Grid"
+                    :loading="exportingExcel"
+                    :disabled="!historyDetail?.outputText"
+                    @click="exportHistoryExcel"
+                  >
+                    导出 Excel
+                  </el-button>
+                  <el-button
+                    v-if="wordCapable"
+                    link
+                    :icon="Document"
+                    :loading="exportingWord"
+                    :disabled="!historyDetail?.outputText"
+                    @click="exportHistoryWord"
+                  >
+                    导出 Word
+                  </el-button>
+                  <el-button
+                    v-if="capability === 'testpoint_generation' && historyMindNodes.length"
+                    link
+                    :icon="Download"
+                    :loading="exportingXmind"
+                    @click="exportHistoryXmind"
+                  >
+                    导出 Xmind
+                  </el-button>
                   <el-button link type="primary" @click="router.push(`/lab/records/${historyDetail.id}`)">
                     执行详情
                   </el-button>
@@ -811,15 +840,16 @@ interface ExcelArtifact {
 const excelArtifact = ref<ExcelArtifact | null>(null)
 const exportingExcel = ref(false)
 
-async function buildExcelArtifact(quiet: boolean): Promise<ExcelArtifact | null> {
-  if (!excelCapable.value || !output.value.trim()) {
+async function buildExcelArtifact(quiet: boolean, text?: string): Promise<ExcelArtifact | null> {
+  const source = text ?? output.value
+  if (!excelCapable.value || !source.trim()) {
     return null
   }
   exportingExcel.value = true
   try {
     const result = await labApi.exportOutput({
       capability: capability.value,
-      output: output.value,
+      output: source,
       templateId: useTemplate.value && templateId.value ? templateId.value : undefined,
     })
     return {
@@ -871,9 +901,10 @@ async function prepareExcelArtifact(): Promise<void> {
 
 const exportingWord = ref(false)
 
-/** Word 产出：按需生成并立即下载。 */
-async function exportWord(): Promise<void> {
-  if (!output.value.trim()) {
+/** Word 产出：按需生成并立即下载。text 可传历史产出的原文。 */
+async function exportWord(text?: string): Promise<void> {
+  const source = text ?? output.value
+  if (!source.trim()) {
     ElMessage.warning('暂无产出')
     return
   }
@@ -881,7 +912,7 @@ async function exportWord(): Promise<void> {
   try {
     const result = await labApi.exportOutput({
       capability: capability.value,
-      output: output.value,
+      output: source,
       templateId: useTemplate.value && templateId.value ? templateId.value : undefined,
       format: 'docx',
     })
@@ -1090,6 +1121,68 @@ function downloadHistory(): void {
   const stamp = (historyDetail.value?.createdAt ?? '').replace(/[:.]/g, '-').slice(0, 19)
   downloadText(text, `${capability.value}-${stamp || 'history'}.md`)
 }
+
+/** 历史产出导出 Excel。 */
+async function exportHistoryExcel(): Promise<void> {
+  const text = historyDetail.value?.outputText ?? ''
+  if (!text.trim()) {
+    ElMessage.warning('这条记录没有保存产出原文')
+    return
+  }
+  const artifact = await buildExcelArtifact(false, text)
+  if (artifact) {
+    saveBlob(artifact.blob, artifact.filename)
+    ElMessage.success('已导出 Excel')
+  }
+}
+
+/** 历史产出导出 Word。 */
+async function exportHistoryWord(): Promise<void> {
+  const text = historyDetail.value?.outputText ?? ''
+  if (!text.trim()) {
+    ElMessage.warning('这条记录没有保存产出原文')
+    return
+  }
+  await exportWord(text)
+}
+
+/** 历史产出导出 Xmind（仅测试点能力）。 */
+async function exportHistoryXmind(): Promise<void> {
+  const text = historyDetail.value?.outputText ?? ''
+  if (!text.trim()) {
+    ElMessage.warning('这条记录没有保存产出原文')
+    return
+  }
+  try {
+    const nodes = testpointToMindNodes(JSON.parse(text))
+    if (!nodes.length) {
+      ElMessage.warning('历史产出里没有解析到测试点')
+      return
+    }
+    exportingXmind.value = true
+    const xmindData = toXmindNodes(nodes)
+    const title = (spec.value?.label || capability.value || '测试点脑图').trim() || '测试点脑图'
+    const result = await labApi.exportXmind({ title, nodes: xmindData })
+    saveBlob(result.blob, result.filename || `${title}.xmind`)
+    ElMessage.success('已导出 Xmind')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '导出失败')
+  } finally {
+    exportingXmind.value = false
+  }
+}
+
+/** 历史产出解析出的测试点树（供导出 Xmind 用）。 */
+const historyMindNodes = computed<MindNode[]>(() => {
+  if (capability.value !== 'testpoint_generation' || !historyDetail.value?.outputText) {
+    return []
+  }
+  try {
+    return testpointToMindNodes(JSON.parse(historyDetail.value.outputText))
+  } catch {
+    return []
+  }
+})
 
 function reviewText(row: AiRecord): string {
   if (row.reviewStatus === 'approved') return '已采纳'
