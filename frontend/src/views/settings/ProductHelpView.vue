@@ -289,7 +289,7 @@
                 <BrandName size="small" />（AITP）
               </el-descriptions-item>
               <el-descriptions-item label="产品定位">单用户、本地优先、离线可用的 AI 测试工作台</el-descriptions-item>
-              <el-descriptions-item label="作者 / 维护者">mikiyi（真名 yichengren）</el-descriptions-item>
+              <el-descriptions-item label="作者 / 维护者">mikiyi（yichengren）</el-descriptions-item>
               <el-descriptions-item label="应用版本">1.0.0（取自后端 <code class="text-mono">backend/aitp/db/migrator.py</code> 的 APP_VERSION）</el-descriptions-item>
               <el-descriptions-item label="后端技术栈">Python 3.11+ · Flask · SQLite（参数化仓储层）· SSE 流式输出</el-descriptions-item>
               <el-descriptions-item label="前端技术栈">Vue 3 + TypeScript · Element Plus · Pinia · ECharts · Vite</el-descriptions-item>
