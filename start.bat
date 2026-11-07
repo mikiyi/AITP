@@ -141,8 +141,8 @@ if "%NEED_BUILD%"=="1" (
         )
         popd
     )
-    goto :after_frontend
 )
+goto :after_frontend
 
 :skip_frontend
 echo [2/4] 未找到 frontend 工程，跳过前端构建。
