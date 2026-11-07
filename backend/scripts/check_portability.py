@@ -542,9 +542,9 @@ def check_author_paths() -> None:
     sample = sample_dir / "leak.py"
     try:
         for fragment, expected in (
-            (r'"D:\\Qoter\\AItools\\aitp.db"', 1),
+            (r'"D:\\Qoter\\AITP\\aitp.db"', 1),
             (r'"C:\\Users\\52748\\x"', 1),
-            ('"D:/Qoter/AItools"', 1),
+            ('"D:/Qoter/AITP"', 1),
             ('"app_install"', 1),
             ('"clean_value = 1"', 0),
         ):
