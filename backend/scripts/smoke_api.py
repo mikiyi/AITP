@@ -282,7 +282,14 @@ def json_paths(nodes: list[JsonDict]) -> str:
     return ", ".join(out)
 
 
-def check_cases(api: Api, project_id: int, requirement_id: int, feature_id: int) -> list[int]:
+def check_cases(
+    api: Api,
+    project_id: int,
+    requirement_id: int,
+    module_id: int,
+    sub_id: int,
+    feature_id: int,
+) -> list[int]:
     priorities = ["P0", "P1", "P2", "P2", "P3"]
     case_ids: list[int] = []
     for index, priority in enumerate(priorities, start=1):
@@ -358,6 +365,23 @@ def check_cases(api: Api, project_id: int, requirement_id: int, feature_id: int)
     check("软删后列表排除该用例",
           all(item["id"] != case_ids[4] for item in listed["list"]) and listed["total"] == 4,
           str(listed["total"]))
+
+    # 覆盖矩阵：父节点数字要含下级，未关联用例单独统计，否则跟左侧功能点面板对不上
+    coverage = api.data("GET", f"/api/v1/test-cases/coverage/modules?projectId={project_id}")
+    by_module = {int(row["moduleId"]): row for row in coverage["list"]}
+    check("覆盖矩阵父节点汇总下级用例",
+          int(by_module[module_id]["caseCount"]) == 4 and int(by_module[sub_id]["caseCount"]) == 4,
+          f"module={by_module[module_id]['caseCount']} sub={by_module[sub_id]['caseCount']}")
+    check("覆盖矩阵叶子节点与未关联分开统计",
+          int(by_module[feature_id]["caseCount"]) == 4
+          and int(coverage["unassigned"]["caseCount"]) == 0,
+          f"feature={by_module[feature_id]['caseCount']} unassigned={coverage['unassigned']}")
+    other_coverage = api.data(
+        "GET", f"/api/v1/test-cases/coverage/modules?projectId={other_project['id']}"
+    )
+    check("覆盖矩阵把未挂功能点的用例计入 unassigned",
+          int(other_coverage["unassigned"]["caseCount"]) == 1,
+          str(other_coverage["unassigned"]))
     return case_ids
 
 
@@ -1653,8 +1677,8 @@ def main() -> int:
         check_routes(api)
         project_id = check_projects(api)
         requirement_id = check_requirements(api, project_id)
-        _, _, feature_id = check_module_tree(api, project_id)
-        case_ids = check_cases(api, project_id, requirement_id, feature_id)
+        module_id, sub_id, feature_id = check_module_tree(api, project_id)
+        case_ids = check_cases(api, project_id, requirement_id, module_id, sub_id, feature_id)
         check_bugs(api, project_id, feature_id, case_ids)
         check_knowledge(api, project_id, feature_id)
         check_reports(api, project_id)

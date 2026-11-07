@@ -77,18 +77,24 @@ class TestCaseRepository(BaseRepository):
         ).fetchall()
         return {"list": [dict(r) for r in rows]}
 
+    _COVERAGE_KEYS = (
+        "case_count", "p0_count", "p1_count",
+        "pass_count", "fail_count", "blocked_count", "not_executed_count",
+    )
+
     def module_coverage_matrix(
         self, project_id: int, version_id: int | None = None
     ) -> dict[str, Any]:
-        """功能点覆盖矩阵：每个模块节点下的用例数与状态分布。
+        """功能点覆盖矩阵：每个节点的用例数与状态分布（含全部下级）。
 
-        覆盖矩阵按功能点统计，条数必须与用例列表里挂在该功能点上的用例数一致。
+        口径与用例列表左侧功能点面板一致：点节点筛的是整棵子树，所以父节点
+        数字包含下级。没挂到存活功能点的用例（含功能点已被删除的）放进
+        unassigned，保证「根节点数字之和 + unassigned」等于当前范围用例总数。
         """
         from .module_repo import ModuleRepository
 
         module_repo = ModuleRepository(self.conn)
         nodes = module_repo.flat_tree(project_id)
-        counts: dict[int, dict[str, int]] = {}
         version_sql = " AND version_id = ?" if version_id else ""
         params: list[Any] = [project_id]
         if version_id:
@@ -104,33 +110,69 @@ class TestCaseRepository(BaseRepository):
                    SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) AS blocked_count,
                    SUM(CASE WHEN status = 'not_executed' THEN 1 ELSE 0 END) AS not_executed_count
             FROM biz_test_case
-            WHERE project_id = ? AND is_deleted = 0 AND module_id IS NOT NULL
+            WHERE project_id = ? AND is_deleted = 0
                    {version_sql}
             GROUP BY module_id
             """,
             params,
         ).fetchall()
+
+        keys = self._COVERAGE_KEYS
+        alive = {int(node["id"]) for node in nodes}
+        direct: dict[int, dict[str, int]] = {}
+        unassigned: dict[str, int] = dict.fromkeys(keys, 0)
         for row in rows:
-            counts[int(row["module_id"])] = {key: int(row[key] or 0) for key in row.keys()}
+            bucket = {key: int(row[key] or 0) for key in keys}
+            module_id = row["module_id"]
+            if module_id is not None and int(module_id) in alive:
+                direct[int(module_id)] = bucket
+                continue
+            for key in keys:
+                unassigned[key] += bucket[key]
+
+        rollup: dict[int, dict[str, int]] = {
+            node_id: dict(direct.get(node_id) or dict.fromkeys(keys, 0)) for node_id in alive
+        }
+        # flat_tree 是先序遍历，逆序处理时子节点的汇总已经算完
+        for node in reversed(nodes):
+            parent_id = node.get("parent_id")
+            if parent_id is None or int(parent_id) not in rollup:
+                continue
+            parent = rollup[int(parent_id)]
+            current = rollup[int(node["id"])]
+            for key in keys:
+                parent[key] += current[key]
 
         result: list[dict[str, Any]] = []
         for node in nodes:
-            stat = counts.get(int(node["id"]), {})
+            node_id = int(node["id"])
+            stat = rollup[node_id]
             result.append({
-                "moduleId": int(node["id"]),
+                "moduleId": node_id,
                 "name": node.get("name"),
                 "nodeType": node.get("node_type"),
                 "parentId": node.get("parent_id"),
-                "path": module_repo.path_text(int(node["id"]), project_name=""),
-                "caseCount": stat.get("case_count", 0),
-                "p0Count": stat.get("p0_count", 0),
-                "p1Count": stat.get("p1_count", 0),
-                "passCount": stat.get("pass_count", 0),
-                "failCount": stat.get("fail_count", 0),
-                "blockedCount": stat.get("blocked_count", 0),
-                "notExecutedCount": stat.get("not_executed_count", 0),
+                "path": module_repo.path_text(node_id, project_name=""),
+                "caseCount": stat["case_count"],
+                "p0Count": stat["p0_count"],
+                "p1Count": stat["p1_count"],
+                "passCount": stat["pass_count"],
+                "failCount": stat["fail_count"],
+                "blockedCount": stat["blocked_count"],
+                "notExecutedCount": stat["not_executed_count"],
             })
-        return {"list": result}
+        return {
+            "list": result,
+            "unassigned": {
+                "caseCount": unassigned["case_count"],
+                "p0Count": unassigned["p0_count"],
+                "p1Count": unassigned["p1_count"],
+                "passCount": unassigned["pass_count"],
+                "failCount": unassigned["fail_count"],
+                "blockedCount": unassigned["blocked_count"],
+                "notExecutedCount": unassigned["not_executed_count"],
+            },
+        }
 
     def linked_bug_ids(self, case_ids: list[int]) -> dict[int, RowList]:
         """用例 -> 关联缺陷列表（用于 xlsx 导出「关联缺陷」列）。"""

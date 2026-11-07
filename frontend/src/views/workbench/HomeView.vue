@@ -275,7 +275,7 @@
       >
         <div class="home__section-title">
           测试环境健康监测
-          <span class="home__section-hint">本机采集资源指标，15 秒自动刷新，信息不出本机</span>
+          <span class="home__section-hint">服务运行期间每 15 秒采样，离开页面也继续记录；曲线只存本机内存</span>
         </div>
         <div class="home__env-toolbar">
           <el-switch v-model="envAutoRefresh" size="small" inline-prompt active-text="自动刷新" inactive-text="自动刷新" />
@@ -424,6 +424,9 @@ import KnowledgeAssistant from '@/components/KnowledgeAssistant.vue'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import { moduleApi, projectVersionApi, settingsApi, testEnvApi, workbenchApi } from '@/api'
 import type {
+  EnvHealthHistoryResult,
+  EnvHealthSide,
+  EnvMetricSeries,
   HomeCardItem,
   ModuleNode,
   QuickEntry,
@@ -718,6 +721,56 @@ function historyOf(envId: number, side: EnvSide, metric: string): MetricSample[]
   return metricHistory[`${envId}:${side}:${metric}`] ?? []
 }
 
+function toSamples(series: EnvMetricSeries): MetricSample[] {
+  return series.ts.map((ts, index) => ({ ts, value: series.values[index] }))
+}
+
+/** 用服务端历史覆盖本地曲线，进页面就能直接画出来。 */
+function applySideHistory(envId: number, side: EnvSide, data: EnvHealthSide): void {
+  const prefix = `${envId}:${side}:`
+  for (const key of Object.keys(metricHistory)) {
+    if (key.startsWith(prefix)) {
+      delete metricHistory[key]
+    }
+  }
+  metricHistory[`${prefix}cpu`] = toSamples(data.cpu)
+  metricHistory[`${prefix}mem`] = toSamples(data.memory)
+  for (const [name, series] of Object.entries(data.disks)) {
+    metricHistory[`${prefix}disk:${name}`] = toSamples(series)
+  }
+}
+
+/** 应用服务端历史；返回是否已有最新探测状态。 */
+function applyEnvHistory(payload: EnvHealthHistoryResult): boolean {
+  const byId = new Map(payload.list.map((item) => [item.envId, item]))
+  let hasData = false
+  for (const row of envRows.value) {
+    const item = byId.get(row.env.id)
+    if (!item) {
+      continue
+    }
+    if (item.probe) {
+      row.probe = item.probe
+      row.probedAt = item.probedAt
+        ? new Date(item.probedAt).toLocaleTimeString('zh-CN', { hour12: false })
+        : ''
+      hasData = true
+    }
+    applySideHistory(row.env.id, 'app', item.app)
+    applySideHistory(row.env.id, 'db', item.db)
+  }
+  return hasData
+}
+
+/** 读服务端持续采样结果；服务刚启动还没有点位时返回 false，由调用方兜底探测一次。 */
+async function loadEnvHistory(): Promise<boolean> {
+  try {
+    return applyEnvHistory(await testEnvApi.healthHistory())
+  } catch {
+    return false
+  }
+}
+
 const envCards = computed<EnvCardView[]>(() =>
   envRows.value.map((row) => ({
     id: row.env.id,
@@ -822,6 +875,17 @@ async function probeAll(quiet = false): Promise<void> {
   }
 }
 
+/** 轮询服务端采样结果；服务刚启动还没有点位时手动补探一轮。 */
+async function refreshEnvHealth(): Promise<void> {
+  if (!envRows.value.length) {
+    return
+  }
+  const hasData = await loadEnvHistory()
+  if (!hasData) {
+    void probeAll(true)
+  }
+}
+
 function probeById(id: number): void {
   const row = envRows.value.find((item) => item.env.id === id)
   if (row) {
@@ -835,7 +899,7 @@ function startEnvTimer(): void {
   }
   envTimer = window.setInterval(() => {
     if (envAutoRefresh.value) {
-      void probeAll(true)
+      void refreshEnvHealth()
     }
   }, ENV_REFRESH_MS)
 }
@@ -1064,19 +1128,22 @@ onMounted(async () => {
   void loadCardLayout()
   void loadOverviewVersions()
   void reload()
-  // 有配置测试环境时自动探测一次，进首页就能看到健康状态与资源曲线
+  // 服务端已在持续采样，进首页直接读历史；服务刚启动没有点位时才补探一轮
   await loadEnvs()
   if (envRows.value.length) {
-    void probeAll()
+    await refreshEnvHealth()
   }
 })
 
-// keep-alive 返回首页：重新取一次卡片布局、恢复轮询并立即补一次静默探测；离开时停掉计时器
+// keep-alive 返回首页：刷新环境清单与历史、恢复轮询；离开时停掉计时器
 onActivated(() => {
   void loadCardLayout()
   startEnvTimer()
   if (activatedBefore) {
-    void probeAll(true)
+    void (async () => {
+      await loadEnvs()
+      await refreshEnvHealth()
+    })()
   }
   activatedBefore = true
 })

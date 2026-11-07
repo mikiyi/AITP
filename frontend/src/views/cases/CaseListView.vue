@@ -195,13 +195,20 @@
 
     <el-dialog v-model="coverageVisible" title="功能点覆盖矩阵" width="900px">
       <el-alert
-        v-if="coverageRows.length"
+        v-if="coverageTableRows.length"
         type="info"
         :closable="false"
         show-icon
-        title="用例数以「功能点」归属统计，与用例列表中的 moduleId 一致；无覆盖的功能点用例数为 0。"
+        :title="coverageSummary"
       />
-      <el-table :data="coverageRows" size="small" border max-height="520" class="coverage-table">
+      <el-table
+        :data="coverageTableRows"
+        size="small"
+        border
+        max-height="520"
+        class="coverage-table"
+        :row-class-name="coverageRowClass"
+      >
         <el-table-column prop="path" label="功能点" min-width="260" show-overflow-tooltip />
         <el-table-column prop="caseCount" label="用例数" width="80" align="right" />
         <el-table-column prop="p0Count" label="P0" width="70" align="right" />
@@ -211,7 +218,7 @@
         <el-table-column prop="blockedCount" label="阻塞" width="70" align="right" />
         <el-table-column prop="notExecutedCount" label="未执行" width="80" align="right" />
       </el-table>
-      <el-empty v-if="!coverageLoading && !coverageRows.length" description="当前项目还没有功能点数据" />
+      <el-empty v-if="!coverageLoading && !coverageTableRows.length" description="当前项目还没有功能点数据" />
       <template #footer>
         <el-button @click="coverageVisible = false">关闭</el-button>
         <el-button type="primary" :loading="coverageLoading" @click="loadCoverage">刷新</el-button>
@@ -232,7 +239,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { DataAnalysis, Plus, Upload, UploadFilled } from '@element-plus/icons-vue'
 import type { UploadFile, UploadFiles } from 'element-plus'
@@ -241,12 +248,21 @@ import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import { caseApi, moduleApi, projectVersionApi, requirementApi } from '@/api'
-import type { CaseStep, CaseTreeNode, ModuleCoverage, ModuleOption, Requirement, TestCase } from '@/api/types'
+import type {
+  CaseStep,
+  CaseTreeNode,
+  ModuleCoverage,
+  ModuleCoverageStat,
+  ModuleOption,
+  Requirement,
+  TestCase,
+} from '@/api/types'
 import { caseTypeText } from '@/utils/format'
 import { useProjectScope } from '@/composables/useProjectScope'
 import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
+const route = useRoute()
 
 const knowledgeVisible = ref(false)
 const knowledgePayload = reactive({
@@ -439,7 +455,9 @@ async function loadModuleNav(): Promise<void> {
   }
   moduleNavLoading.value = true
   try {
-    const data = await caseApi.tree(pid)
+    // 节点数字跟着版本筛选走，否则和列表里的条数对不上
+    const versionId = Number(route.query.versionId) || null
+    const data = await caseApi.tree(pid, versionId)
     const nodes = (data.list ?? []).map(toNavNode)
     const tree: ModuleNavNode[] = [
       { key: NAV_ALL_KEY, name: '全部用例', path: '', total: data.total ?? 0, query: '', children: [] },
@@ -461,6 +479,13 @@ async function loadModuleNav(): Promise<void> {
     moduleNavLoading.value = false
   }
 }
+
+watch(
+  () => route.query.versionId,
+  () => {
+    void loadModuleNav()
+  },
+)
 
 /** 地址栏或重置按钮改了筛选，面板高亮要跟着走，否则树和列表两边显示对不上。 */
 function syncModuleNav(): void {
@@ -830,19 +855,63 @@ function resolveExportUrl(format: string): string {
 const coverageVisible = ref(false)
 const coverageLoading = ref(false)
 const coverageRows = ref<ModuleCoverage[]>([])
+const coverageUnassigned = ref<ModuleCoverageStat | null>(null)
+const coverageTotal = ref(0)
+
+/** 未关联功能点的用例单独占一行，保证和当前范围的用例总数对得上。 */
+const coverageTableRows = computed<ModuleCoverage[]>(() => {
+  const left = coverageUnassigned.value
+  if (!left || left.caseCount === 0) {
+    return coverageRows.value
+  }
+  return [
+    ...coverageRows.value,
+    {
+      moduleId: 0,
+      name: '未关联功能点',
+      nodeType: 'module',
+      parentId: null,
+      path: '未关联功能点',
+      ...left,
+    },
+  ]
+})
+
+const coverageSummary = computed(() => {
+  const left = coverageUnassigned.value?.caseCount ?? 0
+  return `当前范围共 ${coverageTotal.value} 条用例，其中未关联功能点 ${left} 条。`
+    + '数字按「本级 + 下级」统计，与左侧功能点面板一致。'
+})
+
+function coverageRowClass({ row }: { row: ModuleCoverage }): string {
+  return row.moduleId === 0 ? 'coverage-table__row--unassigned' : ''
+}
 
 async function loadCoverage(): Promise<void> {
   const projectId = appStore.currentProjectId
   if (!projectId) {
     coverageRows.value = []
+    coverageUnassigned.value = null
+    coverageTotal.value = 0
     return
   }
   coverageLoading.value = true
   try {
-    const result = await caseApi.coverageModules(projectId)
-    coverageRows.value = result.list ?? []
+    // 矩阵跟着当前列表的版本筛选走，否则和列表里的条数对不上
+    const versionId = Number(tableRef.value?.filterQuery().versionId) || null
+    const result = await caseApi.coverageModules(projectId, versionId)
+    const rows = result.list ?? []
+    const unassigned = result.unassigned ?? null
+    coverageRows.value = rows
+    coverageUnassigned.value = unassigned
+    // 根节点之间不重叠；根之和 + 未关联 = 当前范围用例总数
+    coverageTotal.value =
+      rows.filter((row) => row.parentId === null).reduce((sum, row) => sum + row.caseCount, 0)
+      + (unassigned?.caseCount ?? 0)
   } catch (err) {
     coverageRows.value = []
+    coverageUnassigned.value = null
+    coverageTotal.value = 0
     ElMessage.error(err instanceof Error ? err.message : '加载覆盖矩阵失败')
   } finally {
     coverageLoading.value = false
@@ -974,5 +1043,10 @@ useProjectScope({
 
 .coverage-table {
   margin-top: 12px;
+}
+
+.coverage-table :deep(.coverage-table__row--unassigned) {
+  color: var(--el-text-color-secondary);
+  font-style: italic;
 }
 </style>

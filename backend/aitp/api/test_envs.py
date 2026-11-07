@@ -20,7 +20,7 @@ from ..repositories.test_env_repo import (
     ENV_KINDS,
     TestEnvRepository,
 )
-from ..services import audit_service, env_probe_service
+from ..services import audit_service, env_health_history, env_probe_service
 from .helpers import audit, body, commit, db, path_int
 
 bp = Blueprint("test_envs", __name__)
@@ -46,6 +46,14 @@ def list_envs() -> Response:
         "dbDefaultPorts": DB_DEFAULT_PORTS,
         "kinds": [{"value": key, "label": ENV_KIND_LABELS[key]} for key in ENV_KINDS],
     })
+
+
+@bp.get("/health-history")
+def health_history() -> Response:
+    """服务端持续采样的健康历史；进首页直接出曲线，不用等客户端重新探测。"""
+    conn = db()
+    env_ids = [int(row["id"]) for row in _repo(conn).list_all() if row.get("id") is not None]
+    return ok(env_health_history.snapshot(env_ids))
 
 
 @bp.get("/<pk>")
@@ -197,6 +205,8 @@ def probe_env(pk: str) -> Response:
         app_metrics_url=str(row.get("app_metrics_url") or ""),
         db_metrics_url=str(row.get("db_metrics_url") or ""),
     )
+    # 手动探测也进历史，曲线里能看到这一次的采样点
+    env_health_history.record(target, result)
     if not quiet:
         audit(conn, audit_service.AUDIT_ACTION_EXECUTE, audit_service.RESOURCE_TEST_ENV, target,
               str(row.get("name") or ""), {"overall": result.get("overall")})

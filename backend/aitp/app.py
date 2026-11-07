@@ -241,6 +241,13 @@ def _start_task_queue(app: Flask, cfg: AppConfig) -> None:
     backup_schedule.start_scheduler(cfg.db_path)
 
 
+def _start_env_health_sampler(cfg: AppConfig) -> None:
+    """后台持续采集测试环境健康曲线，首页进来直接有数据。"""
+    from .services import env_health_history
+
+    env_health_history.start_sampler(cfg.db_path)
+
+
 def _auto_reindex_knowledge(cfg: AppConfig) -> None:
     """按配置在启动时扫描知识库目录重建索引。"""
     from .db.connection import get_standalone_conn
@@ -295,6 +302,7 @@ def create_app(config: AppConfig | None = None) -> Flask:
     _apply_pending_migrations(cfg)
     _reconcile_interrupted(cfg)
     _start_task_queue(app, cfg)
+    _start_env_health_sampler(cfg)
     _auto_reindex_knowledge(cfg)
     _register_secret_store(cfg)
     _register_profile_loader(cfg)

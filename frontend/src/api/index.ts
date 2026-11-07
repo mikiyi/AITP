@@ -43,6 +43,7 @@ import type {
   DocTemplatePage,
   DocTemplateUpload,
   DocumentAttachment,
+  EnvHealthHistoryResult,
   HomeCardItem,
   KnowledgeAnswer,
   AssistantEgress,
@@ -57,7 +58,7 @@ import type {
   KnowledgeVersion,
   ImageAttachment,
   MaskInfo,
-  ModuleCoverage,
+  ModuleCoverageResult,
   ModuleNode,
   ModuleOption,
   NotificationChannel,
@@ -364,12 +365,13 @@ export const caseApi = {
     postLong<InterfaceExecution>(`/test-cases/${id}/interface-run`, body, runTimeout(body)),
   coverage: (projectId: number) => get('/test-cases/coverage', { projectId }),
   /** 功能点用例树：树上每个功能点挂自己的用例，未挂功能点的用例单独返回，供用例列表左侧筛选面板。 */
-  tree: (projectId: number) =>
+  tree: (projectId: number, versionId?: number | null) =>
     get<{ list: CaseTreeNode[]; orphans: TestCase[]; total: number }>('/test-cases/tree', {
       projectId,
+      versionId,
     }),
-  coverageModules: (projectId: number) =>
-    get<{ list: ModuleCoverage[] }>('/test-cases/coverage/modules', { projectId }),
+  coverageModules: (projectId: number, versionId?: number | null) =>
+    get<ModuleCoverageResult>('/test-cases/coverage/modules', { projectId, versionId }),
   adopt: (body: {
     projectId: number
     moduleId?: number | null
@@ -786,6 +788,8 @@ export const badgeApi = {
 /** 测试环境配置：多套命名环境，供首页环境健康监测使用。口令只回掩码，绝不进大模型。 */
 export const testEnvApi = {
   list: () => get<TestEnvListResult>('/test-envs'),
+  /** 服务端持续采样的健康历史与最新状态；进页面直接出曲线。 */
+  healthHistory: () => get<EnvHealthHistoryResult>('/test-envs/health-history'),
   get: (id: number) => get<TestEnv>(`/test-envs/${id}`),
   create: (body: Record<string, unknown>) => post<TestEnv>('/test-envs', body),
   update: (id: number, body: Record<string, unknown>) => put<TestEnv>(`/test-envs/${id}`, body),

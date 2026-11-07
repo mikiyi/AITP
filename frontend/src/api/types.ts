@@ -124,13 +124,8 @@ export interface CaseStep {
   expected: string
 }
 
-/** 按功能点统计的覆盖矩阵行。 */
-export interface ModuleCoverage {
-  moduleId: Id
-  name: string
-  nodeType: ModuleNodeType
-  parentId: Id | null
-  path: string
+/** 覆盖矩阵的用例统计（行内数字含全部下级功能点）。 */
+export interface ModuleCoverageStat {
   caseCount: number
   p0Count: number
   p1Count: number
@@ -138,6 +133,21 @@ export interface ModuleCoverage {
   failCount: number
   blockedCount: number
   notExecutedCount: number
+}
+
+/** 按功能点统计的覆盖矩阵行。 */
+export interface ModuleCoverage extends ModuleCoverageStat {
+  moduleId: Id
+  name: string
+  nodeType: ModuleNodeType
+  parentId: Id | null
+  path: string
+}
+
+/** 功能点覆盖矩阵：未挂功能点的用例单独返回，便于和总数对账。 */
+export interface ModuleCoverageResult {
+  list: ModuleCoverage[]
+  unassigned: ModuleCoverageStat
 }
 
 /** AI 生成用例的采纳载荷。 */
@@ -948,6 +958,34 @@ export interface TestEnvProbe {
   app: TestEnvProbeItem
   db: TestEnvProbeItem
   overall: 'healthy' | 'unhealthy'
+}
+
+/** 一条资源曲线：时间戳（毫秒）与对应值。 */
+export interface EnvMetricSeries {
+  ts: number[]
+  values: number[]
+}
+
+export interface EnvHealthSide {
+  cpu: EnvMetricSeries
+  memory: EnvMetricSeries
+  disks: Record<string, EnvMetricSeries>
+}
+
+/** 服务端持续采样得到的环境健康历史，进页面直接渲染。 */
+export interface EnvHealthHistoryItem {
+  envId: number
+  probedAt: string
+  probe: TestEnvProbe | null
+  app: EnvHealthSide
+  db: EnvHealthSide
+}
+
+export interface EnvHealthHistoryResult {
+  windowMs: number
+  intervalMs: number
+  serverTime: string
+  list: EnvHealthHistoryItem[]
 }
 
 /** AI 执行记录里的一条证据：产出物引用到的条目，已回库核对。 */
