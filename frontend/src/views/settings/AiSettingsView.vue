@@ -574,6 +574,12 @@ async function loadModels(): Promise<void> {
     if (editing.value) {
       payload.profileId = editing.value.id
     }
+    payload.useEnvKey = form.useEnvKey
+    payload.envKeyName = form.envKeyName.trim()
+    payload.envKeyScope = form.envKeyScope
+    if (!form.useEnvKey && draftApiKey.value.trim()) {
+      payload.apiKey = draftApiKey.value.trim()
+    }
     modelOptions.value = await settingsApi.models(payload)
     if (!modelOptions.value.length) {
       ElMessage.info('服务端没有返回可用模型，可直接手动输入模型名')
