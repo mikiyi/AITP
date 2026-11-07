@@ -487,7 +487,7 @@ _AUTHOR_PATH_RE = re.compile(
     rb"D:[\\/]+Qoter|C:[\\/]+Users[\\/]+52748|app_install|testSKill"
 )
 _SCAN_ROOTS = (
-    "backend", "frontend/src", "scripts", "README.md",
+    "backend", "frontend/src", "scripts", "README.md", "README.en.md",
     "requirements.txt", "start.sh", "stop.sh", ".gitattributes",
 )
 _SCAN_SKIP_PARTS = frozenset({"static", "__pycache__", ".venv", "node_modules", "data"})
