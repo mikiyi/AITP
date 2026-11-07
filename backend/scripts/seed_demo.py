@@ -7,6 +7,9 @@
     python backend/scripts/seed_demo.py                 # 写 data/demo.db
     python backend/scripts/seed_demo.py --reset         # 先清空 demo 库业务数据
     python backend/scripts/seed_demo.py --db data/aitp.db --force   # 明确要对正式库动手
+
+重复执行时，若库里只有演示项目 DEMO-EC，会自动清空后重建；
+检测到其他项目则拒绝执行，避免误删真实数据。
 """
 
 from __future__ import annotations
@@ -414,6 +417,26 @@ def _live_db_path() -> pathlib.Path:
     return load_config().db_path.resolve()
 
 
+def _project_codes(conn: sqlite3.Connection) -> set[str]:
+    try:
+        return {str(row[0]) for row in conn.execute("SELECT code FROM biz_project")}
+    except sqlite3.OperationalError:
+        return set()
+
+
+def _clear_business_tables(conn: sqlite3.Connection) -> list[str]:
+    """清空 19 张业务表，返回清空前需要删除的落盘文件。"""
+    stale_files = [
+        str(row[0]) for row in conn.execute(
+            "SELECT file_path FROM biz_knowledge_article"
+            " WHERE file_path IS NOT NULL AND file_path <> ''")
+    ]
+    for table in TABLES:
+        conn.execute(f"DELETE FROM {table}")
+    conn.commit()
+    return stale_files
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="AITP 演示数据")
     parser.add_argument("--db", default=str(ROOT / "data" / "demo.db"))
@@ -441,15 +464,20 @@ def main() -> int:
         stale_files: list[str] = []
         if args.reset:
             print(f"[WARN] 即将清空 {db_path} 的 19 张业务表。")
-            stale_files = [
-                str(row[0]) for row in conn.execute(
-                    "SELECT file_path FROM biz_knowledge_article"
-                    " WHERE file_path IS NOT NULL AND file_path <> ''")
-            ]
-            for table in TABLES:
-                conn.execute(f"DELETE FROM {table}")
-            conn.commit()
+            stale_files = _clear_business_tables(conn)
             print("已清空业务数据。")
+        else:
+            codes = _project_codes(conn)
+            if codes == {"DEMO-EC"}:
+                print("[INFO] 目标库已有演示数据，自动重建（等价于 --reset）。")
+                stale_files = _clear_business_tables(conn)
+            elif codes:
+                preview = "、".join(sorted(codes)[:5])
+                print(
+                    f"[FAIL] 目标库已有业务数据（项目：{preview}），未做清空。\n"
+                    "       重复灌演示数据会与现有数据冲突；确认要重建请加 --reset。"
+                )
+                return 1
 
         counts = seed(conn)
         conn.commit()
