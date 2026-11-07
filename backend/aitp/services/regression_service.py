@@ -60,6 +60,41 @@ def _items_from_output(parsed: Any) -> list[dict[str, Any]]:
     return items
 
 
+def _guard_scope(
+    conn: sqlite3.Connection,
+    *,
+    project_id: Any,
+    version_id: Any,
+    creating: bool,
+    current_project_id: Any = None,
+) -> None:
+    """清单必须挂在真实项目下，版本引用也不能跨项目。
+
+    跨项目的版本会让「按版本回归」统计把别的项目的清单算进来，
+    这里在写入前拦住，而不是等数据脏了再去补。
+    """
+    if creating:
+        if conn.execute(
+            "SELECT id FROM biz_project WHERE id = ? AND is_deleted = 0", (int(project_id or 0),)
+        ).fetchone() is None:
+            raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "项目不存在")
+        effective = project_id
+    else:
+        if project_id is not None and int(project_id) != int(current_project_id or 0):
+            raise AppError(ErrorCode.ILLEGAL_OPERATION, "不支持把回归清单改挂到别的项目")
+        effective = project_id if project_id is not None else current_project_id
+    if version_id in (None, ""):
+        return
+    value = require_int(version_id, "versionId")
+    row = conn.execute(
+        "SELECT project_id FROM biz_project_version WHERE id = ? AND is_deleted = 0", (value,)
+    ).fetchone()
+    if row is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "项目版本不存在")
+    if effective in (None, "", 0) or int(row["project_id"] or -1) != int(effective):
+        raise AppError(ErrorCode.ILLEGAL_OPERATION, "项目版本不属于该项目，不能挂到本项目下")
+
+
 def create_regression(
     conn: sqlite3.Connection,
     *,
@@ -68,18 +103,21 @@ def create_regression(
     change_scope: str = "",
     affected_modules: str = "",
     version: str = "",
+    version_id: int | None = None,
     risk_level: str = "low",
     content: str = "",
     source: str = "manual",
 ) -> int:
     repo = RegressionRepository(conn)
     risk = risk_level if risk_level in RISK_LEVELS else "low"
+    _guard_scope(conn, project_id=project_id, version_id=version_id, creating=True)
     return repo.insert({
         "project_id": project_id,
         "title": str(title or "回归清单"),
         "change_scope": str(change_scope or ""),
         "affected_modules": str(affected_modules or ""),
         "version": str(version or ""),
+        "version_id": version_id,
         "risk_level": risk,
         "status": REGRESSION_DRAFT,
         "source": source,
@@ -101,6 +139,9 @@ def update_regression(conn: sqlite3.Connection, pk: int, data: dict[str, Any]) -
         payload["affected_modules"] = str(data["affectedModules"] or "")
     if "version" in data:
         payload["version"] = str(data["version"] or "")
+    if "versionId" in data:
+        raw_version_id = data["versionId"]
+        payload["version_id"] = None if raw_version_id in (None, "") else require_int(raw_version_id, "versionId")
     if "content" in data:
         payload["content"] = str(data["content"] or "")
     if "riskLevel" in data:
@@ -108,6 +149,13 @@ def update_regression(conn: sqlite3.Connection, pk: int, data: dict[str, Any]) -
         if risk not in RISK_LEVELS:
             raise AppError(ErrorCode.PARAM_ERROR, "风险等级非法")
         payload["risk_level"] = risk
+    _guard_scope(
+        conn,
+        project_id=data.get("projectId"),
+        version_id=payload.get("version_id"),
+        creating=False,
+        current_project_id=row.get("project_id"),
+    )
     repo.update(pk, payload)
     detail = repo.get_detail(pk)
     if detail is None:

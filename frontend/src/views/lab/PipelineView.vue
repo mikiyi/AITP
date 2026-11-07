@@ -3,10 +3,24 @@
     <div class="page-header">
       <h2 class="page-title">多入口顺序执行</h2>
       <div class="toolbar" style="margin: 0">
+        <ProjectSwitcher />
         <el-button :icon="MagicStick" @click="generateFromPreflight">预检生成步骤</el-button>
+        <el-button :icon="FolderAdd" :disabled="!steps.length" @click="openSaveEntry">
+          保存为编排
+        </el-button>
         <el-button :icon="RefreshLeft" @click="resetSteps">清空</el-button>
+        <el-switch
+          v-model="continueOnError"
+          active-text="失败继续"
+          inactive-text="失败中断"
+          inline-prompt
+          style="margin: 0 8px"
+        />
         <el-button type="primary" :icon="Promotion" :loading="running" @click="run">
           顺序执行
+        </el-button>
+        <el-button v-if="running" type="warning" :icon="CircleClose" :loading="stopping" @click="stop">
+          停止
         </el-button>
       </div>
     </div>
@@ -20,100 +34,144 @@
     />
 
     <div class="pipeline-layout">
-      <div class="panel panel-pad">
-        <h3 class="section-title">
-          执行步骤
-          <el-tag size="small" effect="plain">{{ steps.length }} 步</el-tag>
-        </h3>
+      <div class="pipeline-left">
+        <div class="panel panel-pad">
+          <h3 class="section-title">
+            已保存编排
+            <el-tag size="small" effect="plain">{{ entries.length }}</el-tag>
+            <el-button link type="primary" class="saved-panel__refresh" :loading="entriesLoading" @click="loadEntries">
+              刷新
+            </el-button>
+          </h3>
+          <div v-loading="entriesLoading" class="saved-entry-list">
+            <div
+              v-for="entry in entries"
+              :key="entry.id"
+              class="saved-entry"
+              :class="{ 'is-active': loadedEntry?.id === entry.id }"
+            >
+              <div class="saved-entry__main">
+                <span class="saved-entry__name">{{ entry.name }}</span>
+                <span class="muted saved-entry__meta">
+                  {{ entry.workflow?.length ?? 0 }} 步 · v{{ entry.version }} ·
+                  {{ entryStatusText(entry.status) }}
+                </span>
+              </div>
+              <div class="saved-entry__actions">
+                <el-button link type="primary" @click="loadEntry(entry)">载入</el-button>
+                <el-button link :disabled="entry.status === 'published'" @click="publishEntry(entry)">
+                  发布
+                </el-button>
+                <el-button link type="danger" @click="removeEntry(entry)">删除</el-button>
+              </div>
+            </div>
+            <span v-if="!entries.length && !entriesLoading" class="muted saved-panel__empty">
+              还没有保存的编排；配好步骤后点「保存为编排」
+            </span>
+          </div>
+          <p class="muted saved-panel__hint">
+            载入后可继续改参数再执行；发布只递增版本号，不锁编辑。
+          </p>
+        </div>
 
-        <div v-if="preflight || steps.length" class="preflight-box">
-          <div class="preflight-box__head">
-            <span>预检结论</span>
-            <div class="preflight-box__actions">
-              <el-button link type="primary" :loading="checking" @click="recheck">重新预检</el-button>
-              <el-tag v-if="preflight" size="small" :type="preflight.ready ? 'success' : 'warning'">
-                {{ preflight.ready ? '可执行' : '有阻断项' }}
-              </el-tag>
+        <div class="panel panel-pad">
+          <h3 class="section-title">
+            执行步骤
+            <el-tag size="small" effect="plain">{{ steps.length }} 步</el-tag>
+            <el-tag v-if="loadedEntry" size="small" type="success" effect="plain">
+              来自「{{ loadedEntry.name }}」
+            </el-tag>
+          </h3>
+
+          <div v-if="preflight || steps.length" class="preflight-box">
+            <div class="preflight-box__head">
+              <span>预检结论</span>
+              <div class="preflight-box__actions">
+                <el-button link type="primary" :loading="checking" @click="recheck">重新预检</el-button>
+                <el-tag v-if="preflight" size="small" :type="preflight.ready ? 'success' : 'warning'">
+                  {{ preflight.ready ? '可执行' : '有阻断项' }}
+                </el-tag>
+              </div>
+            </div>
+            <template v-if="preflight">
+              <el-progress
+                :percentage="preflight.overallCompleteness * 100"
+                :format="percentText"
+                :stroke-width="10"
+                :status="preflight.ready ? 'success' : 'exception'"
+              />
+              <ul class="preflight-box__list">
+                <li v-for="task in preflight.tasks" :key="task.capability">
+                  <strong>{{ task.label }}</strong>
+                  <span class="muted">完整度 {{ percentText(task.completeness * 100) }}</span>
+                  <el-tag size="small" effect="plain">{{ task.role === 'primary' ? '主任务' : '辅助' }}</el-tag>
+                  <span v-if="task.missing.length" class="missing">
+                    缺：{{ task.missing.join('、') }}
+                  </span>
+                </li>
+              </ul>
+            </template>
+            <p v-else class="muted preflight-box__hint">点「重新预检」看当前步骤还缺什么</p>
+          </div>
+
+          <el-empty v-if="!steps.length" description="还没有步骤，点「预检生成步骤」或「添加步骤」" :image-size="70" />
+
+          <div v-for="(step, index) in steps" :key="step.key" class="step-card">
+            <div class="step-card__head">
+              <el-tag size="small" type="info">第 {{ index + 1 }} 步</el-tag>
+              <el-select
+                v-model="step.capability"
+                placeholder="选择能力"
+                style="width: 190px"
+                @change="onCapabilityChange(step)"
+              >
+                <el-option
+                  v-for="item in labStore.capabilities"
+                  :key="item.code"
+                  :label="item.label"
+                  :value="item.code"
+                />
+              </el-select>
+              <el-input v-model="step.name" placeholder="步骤名" style="flex: 1; min-width: 120px" />
+              <el-button text :icon="Top" :disabled="index === 0" @click="move(index, -1)" />
+              <el-button
+                text
+                :icon="Bottom"
+                :disabled="index === steps.length - 1"
+                @click="move(index, 1)"
+              />
+              <el-button text type="danger" :icon="Delete" @click="removeStep(index)" />
+            </div>
+
+            <div class="step-card__body">
+              <el-form label-width="110px" label-position="right" size="small">
+                <el-form-item v-for="name in requiredOf(step)" :key="`r-${name}`" :label="name">
+                  <el-input
+                    v-model="step.variables[name]"
+                    type="textarea"
+                    :rows="2"
+                    :placeholder="textareaHint(`必填：${name}`)"
+                  />
+                </el-form-item>
+                <el-form-item v-for="name in optionalOf(step)" :key="`o-${name}`" :label="name">
+                  <el-input v-model="step.variables[name]" :placeholder="`可选：${name}`" />
+                </el-form-item>
+                <el-form-item label="功能点">
+                  <el-select v-model="step.moduleId" clearable placeholder="继承全局功能点" style="width: 100%">
+                    <el-option
+                      v-for="item in labStore.moduleOptions"
+                      :key="item.id"
+                      :label="item.path"
+                      :value="item.id"
+                    />
+                  </el-select>
+                </el-form-item>
+              </el-form>
             </div>
           </div>
-          <template v-if="preflight">
-            <el-progress
-              :percentage="preflight.overallCompleteness * 100"
-              :format="percentText"
-              :stroke-width="10"
-              :status="preflight.ready ? 'success' : 'exception'"
-            />
-            <ul class="preflight-box__list">
-              <li v-for="task in preflight.tasks" :key="task.capability">
-                <strong>{{ task.label }}</strong>
-                <span class="muted">完整度 {{ percentText(task.completeness * 100) }}</span>
-                <el-tag size="small" effect="plain">{{ task.role === 'primary' ? '主任务' : '辅助' }}</el-tag>
-                <span v-if="task.missing.length" class="missing">
-                  缺：{{ task.missing.join('、') }}
-                </span>
-              </li>
-            </ul>
-          </template>
-          <p v-else class="muted preflight-box__hint">点「重新预检」看当前步骤还缺什么</p>
+
+          <el-button :icon="Plus" plain class="add-step" @click="addStep">添加步骤</el-button>
         </div>
-
-        <el-empty v-if="!steps.length" description="还没有步骤，点「预检生成步骤」或「添加步骤」" :image-size="70" />
-
-        <div v-for="(step, index) in steps" :key="step.key" class="step-card">
-          <div class="step-card__head">
-            <el-tag size="small" type="info">第 {{ index + 1 }} 步</el-tag>
-            <el-select
-              v-model="step.capability"
-              placeholder="选择能力"
-              style="width: 190px"
-              @change="onCapabilityChange(step)"
-            >
-              <el-option
-                v-for="item in labStore.capabilities"
-                :key="item.code"
-                :label="item.label"
-                :value="item.code"
-              />
-            </el-select>
-            <el-input v-model="step.name" placeholder="步骤名" style="flex: 1; min-width: 120px" />
-            <el-button text :icon="Top" :disabled="index === 0" @click="move(index, -1)" />
-            <el-button
-              text
-              :icon="Bottom"
-              :disabled="index === steps.length - 1"
-              @click="move(index, 1)"
-            />
-            <el-button text type="danger" :icon="Delete" @click="removeStep(index)" />
-          </div>
-
-          <div class="step-card__body">
-            <el-form label-width="110px" label-position="right" size="small">
-              <el-form-item v-for="name in requiredOf(step)" :key="`r-${name}`" :label="name">
-                <el-input
-                  v-model="step.variables[name]"
-                  type="textarea"
-                  :rows="2"
-                  :placeholder="textareaHint(`必填：${name}`)"
-                />
-              </el-form-item>
-              <el-form-item v-for="name in optionalOf(step)" :key="`o-${name}`" :label="name">
-                <el-input v-model="step.variables[name]" :placeholder="`可选：${name}`" />
-              </el-form-item>
-              <el-form-item label="功能点">
-                <el-select v-model="step.moduleId" clearable placeholder="继承全局功能点" style="width: 100%">
-                  <el-option
-                    v-for="item in labStore.moduleOptions"
-                    :key="item.id"
-                    :label="item.path"
-                    :value="item.id"
-                  />
-                </el-select>
-              </el-form-item>
-            </el-form>
-          </div>
-        </div>
-
-        <el-button :icon="Plus" plain class="add-step" @click="addStep">添加步骤</el-button>
       </div>
 
       <div class="panel panel-pad">
@@ -182,26 +240,72 @@
         <el-button type="primary" :loading="preflighting" @click="confirmPreflight">预检</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="saveVisible"
+      :title="loadedEntry ? '更新编排' : '保存为编排'"
+      width="560px"
+    >
+      <el-alert
+        v-if="loadedEntry"
+        type="info"
+        show-icon
+        :closable="false"
+        class="save-entry-alert"
+        :title="`保存会更新「${loadedEntry.name}」并保留它的版本号；要另存为新编排请先点「清空」。`"
+      />
+      <el-form label-width="76px">
+        <el-form-item label="编码" required>
+          <el-input
+            v-model="entryForm.code"
+            :disabled="Boolean(loadedEntry)"
+            placeholder="例如 requirement-to-cases"
+          />
+        </el-form-item>
+        <el-form-item label="名称" required>
+          <el-input v-model="entryForm.name" placeholder="例如 需求评审 → 用例生成" />
+        </el-form-item>
+        <el-form-item label="说明">
+          <el-input v-model="entryForm.description" type="textarea" :rows="2" />
+        </el-form-item>
+        <el-form-item label="步骤">
+          <span class="muted">
+            {{ steps.length }} 步：{{
+              steps.map((step) => step.name || labelOf(step.capability)).join(' → ')
+            }}
+          </span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="saveVisible = false">取消</el-button>
+        <el-button type="primary" :loading="savingEntry" @click="saveEntry">
+          {{ loadedEntry ? '更新' : '保存' }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Bottom,
+  CircleClose,
   Delete,
+  FolderAdd,
   MagicStick,
   Plus,
   Promotion,
   RefreshLeft,
   Top,
 } from '@element-plus/icons-vue'
-import { labApi } from '@/api'
+import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
+import { labApi, workbenchApi } from '@/api'
 import { percentText } from '@/utils/format'
 import { textareaHint } from '@/utils/inputHints'
 import { useAiGuardStore } from '@/stores/aiGuard'
-import type { PipelineResult, PreflightResult } from '@/api/types'
+import type { PipelineResult, PreflightResult, WorkbenchEntry } from '@/api/types'
 import { usePromptTemplates } from '@/composables/usePromptTemplates'
 import { useAppStore } from '@/stores/app'
 import { useLabStore } from '@/stores/lab'
@@ -222,11 +326,20 @@ const { variablesOf, loadMany } = usePromptTemplates()
 const steps = ref<StepForm[]>([])
 const result = ref<PipelineResult | null>(null)
 const running = ref(false)
+const stopping = ref(false)
+const continueOnError = ref(false)
 const preflight = ref<PreflightResult | null>(null)
 const preflightVisible = ref(false)
 const preflightText = ref('')
 const preflighting = ref(false)
 const checking = ref(false)
+
+const entries = ref<WorkbenchEntry[]>([])
+const entriesLoading = ref(false)
+const loadedEntry = ref<WorkbenchEntry | null>(null)
+const saveVisible = ref(false)
+const savingEntry = ref(false)
+const entryForm = reactive({ code: '', name: '', description: '' })
 
 /** 每个能力的变量清单，能力 → { 必填, 可选 }。 */
 const varMap = reactive<Record<string, { required: string[]; optional: string[] }>>({})
@@ -309,6 +422,154 @@ function resetSteps(): void {
   steps.value = []
   result.value = null
   preflight.value = null
+  loadedEntry.value = null
+}
+
+function entryStatusText(status: string): string {
+  if (status === 'published') return '已发布'
+  if (status === 'archived') return '已归档'
+  return '草稿'
+}
+
+async function loadEntries(): Promise<void> {
+  entriesLoading.value = true
+  try {
+    const data = await workbenchApi.entries({ pageSize: 100 })
+    entries.value = data.list ?? []
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '加载已保存编排失败')
+  } finally {
+    entriesLoading.value = false
+  }
+}
+
+function openSaveEntry(): void {
+  if (!steps.value.some((step) => step.capability)) {
+    ElMessage.warning('至少要有一个已选能力的步骤')
+    return
+  }
+  entryForm.code = loadedEntry.value?.code ?? ''
+  entryForm.name =
+    loadedEntry.value?.name ??
+    steps.value
+      .map((step) => step.name || labelOf(step.capability))
+      .filter(Boolean)
+      .join(' → ')
+      .slice(0, 120)
+  entryForm.description = loadedEntry.value?.description ?? ''
+  saveVisible.value = true
+}
+
+async function saveEntry(): Promise<void> {
+  const code = entryForm.code.trim()
+  const name = entryForm.name.trim()
+  if (!code || !name) {
+    ElMessage.warning('编码和名称为必填')
+    return
+  }
+  const usable = steps.value.filter((step) => step.capability)
+  if (!usable.length) {
+    ElMessage.warning('至少要有一个已选能力的步骤')
+    return
+  }
+  const payload = {
+    code,
+    name,
+    capability: usable[0].capability,
+    description: entryForm.description,
+    triggers: loadedEntry.value?.triggers ?? [],
+    required: loadedEntry.value?.required ?? [],
+    knowledge: loadedEntry.value?.knowledge ?? [],
+    workflow: usable.map((step) => ({
+      capability: step.capability,
+      name: step.name || labelOf(step.capability),
+      moduleId: step.moduleId,
+      variables: Object.fromEntries(
+        Object.entries(step.variables).filter(([, value]) => String(value ?? '').trim()),
+      ),
+    })),
+  }
+  savingEntry.value = true
+  try {
+    if (loadedEntry.value) {
+      await workbenchApi.updateEntry(loadedEntry.value.id, payload)
+      ElMessage.success('编排已更新')
+    } else {
+      await workbenchApi.createEntry(payload)
+      ElMessage.success('编排已保存')
+    }
+    saveVisible.value = false
+    await loadEntries()
+    loadedEntry.value = entries.value.find((item) => item.code === code) ?? null
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '保存失败')
+  } finally {
+    savingEntry.value = false
+  }
+}
+
+function ensureVariables(step: StepForm): void {
+  ;[...requiredOf(step), ...optionalOf(step)].forEach((name) => {
+    if (!(name in step.variables)) {
+      step.variables[name] = ''
+    }
+  })
+}
+
+async function loadEntry(entry: WorkbenchEntry): Promise<void> {
+  result.value = null
+  preflight.value = null
+  steps.value = (entry.workflow ?? []).map((item) => ({
+    key: `step-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    capability: item.capability,
+    name: item.name || labelOf(item.capability),
+    moduleId: item.moduleId ?? null,
+    variables: Object.fromEntries(
+      Object.entries(item.variables ?? {}).map(([name, value]) => [
+        name,
+        value == null ? '' : String(value),
+      ]),
+    ),
+  }))
+  await Promise.all(steps.value.map((step) => refreshVars(step.capability)))
+  steps.value.forEach(ensureVariables)
+  loadedEntry.value = entry
+  ElMessage.success(`已载入「${entry.name}」，可直接执行`)
+}
+
+async function publishEntry(entry: WorkbenchEntry): Promise<void> {
+  try {
+    const updated = await workbenchApi.publishEntry(entry.id)
+    ElMessage.success(`已发布 v${updated.version}`)
+    await loadEntries()
+    if (loadedEntry.value?.id === entry.id) {
+      loadedEntry.value = entries.value.find((item) => item.id === entry.id) ?? updated
+    }
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '发布失败')
+  }
+}
+
+async function removeEntry(entry: WorkbenchEntry): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      `删除编排「${entry.name}」？已产生的执行记录不受影响。`,
+      '删除编排',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await workbenchApi.removeEntry(entry.id)
+    if (loadedEntry.value?.id === entry.id) {
+      loadedEntry.value = null
+    }
+    ElMessage.success('已删除')
+    await loadEntries()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '删除失败')
+  }
 }
 
 async function confirmPreflight(): Promise<void> {
@@ -391,6 +652,7 @@ function statusText(status: string): string {
   if (status === 'failed') return '失败'
   if (status === 'skipped') return '跳过'
   if (status === 'running') return '执行中'
+  if (status === 'cancelled') return '已取消'
   return '待执行'
 }
 
@@ -399,6 +661,22 @@ function statusTagType(status: string): 'success' | 'danger' | 'info' | 'warning
   if (status === 'failed') return 'danger'
   if (status === 'running') return 'warning'
   return 'info'
+}
+
+async function stop(): Promise<void> {
+  stopping.value = true
+  try {
+    const outcome = await labApi.compositeCancel()
+    if (outcome.cancelled) {
+      ElMessage.warning('已请求停止，当前步骤跑完后结束')
+    } else {
+      ElMessage.info('当前没有正在执行的流水线')
+    }
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '停止失败')
+  } finally {
+    stopping.value = false
+  }
 }
 
 async function run(): Promise<void> {
@@ -435,9 +713,21 @@ async function run(): Promise<void> {
       steps: payload,
       title: steps.value.map((step) => step.name || labelOf(step.capability)).join(' → '),
       moduleId: labStore.currentModuleId,
-      continueOnError: true,
+      continueOnError: continueOnError.value,
     })
-    ElMessage.success('流水线执行完成')
+    const status = result.value?.status
+    if (status === 'success') {
+      ElMessage.success('流水线执行完成')
+    } else if (status === 'cancelled') {
+      ElMessage.warning('流水线已取消')
+    } else {
+      const failedStep = result.value?.steps.find((step) => step.status === 'failed')
+      ElMessage.error(
+        failedStep
+          ? `第 ${failedStep.order} 步「${failedStep.stepName || failedStep.label}」失败：${failedStep.errorMessage || '未返回原因'}`
+          : `流水线执行失败：${result.value?.errorMessage || '存在失败步骤'}`,
+      )
+    }
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '执行失败')
   } finally {
@@ -472,6 +762,7 @@ onMounted(async () => {
       }
     })
   })
+  await loadEntries()
 })
 </script>
 
@@ -485,6 +776,77 @@ onMounted(async () => {
   grid-template-columns: minmax(380px, 520px) 1fr;
   gap: 12px;
   align-items: start;
+}
+
+.pipeline-left {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.saved-panel__refresh {
+  margin-left: auto;
+}
+
+.saved-entry-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.saved-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--aitp-border);
+  border-radius: 6px;
+}
+
+.saved-entry.is-active {
+  border-color: var(--el-color-primary);
+  background: var(--aitp-hover);
+}
+
+.saved-entry__main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.saved-entry__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.saved-entry__meta {
+  font-size: 12px;
+}
+
+.saved-entry__actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+}
+
+.saved-panel__empty {
+  font-size: 12px;
+}
+
+.saved-panel__hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+.save-entry-alert {
+  margin-bottom: 12px;
 }
 
 .section-title {

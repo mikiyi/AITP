@@ -35,6 +35,11 @@ export interface ProjectVersionListResult {
 export interface Requirement {
   id: Id
   projectId: Id
+  /** 所属项目版本，列表与详情都会带版本号/版本名称。 */
+  versionId: Id | null
+  versionCode?: string
+  versionName?: string
+  reqNo: string
   title: string
   content: string
   priority: string
@@ -91,6 +96,10 @@ export interface TestCase {
   projectId: Id
   requirementId: Id | null
   moduleId: Id | null
+  /** 所属项目版本。 */
+  versionId: Id | null
+  versionCode?: string
+  versionName?: string
   caseNo: string
   title: string
   caseType: string
@@ -148,6 +157,10 @@ export interface Bug {
   id: Id
   projectId: Id
   moduleId: Id | null
+  /** 所属项目版本。 */
+  versionId: Id | null
+  versionCode?: string
+  versionName?: string
   bugNo: string
   title: string
   description: string
@@ -164,8 +177,20 @@ export interface Bug {
   env: string
   module: string
   aiTaskId: Id | null
+  /** 由轮次失败用例转缺陷时写入的关联用例。 */
+  linkedCaseIds?: Id[]
+  linkedCases?: BugLinkedCase[]
   createdAt?: string
   updatedAt?: string
+}
+
+/** 缺陷详情里回显的关联用例。 */
+export interface BugLinkedCase {
+  id: Id
+  caseNo: string
+  title: string
+  status: string
+  priority: string
 }
 
 export interface BugLog {
@@ -178,6 +203,14 @@ export interface BugLog {
   createdAt?: string
 }
 
+/** 问答助手回答里引用的知识条目。 */
+export interface AssistantRef {
+  marker: string
+  articleId: Id
+  title: string
+  category?: string
+}
+
 export interface KnowledgeDraft {
   id: Id
   title: string
@@ -187,11 +220,20 @@ export interface KnowledgeDraft {
   tags: string
   moduleId: Id | null
   sourceType: string
+  sourceTypeLabel: string
   producer: string
   reviewStatus: string
   refType: string
   refId: Id | null
   refLabel: string
+  answeredAt: string | null
+  answerMode: string
+  answerModel: string
+  reviewRequired: boolean
+  refs: AssistantRef[]
+  articleId: Id | null
+  /** 仅「加入知识库」返回值：同一问同答同时间只入池一次。 */
+  duplicated?: boolean
   createdAt?: string
   updatedAt?: string
 }
@@ -213,7 +255,27 @@ export interface KnowledgeArticle {
   category: string
   tags: string
   moduleId: Id | null
+  sourceType: string
+  sourceTypeLabel: string
+  answeredAt: string | null
+  answerMode: string
+  answerModel: string
+  reviewRequired: boolean
+  refs: AssistantRef[]
+  /** 问答助手来源条目的自动整理状态：'' 不适用 / pending 待整理 / running 整理中 / done 已整理完。 */
+  organizeStatus: '' | 'pending' | 'running' | 'done'
+  organizeTaskId: Id | null
+  organizeAt: string | null
+  organizeTask?: {
+    id: Id
+    status: string
+    statusLabel: string
+    errorMessage: string
+  } | null
   reviewStatus: string
+  /** 自动整理合并后被并入的条目 id；非空表示本条已归档，仅作溯源。 */
+  mergedInto?: Id | null
+  mergedIntoTitle?: string
   currentVersion: number
   draftVersion: number | null
   filePath: string
@@ -235,6 +297,8 @@ export interface KnowledgeVersion {
   reviewer: string
   reviewComment: string
   changeLog: string
+  /** 该提案通过后要并入本条目的重复问答 id。 */
+  mergeTargets?: Id[]
   createdAt?: string
 }
 
@@ -261,6 +325,10 @@ export interface ReportItem {
 export interface Report {
   id: Id
   projectId: Id
+  /** 所属项目版本。 */
+  versionId: Id | null
+  versionCode?: string
+  versionName?: string
   reportNo: string
   title: string
   reportType: string
@@ -296,6 +364,61 @@ export interface ReportStats {
     bugTotal: number
     openBugs: number
   }
+}
+
+/** 指标趋势：按天/周聚合，空档补 0。 */
+export interface ReportTrend {
+  projectId: Id
+  granularity: 'day' | 'week'
+  granularityLabel: string
+  startDate: string
+  endDate: string
+  buckets: string[]
+  series: Array<{ key: string; label: string; values: number[] }>
+  totals: {
+    executions: number
+    passRate: number
+    newBugs: number
+    closedBugs: number
+    p0p1Open: number
+  }
+}
+
+/** 版本对比中的单侧指标。 */
+export interface VersionCompareSide {
+  versionId: Id
+  versionCode: string
+  versionName: string
+  caseTotal: number
+  executed: number
+  passed: number
+  executeRate: number
+  passRate: number
+  bugTotal: number
+  openBugs: number
+  p0p1Open: number
+  defectDensity: number
+  runs: number
+  gateStatus: string
+  gateStatusLabel: string
+  gateConclusion: string
+}
+
+export interface VersionCompare {
+  projectId: Id
+  base: VersionCompareSide
+  target: VersionCompareSide
+  metrics: Array<{
+    key: string
+    label: string
+    unit: string
+    direction: 'higher' | 'lower' | 'neutral'
+    higherIsBetter: boolean
+    neutral: boolean
+    base: number
+    target: number
+    delta: number
+  }>
 }
 
 export interface AiTask {
@@ -427,7 +550,7 @@ export interface ImageAttachment {
   previewUrl: string
 }
 
-/** 知识问答引用（[K1] 标记）。 */
+/** 问答助手回答里的知识库引用（[K1] 标记）。 */
 export interface KnowledgeRef {
   marker: string
   articleId: Id
@@ -462,6 +585,27 @@ export interface WorkbenchOverview {
   shortcuts: QuickEntry[]
   caseStatus: Record<string, number>
   bugStatus: Record<string, number>
+  requirementStatus?: Record<string, number>
+  bugSeverity?: Record<string, number>
+  aiUsage?: Array<{ capability: string; label: string; count: number }>
+  recentReports?: Array<{
+    id: number
+    title: string
+    reportType: string
+    status: string
+    createdAt: string
+  }>
+}
+
+/** 首页卡片定制项：固定区始终显示，可定制区按 order 排序、visible 控制显隐。 */
+export interface HomeCardItem {
+  key: string
+  label: string
+  description: string
+  width: 'half' | 'full' | string
+  locked: boolean
+  visible: boolean
+  order: number
 }
 
 export interface RecentTask {
@@ -568,6 +712,26 @@ export interface AiStatus {
   error: string
 }
 
+/** 本机 SQLite 连通性快照，来自后端健康检查。 */
+export interface DatabaseStatus {
+  ok: boolean
+  path: string
+  exists: boolean
+  sizeBytes: number
+  version: number
+  journalMode: string
+  latencyMs: number
+  error: string
+}
+
+export interface HealthStatus {
+  status: string
+  appVersion: string
+  aiConfigured: boolean
+  serverTime: string
+  database: DatabaseStatus
+}
+
 /** 自检结果。 */
 export interface SelfCheckResult {
   ok: boolean
@@ -603,6 +767,8 @@ export interface KnowledgeStorage {
   storagePath: string
   fileMode: string
   autoReindex: boolean
+  /** 问答助手打开时预选的回答模式：kb / llm / hybrid。 */
+  assistantDefaultMode: string
   articleCount: number
   fileCount: number
   exists: boolean
@@ -611,9 +777,11 @@ export interface KnowledgeStorage {
 /** 重建知识库索引的结果。 */
 export interface KnowledgeReindexResult {
   root: string
+  mode: string
   scanned: number
   imported: number
   updated: number
+  revived: number
   skipped: number
 }
 
@@ -647,13 +815,50 @@ export interface DbBackup {
   sizeBytes: number
   createdAt: string
   isSafety: boolean
+  /** 定时任务生成的整包（受保留份数约束）。 */
+  isAuto?: boolean
+  /** db=单库快照，bundle=整包（库 + 附件/脚本/生成物/密钥/知识正文）。 */
+  kind?: 'db' | 'bundle'
+  files?: number
+}
+
+/** 自动备份计划与最近一次执行结果。 */
+export interface AutoBackupPlan {
+  enabled: boolean
+  frequency: 'daily' | 'weekly'
+  frequencyLabel: string
+  time: string
+  weekday: number
+  retention: number
+  minFreeMb: number
+  nextRunAt: string
+  lastRunAt: string
+  lastStatus: 'running' | 'success' | 'skipped' | 'failed' | ''
+  lastStatusLabel: string
+  lastMessage: string
+  autoCount: number
+  autoBytes: number
+  /** -1 表示无法读取磁盘剩余空间。 */
+  diskFreeBytes: number
+}
+
+/** 保存自动备份计划的入参。 */
+export interface AutoBackupForm {
+  enabled: boolean
+  frequency: 'daily' | 'weekly'
+  time: string
+  weekday: number
+  retention: number
+  minFreeMb: number
 }
 
 /** 备份列表载荷。 */
 export interface BackupListResult {
   list: DbBackup[]
+  bundles: DbBackup[]
   dir: string
   dbPath: string
+  auto: AutoBackupPlan
 }
 
 /** 恢复结果：记录用了哪个备份、恢复前自动存的那份安全备份叫什么。 */
@@ -661,12 +866,16 @@ export interface RestoreResult {
   restored: string
   safetyBackup: string
   appliedMigrations: number[]
+  safetyBundle?: string
+  restoredFiles?: Record<string, string | number>
 }
 
 /** 测试环境配置：一套命名环境（应用服务器 + 数据库服务器），口令只回掩码。 */
 export interface TestEnvApp {
   baseUrl: string
   healthPath: string
+  /** 可选监控地址（node_exporter /metrics 或 JSON 指标），远程服务器才有 CPU/内存/磁盘 */
+  metricsUrl?: string
 }
 
 export interface TestEnvDb {
@@ -677,11 +886,14 @@ export interface TestEnvDb {
   username: string
   passwordMasked: string
   hasPassword: boolean
+  metricsUrl?: string
 }
 
 export interface TestEnv {
   id: number
   name: string
+  kind: string
+  kindLabel: string
   description: string
   app: TestEnvApp
   db: TestEnvDb
@@ -695,6 +907,31 @@ export interface TestEnvListResult {
   list: TestEnv[]
   dbTypes: string[]
   dbDefaultPorts: Record<string, number>
+  kinds?: { value: string; label: string }[]
+}
+
+/** 服务器资源指标：本机由后端直采，远程读监控地址；无指标时 available=false。 */
+export interface ServerMetricsMemory {
+  percent: number | null
+  usedBytes: number | null
+  totalBytes: number | null
+}
+
+export interface ServerMetricsDisk {
+  name: string
+  percent: number | null
+  usedBytes: number | null
+  totalBytes: number | null
+}
+
+export interface ServerMetrics {
+  available: boolean
+  source: string
+  cpuPercent: number | null
+  memory: ServerMetricsMemory
+  disks: ServerMetricsDisk[]
+  message: string
+  sampledAt?: string
 }
 
 /** 单套环境的健康探测结果；探测纯本机发起，不进大模型。 */
@@ -704,6 +941,7 @@ export interface TestEnvProbeItem {
   httpStatus?: number
   latencyMs: number
   message: string
+  metrics?: ServerMetrics
 }
 
 export interface TestEnvProbe {
@@ -736,6 +974,23 @@ export interface AiRecordRisk {
   detail: string
 }
 
+/** 外发脱敏命中的一类敏感信息：只给类型与数量，不含原文。 */
+export interface MaskTypeCount {
+  code: string
+  label: string
+  count: number
+}
+
+/** 一次 AI 调用的外发脱敏结果。 */
+export interface MaskInfo {
+  /** 云端模型是否开启脱敏（系统配置 ai.mask.enabled）。 */
+  enabled: boolean
+  /** 本次是否真的替换过内容；本地模型始终为 false。 */
+  applied: boolean
+  types: MaskTypeCount[]
+  count: number
+}
+
 /** 一次 AI 能力执行的结构化记录。 */
 export interface AiRecord {
   id: Id
@@ -762,6 +1017,8 @@ export interface AiRecord {
   usage: Record<string, unknown>
   promptCode: string
   latencyMs: number | null
+  /** 本次调用的外发脱敏结果；没有记录时表示未脱敏。 */
+  mask: MaskInfo
   createdAt: string
   updatedAt: string
 }
@@ -770,6 +1027,7 @@ export interface AiRecord {
 export interface AiRecordPage extends PagePayload<AiRecord> {
   stats: {
     pending: number
+    notRequired: number
     approved: number
     rejected: number
   }
@@ -785,12 +1043,18 @@ export interface SearchHit {
   snippet: string
   updatedAt: string
   route: string
+  /** 数据所属项目；知识条目可能为空（全局知识）。 */
+  projectId?: number | null
+  /** 项目名，用于提示命中来自其他项目并支持点击切换。 */
+  projectName?: string
 }
 
 /** 全局搜索按实体类型分组的命中列表。 */
 export interface SearchGroup {
   type: string
   typeLabel: string
+  /** 该类实体的真实命中总数（可能大于 list.length）。 */
+  total: number
   list: SearchHit[]
 }
 
@@ -798,7 +1062,10 @@ export interface SearchGroup {
 export interface SearchResult {
   keyword: string
   groups: SearchGroup[]
+  /** 实际返回的条目数。 */
   total: number
+  /** 四类实体合计的真实命中数。 */
+  matched: number
 }
 
 /** 执行前预检里单个能力的体检结论。 */
@@ -862,7 +1129,7 @@ export interface PipelineResult {
   errorMessage: string
 }
 
-/** 编排入口里的一步。 */
+/** 编排资产里的一步。 */
 export interface EntryWorkflowStep {
   capability: string
   name: string
@@ -870,7 +1137,7 @@ export interface EntryWorkflowStep {
   variables: Record<string, unknown>
 }
 
-/** 工作台编排入口。 */
+/** 可复用的编排资产。 */
 export interface WorkbenchEntry {
   id: Id
   code: string
@@ -942,6 +1209,9 @@ export interface Regression {
   changeScope: string
   affectedModules: string
   version: string
+  versionId?: Id
+  versionCode?: string
+  versionName?: string
   riskLevel: string
   status: string
   source: string
@@ -968,18 +1238,6 @@ export interface RegressionItem {
   executedAt: string | null
 }
 
-/** 通用实体关联。 */
-export interface EntityRelation {
-  id: Id
-  sourceType: string
-  sourceId: Id
-  relationType: string
-  targetType: string
-  targetId: Id
-  remark: string
-  createdAt?: string
-}
-
 /** 提示词模板。 */
 export interface PromptTemplate {
   code: string
@@ -992,6 +1250,10 @@ export interface PromptTemplate {
   /** 该提示词被使用的次数，用于提示词库按使用频次排序。 */
   useCount?: number
   body?: string
+  /** 正文是否被自定义过（true 时 body 来自库里，不是磁盘默认模板）。 */
+  customized?: boolean
+  /** 磁盘默认正文，用于「恢复默认」前后对照。 */
+  defaultBody?: string
 }
 
 /** 用例树节点：功能点 + 挂在它下面的用例。 */
@@ -1011,6 +1273,9 @@ export interface Todo {
   parentId: number
   projectId: Id
   moduleId: Id
+  versionId?: Id | null
+  versionCode?: string
+  versionName?: string
   title: string
   description: string
   status: string
@@ -1041,6 +1306,8 @@ export interface TodoSummary {
   done: number
   cancelled: number
   dueToday: number
+  /** 本周到期（含今天与已逾期，口径与快捷视图一致）。 */
+  dueWeek: number
   overdue: number
   pinned: number
   completionRate: number
@@ -1084,6 +1351,7 @@ export interface AutomationScript {
   appPlatforms: string
   projectId: Id | null
   moduleId: Id | null
+  envId: Id | null
   description: string
   fileName: string
   content: string
@@ -1091,6 +1359,9 @@ export interface AutomationScript {
   runMode: AutomationRunMode
   entryCommand: string
   timeoutSeconds: number | null
+  /** 结果回写：覆盖用例的圈定方式（按用例编号 / 按标签）。 */
+  caseMatchMode?: AutomationMatchMode
+  caseMatchValue?: string
   status: string
   lastRunStatus: string
   lastRunAt: string
@@ -1110,6 +1381,14 @@ export interface AutomationRun {
   scriptName: string
   category: AutomationCategory
   categoryLabel: string
+  envId?: Id | null
+  taskId?: Id | null
+  /** 执行时挂载的测试轮次。 */
+  testRunId?: Id | null
+  /** 回写结论：parsed / partial / fallback / skipped / failed。 */
+  writebackStatus?: string
+  writebackLabel?: string
+  writebackSummary?: string
   status: AutomationRunStatus
   exitCode: number | null
   durationMs: number | null
@@ -1120,7 +1399,35 @@ export interface AutomationRun {
   startedAt?: string
   finishedAt?: string
   createdAt?: string
+  /** 只有执行详情接口会带用例级回写明细。 */
+  caseResults?: AutomationCaseResult[]
+  /** 只有执行详情接口会带本次执行目录里的产物（截图、日志等）。 */
+  artifacts?: AutomationArtifact[]
 }
+
+/** 自动化执行产物：脚本写入 AITP_RUN_DIR 的文件。 */
+export interface AutomationArtifact {
+  path: string
+  name: string
+  size: number
+  modifiedAt: string
+}
+
+/** 自动化执行结果按用例回写的明细。 */
+export interface AutomationCaseResult {
+  id: Id
+  caseId: Id
+  caseNo: string
+  testName: string
+  result: 'passed' | 'failed' | 'blocked' | 'skipped'
+  message: string
+  /** 映射来源：case_no / script。 */
+  mappedBy: string
+  runCaseId: Id | null
+  testRunId: Id | null
+}
+
+export type AutomationMatchMode = 'case_no' | 'tag'
 
 /** 四类目录的说明与统计。 */
 export interface AutomationCategoryInfo {
@@ -1131,7 +1438,59 @@ export interface AutomationCategoryInfo {
   runner: 'python' | 'jmeter'
 }
 
-/** 运行时体检结果：解释器与 JMeter 是否可用。 */
+/** 自动化框架及其在本机的就绪情况，权威清单在后端 automation_frameworks.py。 */
+export interface AutomationFrameworkRuntime {
+  code: string
+  label: string
+  targets: string[]
+  platforms: string[]
+  platformLabels: string[]
+  package: string
+  packageVersion: string
+  packageInstalled: boolean
+  command: string
+  commandPath: string
+  commandAvailable: boolean
+  ready: boolean
+  setupHint: string
+  /** 本次体检使用的 Python 解释器，以及按它给出的安装命令。 */
+  interpreter?: string
+  installCommand?: string
+  /** 装包之后还要执行的准备命令（下载浏览器内核、启动 Appium 等）。 */
+  setupCommands?: string[]
+  /** 未就绪时缺的具体依赖，供前端逐条展示。 */
+  missing?: string[]
+  /** Playwright 浏览器内核是否已下载。 */
+  browserAvailable?: boolean
+  /** Appium Server 地址与连通性。 */
+  serverUrl?: string
+  serverAvailable?: boolean
+}
+
+/** 一个本机 Python 解释器及其框架依赖体检结果。 */
+export interface AutomationInterpreterCandidate {
+  path: string
+  source: string
+  version: string
+  isCurrent: boolean
+  packages: Record<string, string>
+  installedCount: number
+  totalPackages: number
+}
+
+/** 解释器体检清单。 */
+export interface AutomationInterpreters {
+  current: string
+  candidates: AutomationInterpreterCandidate[]
+}
+
+/** App 自动化已连接的移动设备：Android 走 adb，鸿蒙走 hdc。 */
+export interface AutomationDevice {
+  serial: string
+  state: string
+}
+
+/** 运行时体检结果：解释器、JMeter 与各自动化框架是否可用。 */
 export interface AutomationRuntime {
   pythonInterpreter: string
   pythonInterpreterConfigured: boolean
@@ -1142,7 +1501,20 @@ export interface AutomationRuntime {
   jmeterCommand: string
   jmeterArgs: string[]
   jmeterAvailable: boolean
+  /** Appium 服务地址与连通性，执行 App 脚本前必须先起来。 */
+  appiumServerUrl?: string
+  appiumServerAvailable?: boolean
+  appiumServerReady?: boolean
+  adbCommand?: string
+  adbAvailable?: boolean
+  androidDevices?: AutomationDevice[]
+  hdcCommand?: string
+  hdcAvailable?: boolean
+  hosDevices?: AutomationDevice[]
+  /** Playwright 浏览器内核是否已下载。 */
+  playwrightBrowsersAvailable?: boolean
   platform: string
+  frameworks?: AutomationFrameworkRuntime[]
 }
 
 /** 脚本列表分页，额外带各分类计数。 */
@@ -1174,6 +1546,8 @@ export interface DocTemplate {
   fileName: string
   fileType: string
   fileSize: number
+  /** 原文件在本机的落盘名；空串说明这条模板没上传过文件，不可下载。 */
+  storedName: string
   isDefault: boolean
   createdAt: string
   updatedAt: string
@@ -1184,6 +1558,8 @@ export interface DocTemplateUpload {
   fileName: string
   fileType: string
   fileSize: number
+  /** 原文件已留存在本机的落盘名，保存模板时要一起回传。 */
+  storedName: string
   content: string
   columns: string[]
   styleHint: string
@@ -1197,6 +1573,10 @@ export interface SqlAnalysis {
   id: Id
   projectId: Id
   moduleId: Id | null
+  /** 所属项目版本。 */
+  versionId: Id | null
+  versionCode?: string
+  versionName?: string
   sqlNo: string
   title: string
   sqlText: string
@@ -1213,13 +1593,41 @@ export interface SqlAnalysis {
 export interface KnowledgeAnswer {
   mode: 'kb' | 'llm' | 'hybrid'
   answer: string
-  refs: Array<{ marker: string; articleId: Id; title: string; category?: string }>
+  refs: AssistantRef[]
   model: string
   latencyMs: number
   usage: Record<string, unknown>
   egress: string
   egressWarning: string
   reviewRequired: boolean
+  /** 纯知识库回答不调模型，没有脱敏信息。 */
+  mask?: MaskInfo
+}
+
+/** 问答链路的实际外发评估：任一候选会出本机即为可能外发。 */
+export interface AssistantEgress {
+  externalPossible: boolean
+  egress: string
+  candidates: Array<{ provider: string; model: string; isLocal: boolean; egress: string }>
+}
+
+/** 外发前站内检查用的一条问答助手正式条目。 */
+export interface AssistantPreviewFile {
+  articleId: Id
+  title: string
+  relativePath: string
+  absolutePath: string
+  exists: boolean
+  fromFile: boolean
+  truncated: boolean
+  content: string
+}
+
+export interface AssistantPreview {
+  fileMode: string
+  storagePath: string
+  articleCount: number
+  files: AssistantPreviewFile[]
 }
 
 /** 测试数据生成：一种可生成的文件格式。 */
@@ -1284,3 +1692,314 @@ export interface TestDataBatch {
 }
 
 export type TestDataBatchPage = PagePayload<TestDataBatch>
+
+/** 后台任务队列中的一条任务。 */
+export interface QueueTask {
+  id: Id
+  kind: string
+  kindLabel: string
+  title: string
+  status: string
+  statusLabel: string
+  priority: number
+  attempts: number
+  maxAttempts: number
+  progress: number
+  cancelRequested: boolean
+  payload: Record<string, unknown>
+  result: Record<string, unknown>
+  errorMessage: string
+  startedAt: string | null
+  finishedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface QueueTaskPage extends PagePayload<QueueTask> {
+  stats: Record<string, number>
+  kinds: { value: string; label: string }[]
+}
+
+/** 测试计划：本次要测什么，不记录结果。 */
+export interface TestPlan {
+  id: Id
+  projectId: Id
+  versionId: Id | null
+  versionCode?: string
+  versionName?: string
+  name: string
+  description: string
+  owner: string
+  defaultEnvId: Id | null
+  scope: Record<string, unknown>
+  status: string
+  runCount?: number
+  runs?: TestRun[]
+  createdAt?: string
+  updatedAt?: string
+}
+
+/** 轮次内冻结的一条用例快照。 */
+export interface TestRunCase {
+  id: Id
+  runId: Id
+  caseId: Id
+  seq: number
+  caseNo: string
+  title: string
+  caseType: string
+  priority: string
+  moduleId: Id | null
+  module: string
+  requirementId: Id | null
+  preconditions: string
+  steps: CaseStep[]
+  extra?: Record<string, string>
+  expectedResult: string
+  result: string
+  actualResult: string
+  remark: string
+  bugId: Id | null
+  executedBy: string
+  executedAt: string | null
+}
+
+/** 接口用例执行的一条断言明细。 */
+export interface InterfaceAssertion {
+  name: string
+  passed: boolean
+  expected: string
+  actual: string
+  message: string
+}
+
+/** 接口用例一次真实请求的执行结果。 */
+export interface InterfaceExecution {
+  result: string
+  passed: boolean
+  statusCode: number | null
+  durationMs: number
+  message: string
+  request: {
+    method: string
+    url: string
+    headers: Record<string, string>
+    body: string
+    bodyTruncated: boolean
+  }
+  response: {
+    status: number | null
+    headers: Record<string, string>
+    body: string
+    bodyTruncated: boolean
+  }
+  assertions: InterfaceAssertion[]
+  executionId?: number
+  runCase?: TestRunCase
+  run?: TestRun
+  envId?: Id
+  envName?: string
+}
+
+/** 接口用例批量执行的结果摘要。 */
+export interface InterfaceBatchResult {
+  runId: Id
+  envId: Id
+  envName: string
+  total: number
+  passed: number
+  failed: number
+  details: Array<{
+    runCaseId: Id
+    caseId: Id
+    caseNo: string
+    title: string
+    result: string
+    statusCode: number | null
+    durationMs: number | null
+    message: string
+  }>
+}
+
+/** 测试轮次：一次具体执行。 */
+export interface TestRun {
+  id: Id
+  planId: Id | null
+  projectId: Id
+  versionId: Id | null
+  versionCode?: string
+  versionName?: string
+  envId: Id | null
+  name: string
+  planName?: string
+  env: string
+  envName?: string
+  envKind?: string
+  owner: string
+  status: string
+  remark: string
+  total: number
+  passed: number
+  failed: number
+  blocked: number
+  skipped: number
+  notExecuted: number
+  startedAt: string | null
+  finishedAt: string | null
+  stats?: {
+    total: number
+    counts: Record<string, number>
+    byPriority: Record<string, Record<string, number>>
+    passRate: number
+  }
+  cases?: TestRunCase[]
+  createdAt?: string
+  updatedAt?: string
+}
+
+/** 追溯矩阵的一行：需求维度的覆盖与执行情况。 */
+export interface TraceabilityRow {
+  requirementId: Id
+  reqNo: string
+  title: string
+  requirementStatus: string
+  priority: string
+  caseCount: number
+  executedCount: number
+  passed: number
+  failed: number
+  blocked: number
+  notExecuted: number
+  passRate: number
+  openBugs: number
+  lastExecutedAt: string
+  coverageStatus: string
+  coverageLabel: string
+}
+
+export interface TraceabilityResult {
+  projectId: Id
+  versionId: Id | null
+  runId: Id | null
+  summary: {
+    requirementTotal: number
+    coveredRequirements: number
+    uncoveredRequirements: number
+    caseCount: number
+    executedCount: number
+    passed: number
+    failed: number
+    openBugs: number
+    coverageRate: number
+    passRate: number
+  }
+  list: TraceabilityRow[]
+}
+
+/** 发布准入的一项检查。 */
+export interface ReleaseGateCheck {
+  key: string
+  label: string
+  actual: number
+  threshold: number
+  passed: boolean
+  unit: string
+}
+
+export interface ReleaseGateResult {
+  status: string
+  metrics: Record<string, unknown>
+  checks: ReleaseGateCheck[]
+  blocking: string[]
+}
+
+export interface ReleaseGate {
+  id: Id
+  projectId: Id
+  versionId: Id | null
+  versionCode?: string
+  versionName?: string
+  runId: Id | null
+  name: string
+  status: string
+  thresholds: Record<string, number>
+  result: ReleaseGateResult
+  conclusion: string
+  createdBy: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+/** CI 触发令牌状态；明文 token 只在生成响应里返回一次。 */
+export interface CiEventOption {
+  value: string
+  label: string
+}
+
+export interface CiSettings {
+  enabled: boolean
+  name: string
+  tokenPrefix: string
+  projectId: Id | null
+  lastUsedAt: string | null
+  createdAt: string | null
+  baseUrl: string
+  endpoint: string
+  events: CiEventOption[]
+  token?: string
+}
+
+/** Webhook 通知渠道；projectId 为空表示全局生效。 */
+export interface NotificationChannel {
+  id: Id
+  name: string
+  projectId: Id | null
+  webhookUrl: string
+  events: string[]
+  enabled: boolean
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface NotificationChannelList {
+  list: NotificationChannel[]
+  eventOptions: CiEventOption[]
+}
+
+export interface NotificationLog {
+  id: Id
+  channelId: Id | null
+  channelName: string
+  projectId: Id | null
+  event: string
+  title: string
+  status: 'pending' | 'success' | 'failed'
+  statusLabel: string
+  attempts: number
+  httpStatus: number | null
+  responseText: string
+  errorMessage: string
+  taskId: Id | null
+  createdAt?: string
+  finishedAt: string | null
+}
+
+export interface NotificationLogPage extends PagePayload<NotificationLog> {
+  /** 发送记录的事件筛选项（含只能手动触发的「测试通知」）。 */
+  eventOptions: CiEventOption[]
+}
+
+export interface CiRunResult {
+  runId: number
+  runName: string
+  projectId: number
+  versionId: number | null
+  envId: number | null
+  total: number
+  status: string
+  url: string
+  queued: boolean
+  tasks: QueueTask[]
+  automationQueued: number
+  warnings: string[]
+}

@@ -6,8 +6,10 @@
 from __future__ import annotations
 
 import pathlib
+import shutil
 import sqlite3
 import sys
+import tempfile
 from typing import Any, cast
 
 # TextIO 协议没有 reconfigure，只有具体 TextIOWrapper 才有
@@ -15,9 +17,11 @@ cast(Any, sys.stdout).reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend"))
+sys.path.insert(0, str(ROOT / "backend" / "scripts"))
 
 from aitp.db.connection import get_standalone_conn  # noqa: E402
 from aitp.db.fts import hybrid_search  # noqa: E402
+from _db_snapshot import LIVE_DB, snapshot  # noqa: E402
 
 COLUMNS = ["title", "content", "tags"]
 
@@ -46,9 +50,18 @@ def search(conn: sqlite3.Connection, keyword: str) -> dict[str, Any]:
 
 
 def main() -> int:
-    db_path = ROOT / "data" / "aitp.db"
-    if not db_path.exists():
-        print(f"[FAIL] 数据库不存在: {db_path}")
+    if not LIVE_DB.exists():
+        print(f"[FAIL] 数据库不存在: {LIVE_DB}")
+        return 1
+
+    # 检索结果依赖正式库里的演示正文，但用例本身要改内容、软删记录，
+    # 所以先取一份一致性快照，所有写操作都落在临时库上。
+    workdir = tempfile.mkdtemp(prefix="aitp-checkfts-")
+    try:
+        db_path = snapshot(LIVE_DB, pathlib.Path(workdir) / "aitp.db")
+    except Exception as exc:
+        print(f"[FAIL] 快照正式库失败: {exc}")
+        shutil.rmtree(workdir, ignore_errors=True)
         return 1
 
     conn = get_standalone_conn(db_path)
@@ -184,6 +197,7 @@ def main() -> int:
 
     finally:
         conn.close()
+        shutil.rmtree(workdir, ignore_errors=True)
 
     print("-" * 40)
     print(f"PASS={_passed} FAIL={_failed}")

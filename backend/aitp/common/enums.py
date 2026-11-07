@@ -9,7 +9,7 @@ PROJECT_VERSION_STATUS = ("planning", "in_progress", "released")
 
 REQUIREMENT_STATUS = ("draft", "reviewing", "approved", "implemented", "rejected")
 
-# 用例类型与编号前缀一一对应，沿用 testSKill\generate_test_cases.py 的 6 张用例表
+# 用例类型与编号前缀一一对应，沿用参考实现 generate_test_cases.py 的 6 张用例表
 CASE_TYPE = ("functional", "interface", "boundary", "security", "ui", "exception")
 
 CASE_PREFIX = {
@@ -52,7 +52,7 @@ REPORT_TYPE = ("summary", "iteration", "regression", "acceptance")
 
 REPORT_STATUS = ("draft", "published", "archived")
 
-REPORT_SECTION = ("overview", "case", "bug", "coverage", "risk", "conclusion")
+REPORT_SECTION = ("overview", "progress", "case", "bug", "coverage", "trend", "risk", "conclusion")
 
 AI_TASK_STATUS = ("pending", "running", "success", "failed", "cancelled")
 
@@ -63,7 +63,6 @@ AI_TASK_TYPE = (
     "bug_analysis",
     "bug_classification",
     "report_generation",
-    "knowledge_qa",
     "general_chat",
     "automation_script",
     "performance_script",

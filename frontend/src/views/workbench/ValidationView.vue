@@ -3,6 +3,7 @@
     <div class="page-header">
       <h2 class="page-title">案例验证沙箱</h2>
       <div class="toolbar" style="margin: 0">
+        <ProjectSwitcher />
         <el-button :icon="Refresh" @click="load">刷新</el-button>
         <el-button type="primary" :icon="Plus" @click="openCreate">新建案例</el-button>
         <el-button type="success" :icon="VideoPlay" :loading="runningAll" @click="runAll">
@@ -44,14 +45,14 @@
         <el-table-column prop="inputText" label="输入" min-width="240" show-overflow-tooltip />
         <el-table-column prop="capability" label="主能力" width="140">
           <template #default="scope">
-            <el-tag size="small" effect="plain">{{ scope.row.capability || '-' }}</el-tag>
+            <el-tag size="small" effect="plain">{{ capabilityText(scope.row.capability) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="期望" width="110" align="center">
           <template #default="scope">
             <el-tooltip placement="top">
               <template #content>
-                <div>路由：{{ (scope.row.expectedRoutes ?? []).join('、') || '-' }}</div>
+                <div>路由：{{ (scope.row.expectedRoutes ?? []).map(capabilityText).join('、') || '-' }}</div>
                 <div>缺项：{{ (scope.row.expectedMissing ?? []).join('、') || '-' }}</div>
                 <div>规则：{{ (scope.row.expectedRules ?? []).join('、') || '-' }}</div>
               </template>
@@ -155,13 +156,15 @@
           <el-descriptions-item label="耗时">{{ result.latencyMs }} ms</el-descriptions-item>
           <el-descriptions-item label="路由来源">{{ result.route.source || '-' }}</el-descriptions-item>
           <el-descriptions-item label="实际路由">
-            {{ result.route.actual.map((item) => item.capability).join('、') || '-' }}
+            {{ result.route.actual.map((item) => capabilityText(item.capability)).join('、') || '-' }}
           </el-descriptions-item>
         </el-descriptions>
 
         <h4 class="result-title">路由命中</h4>
         <el-table :data="result.route.actual" border size="small">
-          <el-table-column prop="capability" label="能力" width="160" />
+          <el-table-column label="能力" width="160">
+            <template #default="scope">{{ capabilityText(scope.row.capability) }}</template>
+          </el-table-column>
           <el-table-column prop="score" label="分" width="70" align="right" />
           <el-table-column prop="reason" label="理由" min-width="200" />
           <el-table-column label="期望" width="80" align="center">
@@ -173,7 +176,7 @@
           </el-table-column>
         </el-table>
         <p v-if="result.route.missed.length" class="missed">
-          期望命中但实际没有：{{ result.route.missed.join('、') }}
+          期望命中但实际没有：{{ result.route.missed.map(capabilityText).join('、') }}
         </p>
 
         <h4 class="result-title">信息缺项</h4>
@@ -217,9 +220,10 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Refresh, VideoPlay } from '@element-plus/icons-vue'
+import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import { validationApi } from '@/api'
 import { percentText } from '@/utils/format'
 import type { ValidationCase, ValidationResult } from '@/api/types'
@@ -241,6 +245,27 @@ interface CaseForm {
 
 const labStore = useLabStore()
 const appStore = useAppStore()
+
+/** 能力编码 → 中文名称；页面只展示中文，编码仍保留在数据里。 */
+const capabilityLabels = computed(() => {
+  const map = new Map<string, string>()
+  for (const item of labStore.capabilities) {
+    map.set(item.code, item.label)
+  }
+  for (const item of labStore.allCapabilities) {
+    if (!map.has(item.code)) {
+      map.set(item.code, item.label)
+    }
+  }
+  return map
+})
+
+function capabilityText(code: string | null | undefined): string {
+  if (!code) {
+    return '-'
+  }
+  return capabilityLabels.value.get(code) ?? code
+}
 
 const cases = ref<ValidationCase[]>([])
 const loading = ref(false)
@@ -420,6 +445,7 @@ async function runAll(): Promise<void> {
 
 onMounted(async () => {
   await labStore.loadCapabilities()
+  void labStore.loadAllCapabilities()
   await load()
 })
 </script>

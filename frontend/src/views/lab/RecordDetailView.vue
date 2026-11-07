@@ -100,6 +100,35 @@
       </div>
 
       <div class="panel panel-pad">
+        <h3 class="section-title">
+          外发脱敏
+          <el-tag size="small" effect="plain" :type="record.mask.applied ? 'success' : 'info'">
+            {{ record.mask.applied ? `已脱敏 ${record.mask.count} 处` : '未脱敏' }}
+          </el-tag>
+        </h3>
+        <el-descriptions :column="2" border>
+          <el-descriptions-item label="云端脱敏开关">
+            {{ record.mask.enabled ? '开启' : '关闭' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="本次替换">
+            {{ record.mask.applied ? `${record.mask.count} 处` : '无（本地模型或未命中）' }}
+          </el-descriptions-item>
+        </el-descriptions>
+        <div v-if="record.mask.types.length" class="mask-types">
+          <el-tag
+            v-for="item in record.mask.types"
+            :key="item.code"
+            size="small"
+            type="warning"
+            effect="plain"
+          >
+            {{ item.label }} × {{ item.count }}
+          </el-tag>
+        </div>
+        <p class="muted mask-types__note">只记录敏感信息的类型与数量，原始内容不会写入执行记录。</p>
+      </div>
+
+      <div class="panel panel-pad">
         <h3 class="section-title">产出原文</h3>
         <MarkdownView v-if="record.outputText" :source="record.outputText" />
         <p v-else class="muted">这条记录没有保存产出原文（旧版本记录）。</p>
@@ -133,12 +162,14 @@
           <el-table-column prop="label" label="能力" width="140" />
           <el-table-column label="状态" width="90">
             <template #default="scope">
-              <el-tag size="small" :type="scope.row.status === 'success' ? 'success' : 'danger'">
-                {{ scope.row.status === 'success' ? '成功' : '失败' }}
+              <el-tag size="small" :type="stepStatusType(scope.row.status)">
+                {{ stepStatusText(scope.row.status) }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="model" label="模型" width="130" />
+          <el-table-column label="模型" width="130">
+            <template #default="scope">{{ scope.row.model || '-' }}</template>
+          </el-table-column>
           <el-table-column label="耗时" width="86" align="right">
             <template #default="scope">{{ scope.row.latencyMs ?? '-' }}</template>
           </el-table-column>
@@ -230,6 +261,30 @@ const usageEntries = computed(() =>
     value: typeof value === 'object' ? JSON.stringify(value) : String(value),
   })),
 )
+
+function stepStatusText(status: string): string {
+  const labels: Record<string, string> = {
+    success: '成功',
+    failed: '失败',
+    skipped: '已跳过',
+    running: '执行中',
+    pending: '等待',
+  }
+  return labels[status] || status
+}
+
+function stepStatusType(status: string): 'success' | 'danger' | 'warning' | 'info' {
+  if (status === 'success') {
+    return 'success'
+  }
+  if (status === 'failed') {
+    return 'danger'
+  }
+  if (status === 'running') {
+    return 'warning'
+  }
+  return 'info'
+}
 
 function riskText(level: string): string {
   if (level === 'high') return '高风险'
@@ -329,5 +384,17 @@ onMounted(() => {
   margin: 12px 0 0;
   max-height: 320px;
   overflow-y: auto;
+}
+
+.mask-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.mask-types__note {
+  margin: 10px 0 0;
+  font-size: 12px;
 }
 </style>

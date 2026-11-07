@@ -12,8 +12,11 @@ from ..common.pagination import Page
 from ..common.validators import parse_page_args, require_int
 from ..db.connection import get_db
 from ..errors import AppError, ErrorCode
-from ..repositories.base import BaseRepository
+from ..repositories.base import NULL_FILTER, BaseRepository
 from ..services import audit_service, tabular_export
+
+#: 「未挂值」的口语写法：前端下拉常把空值写成 none，语义与 NULL_FILTER 相同
+NULL_ALIAS = "none"
 
 
 def db() -> sqlite3.Connection:
@@ -44,12 +47,16 @@ def query_filters(allowed: dict[str, str], args: Any = None) -> dict[str, Any]:
 
     allowed 是「查询参数名 → 数据库列名」的显式映射；
     未列出的参数一律忽略，列名不会来自请求内容，杜绝注入面。
+    值为 none（大小写不敏感）时按「未挂该字段」筛，与 __null__ 同义。
     """
     src = args if args is not None else request.args
     filters: dict[str, Any] = {}
     for key, column in allowed.items():
         value = src.get(key)
         if value in (None, ""):
+            continue
+        if isinstance(value, str) and value.strip().lower() == NULL_ALIAS:
+            filters[column] = NULL_FILTER
             continue
         filters[column] = value
     return filters
@@ -101,6 +108,88 @@ def require_found(row: dict[str, Any] | None, message: str = "资源不存在") 
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, message)
     return row
+
+
+def scope_arg(args: Any = None, field: str = "projectId") -> int | None:
+    """详情/统计接口上可选的项目上下文。"""
+    src = args if args is not None else request.args
+    raw = src.get(field)
+    if raw in (None, ""):
+        return None
+    return require_int(raw, field)
+
+
+def guard_project_scope(
+    row: dict[str, Any],
+    project_id: int | None,
+    label: str = "资源",
+) -> dict[str, Any]:
+    """带 projectId 读详情时必须校验归属：跨项目一律按「不存在」处理，不回显任何字段。"""
+    if project_id is None:
+        return row
+    if int(row.get("project_id") or -1) != int(project_id):
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, f"{label}不属于该项目")
+    return row
+
+
+def require_project(conn: sqlite3.Connection, project_id: int) -> int:
+    """写入前先确认项目真实存在，避免把外键异常抛成 199000。"""
+    row = conn.execute(
+        "SELECT id FROM biz_project WHERE id = ? AND is_deleted = 0", (int(project_id),)
+    ).fetchone()
+    if row is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "项目不存在")
+    return int(project_id)
+
+
+def project_of_module(conn: sqlite3.Connection, module_id: Any) -> int | None:
+    """功能点挂在哪个项目，产出就属于哪个项目：AI 任务/待审产出的项目维度只能这样推。"""
+    if module_id in (None, ""):
+        return None
+    value = require_int(module_id, "moduleId")
+    row = conn.execute(
+        "SELECT project_id FROM biz_module WHERE id = ? AND is_deleted = 0", (value,)
+    ).fetchone()
+    return int(row["project_id"]) if row is not None and row["project_id"] is not None else None
+
+
+def check_ref_project(
+    conn: sqlite3.Connection,
+    table: str,
+    ref_id: Any,
+    project_id: int | None,
+    label: str,
+    field: str,
+) -> int | None:
+    """跨项目引用守门：引用行必须存在，且必须落在同一条记录的项目里。
+
+    ref_id 为空直接返回 None（未挂引用是合法的）；给了值就绝不静默接受脏引用，
+    否则覆盖矩阵、版本 assetCount、趋势这些统计会被别的项目的数据污染。
+    """
+    if ref_id in (None, ""):
+        return None
+    value = require_int(ref_id, field)
+    row = conn.execute(
+        f"SELECT project_id FROM {table} WHERE id = ? AND is_deleted = 0", (value,)  # noqa: S608
+    ).fetchone()
+    if row is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, f"{label}不存在")
+    if project_id is not None and int(row["project_id"] or -1) != int(project_id):
+        raise AppError(ErrorCode.ILLEGAL_OPERATION, f"{label}不属于该项目，不能挂到本项目下")
+    return value
+
+
+def reject_project_move(
+    payload: dict[str, Any],
+    current_project_id: Any,
+    label: str = "资产",
+) -> None:
+    """资产不整体改挂到别的项目：连带的需求/功能点/版本引用会一起变成跨项目脏数据。"""
+    raw = payload.get("projectId")
+    if raw in (None, ""):
+        return
+    if int(raw) != int(current_project_id or -1):
+        raise AppError(ErrorCode.ILLEGAL_OPERATION, f"不支持把{label}改挂到别的项目")
 
 
 def pick(source: dict[str, Any], allowed: Iterable[str]) -> dict[str, Any]:

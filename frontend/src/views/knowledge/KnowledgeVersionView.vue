@@ -16,13 +16,26 @@
           <el-table-column prop="title" label="标题" min-width="200" />
           <el-table-column prop="reviewStatus" label="状态" width="110">
             <template #default="scope">
-              <el-tag :type="scope.row.reviewStatus === 'published' ? 'success' : 'warning'" size="small" effect="plain">
-                {{ scope.row.reviewStatus === 'published' ? '已发布' : '待审核' }}
+              <el-tag :type="statusType(scope.row.reviewStatus)" size="small" effect="plain">
+                {{ statusLabel(scope.row.reviewStatus) }}
               </el-tag>
             </template>
           </el-table-column>
           <el-table-column prop="reviewer" label="审核人" width="110" />
-          <el-table-column prop="changeLog" label="变更说明" min-width="160" />
+          <el-table-column prop="changeLog" label="变更说明" min-width="200">
+            <template #default="scope">
+              <span>{{ scope.row.changeLog }}</span>
+              <el-tag
+                v-if="scope.row.mergeTargets?.length"
+                size="small"
+                type="warning"
+                effect="plain"
+                class="merge-tag"
+              >
+                合并 {{ scope.row.mergeTargets.length }} 条
+              </el-tag>
+            </template>
+          </el-table-column>
           <el-table-column label="时间" width="170">
             <template #default="{ row }">{{ dateTimeText(row.createdAt) }}</template>
           </el-table-column>
@@ -31,7 +44,7 @@
               <el-button link type="primary" @click="viewVersion(scope.row.version)">查看</el-button>
               <el-button link type="primary" @click="showDiff(scope.row.version)">与当前对比</el-button>
               <el-button
-                v-if="scope.row.reviewStatus !== 'published'"
+                v-if="scope.row.reviewStatus === 'pending'"
                 link
                 type="success"
                 @click="reviewVersion(scope.row.version, 'approve')"
@@ -39,7 +52,7 @@
                 通过
               </el-button>
               <el-button
-                v-if="scope.row.reviewStatus !== 'published'"
+                v-if="scope.row.reviewStatus === 'pending'"
                 link
                 type="danger"
                 @click="reviewVersion(scope.row.version, 'reject')"
@@ -88,6 +101,20 @@ const viewingContent = ref('')
 
 const diffText = computed(() => diffRows.value.join('\n'))
 
+function statusLabel(status: string): string {
+  if (status === 'published') {
+    return '已发布'
+  }
+  return status === 'rejected' ? '已驳回' : '待审核'
+}
+
+function statusType(status: string): 'success' | 'warning' | 'danger' {
+  if (status === 'published') {
+    return 'success'
+  }
+  return status === 'rejected' ? 'danger' : 'warning'
+}
+
 async function load(): Promise<void> {
   try {
     versions.value = await knowledgeApi.listVersions(id.value)
@@ -98,14 +125,22 @@ async function load(): Promise<void> {
   }
 }
 
+let viewSeq = 0
+
 async function viewVersion(version: number): Promise<void> {
+  const seq = ++viewSeq
   try {
     const payload = await knowledgeApi.getVersion(id.value, version)
+    if (seq !== viewSeq) {
+      return
+    }
     viewingVersion.value = version
     viewingContent.value = payload.content ?? ''
     viewerVisible.value = true
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : '加载版本失败')
+    if (seq === viewSeq) {
+      ElMessage.error(err instanceof Error ? err.message : '加载版本失败')
+    }
   }
 }
 
@@ -146,6 +181,10 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.merge-tag {
+  margin-left: 6px;
+}
+
 .section-title {
   font-weight: 600;
   font-size: 13px;

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from flask import Blueprint, Response, current_app
 
 from ...envelope import ok
 from ...common.time_utils import utcnow_iso
+from ...db.connection import database_status
 from ... import __version__
 
 bp = Blueprint("common", __name__)
@@ -19,5 +22,6 @@ def health() -> Response:
             "appVersion": __version__,
             "aiConfigured": False,
             "serverTime": utcnow_iso(),
+            "database": database_status(Path(current_app.config["AITP_DB_PATH"])),
         }
     )

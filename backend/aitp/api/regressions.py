@@ -16,7 +16,21 @@ from ..repositories.regression_repo import (
     regression_summary,
 )
 from ..services import audit_service, regression_service
-from .helpers import audit, body, commit, db, keyword_of, page_args, page_payload, path_int, query_filters
+from .helpers import (
+    attach_version_codes,
+    audit,
+    body,
+    commit,
+    db,
+    guard_project_scope,
+    keyword_of,
+    page_args,
+    page_payload,
+    path_int,
+    query_filters,
+    require_project,
+    scope_arg,
+)
 
 bp = Blueprint("regressions", __name__)
 
@@ -26,6 +40,7 @@ FILTERS = {
     "riskLevel": "risk_level",
     "source": "source",
     "version": "version",
+    "versionId": "version_id",
 }
 
 
@@ -38,6 +53,7 @@ def list_regressions() -> Response:
     page = repo.list(filters, keyword_of() or None, page_num=page_num, page_size=page_size)
     payload = page_payload(page)
     payload["list"] = [regression_summary(row) for row in payload["list"]]
+    attach_version_codes(conn, payload["list"])
     return ok(payload)
 
 
@@ -48,9 +64,11 @@ def get_regression(pk: str) -> Response:
     detail = repo.get_detail(path_int(pk))
     if not detail:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "回归清单不存在")
+    guard_project_scope(detail, scope_arg(), "回归清单")
     payload = regression_summary(detail)
     payload["items"] = [item_summary(row) for row in detail.get("items", [])]
     payload["stats"] = repo.stats_of(path_int(pk))
+    attach_version_codes(conn, [payload])
     return ok(payload)
 
 
@@ -60,11 +78,12 @@ def create_regression() -> Response:
     data = body()
     new_id = regression_service.create_regression(
         conn,
-        project_id=require_int(data.get("projectId"), "projectId"),
+        project_id=require_project(conn, require_int(data.get("projectId"), "projectId")),
         title=require_str(data.get("title"), "title", 200),
         change_scope=str(data.get("changeScope") or ""),
         affected_modules=str(data.get("affectedModules") or ""),
         version=str(data.get("version") or ""),
+        version_id=optional_int(data.get("versionId"), "versionId"),
         risk_level=str(data.get("riskLevel") or "low"),
         content=str(data.get("content") or ""),
         source=str(data.get("source") or "manual"),
@@ -73,7 +92,9 @@ def create_regression() -> Response:
     audit(conn, audit_service.AUDIT_ACTION_CREATE, audit_service.RESOURCE_REGRESSION,
           new_id, str(data.get("title") or ""), {})
     detail = RegressionRepository(conn).get_detail(new_id)
-    return ok(regression_summary(detail or {}))
+    payload = regression_summary(detail or {})
+    attach_version_codes(conn, [payload])
+    return ok(payload)
 
 
 @bp.put("/<pk>")

@@ -2,7 +2,8 @@
   <div class="page">
     <div class="page-header">
       <h2 class="page-title">缺陷</h2>
-      <div>
+      <div class="toolbar" style="margin: 0">
+        <ProjectSwitcher />
         <BaseExportMenu :resolve-url="resolveExportUrl" />
         <el-button type="primary" :icon="Plus" @click="openCreate">新建缺陷</el-button>
       </div>
@@ -47,13 +48,13 @@
           <el-input v-model="form.title" />
         </el-form-item>
         <el-form-item label="项目" required>
-          <el-select v-model="form.projectId">
+          <el-select v-model="form.projectId" @change="onProjectChange">
             <el-option v-for="item in appStore.projects" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="功能点">
-          <el-select v-model="form.moduleId" clearable filterable placeholder="选择功能点">
-            <el-option v-for="item in moduleOptions" :key="item.id" :label="item.path" :value="item.id" />
+          <el-select v-model="form.moduleId" clearable filterable placeholder="选择功能点" :loading="formModuleLoading">
+            <el-option v-for="item in formModuleOptions" :key="item.id" :label="item.path" :value="item.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="项目版本">
@@ -122,8 +123,10 @@ import { Plus } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
+import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import { bugApi, moduleApi, projectVersionApi } from '@/api'
 import type { Bug, ModuleOption } from '@/api/types'
+import { useProjectScope } from '@/composables/useProjectScope'
 import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
@@ -188,12 +191,10 @@ const moduleOptions = ref<ModuleOption[]>([])
 
 const extraQuery = computed(() => ({
   projectId: appStore.currentProjectId ?? undefined,
-  versionId: selectedVersionId.value ?? undefined,
 }))
 
 /** 当前项目下的版本清单，供版本下拉筛选。 */
 const versionOptions = ref<Array<{ label: string; value: number }>>([])
-const selectedVersionId = ref<number | null>(null)
 
 async function loadVersionOptions(): Promise<void> {
   const pid = appStore.currentProjectId
@@ -306,12 +307,12 @@ const form = reactive({
 function openCreate(): void {
   editing.value = null
   const fq = tableRef.value?.filterQuery() ?? {}
-  pendingVersionId.value = fq.versionId ? Number(fq.versionId) : null
   Object.assign(form, {
     title: '',
     projectId: appStore.currentProjectId,
     moduleId: null,
-    versionId: null,
+    // 列表正按版本筛选时，新建的缺陷直接挂到该版本下，保存后不会从列表里消失。
+    versionId: fq.versionId ? Number(fq.versionId) : null,
     severity: 'P2',
     status: 'open',
     bugType: 'functional',
@@ -330,11 +331,11 @@ async function openEdit(row: Bug): Promise<void> {
   try {
     const detail = await bugApi.get(row.id)
     editing.value = detail
-    pendingVersionId.value = (detail as any).versionId ?? null
     Object.assign(form, {
       title: detail.title ?? '',
       projectId: detail.projectId ?? null,
       moduleId: detail.moduleId ?? null,
+      versionId: detail.versionId ?? null,
       severity: detail.severity ?? 'P2',
       status: detail.status ?? 'open',
       bugType: detail.bugType ?? 'functional',
@@ -446,36 +447,63 @@ async function loadOptions(): Promise<void> {
   }
 }
 
-watch(() => appStore.currentProjectId, () => {
-  void loadOptions()
-  void loadVersionOptions()
-  tableRef.value?.reload()
-}, { immediate: true })
+useProjectScope({
+  load: () => {
+    void loadOptions()
+    void loadVersionOptions()
+  },
+  // 旧项目的版本筛选在新项目里不存在，留着会把列表筛成空。
+  resetScopedFilters: () => tableRef.value?.clearFilter('versionId'),
+})
 
-/** 表单里的版本下拉跟随表单中选的项目。 */
+/** 表单里的版本、功能点下拉跟随表单中选的项目，切换项目时重新拉取该项目的清单。 */
 const formVersionOptions = ref<Array<{ label: string; value: number }>>([])
-const formVersionProjectId = ref<number | null>(null)
-const pendingVersionId = ref<number | null>(null)
+const formModuleOptions = ref<ModuleOption[]>([])
+const formModuleLoading = ref(false)
+/** 请求回来时项目可能已经换过一次，只认最后一次请求的项目。 */
+const formScopeProjectId = ref<number | null>(null)
 
 watch(() => form.projectId, async (pid) => {
-  form.versionId = pendingVersionId.value
-  pendingVersionId.value = null
+  formScopeProjectId.value = pid ?? null
   if (!pid) {
     formVersionOptions.value = []
-    formVersionProjectId.value = null
+    formModuleOptions.value = []
     return
   }
-  formVersionProjectId.value = pid
+  const isStale = () => formScopeProjectId.value !== pid
+  formModuleLoading.value = true
   try {
-    const result = await projectVersionApi.list(pid)
-    if (formVersionProjectId.value === pid) {
-      formVersionOptions.value = result.list.map((v) => ({
-        label: v.versionCode,
-        value: v.id as number,
-      }))
+    try {
+      const result = await projectVersionApi.list(pid)
+      if (!isStale()) {
+        formVersionOptions.value = result.list.map((v) => ({
+          label: v.versionCode,
+          value: v.id as number,
+        }))
+      }
+    } catch {
+      if (!isStale()) {
+        formVersionOptions.value = []
+      }
     }
-  } catch {
-    formVersionOptions.value = []
+    try {
+      const modules = await moduleApi.options(pid, true)
+      if (!isStale()) {
+        formModuleOptions.value = modules
+      }
+    } catch {
+      if (!isStale()) {
+        formModuleOptions.value = []
+      }
+    }
+  } finally {
+    formModuleLoading.value = false
   }
 }, { immediate: true })
+
+/** 表单里换了项目，版本和功能点都会挂到别的项目上，必须一起清掉。 */
+function onProjectChange(): void {
+  form.versionId = null
+  form.moduleId = null
+}
 </script>

@@ -2,7 +2,18 @@
   <div class="page">
     <div class="page-header">
       <h2 class="page-title">测试用例</h2>
-      <el-button :icon="Back" @click="router.back()">返回</el-button>
+      <div class="toolbar" style="margin: 0">
+        <el-button
+          v-if="detail?.caseType === 'interface'"
+          type="primary"
+          :icon="VideoPlay"
+          :loading="running"
+          @click="runInterface"
+        >
+          执行接口用例
+        </el-button>
+        <el-button :icon="Back" @click="router.back()">返回</el-button>
+      </div>
     </div>
 
     <el-skeleton v-if="loading" :rows="6" animated />
@@ -15,7 +26,7 @@
             <h3 class="case-detail__title">{{ detail.title }}</h3>
           </div>
           <div class="case-detail__tags">
-            <el-tag size="small" effect="plain">{{ detail.caseType }}</el-tag>
+            <el-tag size="small" effect="plain">{{ caseTypeText(detail.caseType) }}</el-tag>
             <el-tag :type="priorityTag(detail.priority)" size="small" effect="plain">{{ detail.priority }}</el-tag>
             <el-tag :type="statusTag(detail.status)" size="small" effect="plain">
               {{ statusLabel(detail.status) }}
@@ -27,7 +38,7 @@
           <el-descriptions-item label="项目">{{ detail.projectId }}</el-descriptions-item>
           <el-descriptions-item label="功能点">{{ detail.moduleId ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="需求">{{ detail.requirementId ?? '-' }}</el-descriptions-item>
-          <el-descriptions-item label="来源">{{ detail.source ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="来源">{{ caseSourceText(detail.source ?? '') || '-' }}</el-descriptions-item>
           <el-descriptions-item label="标签">{{ detail.tags ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="创建时间">{{ dateTimeText(detail.createdAt) }}</el-descriptions-item>
         </el-descriptions>
@@ -47,24 +58,45 @@
         <div class="section-title">整体预期结果</div>
         <div class="pre">{{ detail.expectedResult || '无' }}</div>
       </div>
+
+      <div v-if="detail.caseType === 'interface'" class="panel panel-pad">
+        <div class="section-title">接口定义</div>
+        <el-descriptions v-if="interfaceEntries.length" :column="2" border size="small">
+          <el-descriptions-item v-for="item in interfaceEntries" :key="item.key" :label="item.key">
+            <span class="iface-value">{{ item.value || '-' }}</span>
+          </el-descriptions-item>
+        </el-descriptions>
+        <el-empty v-else description="还没有填写接口URL、请求参数与断言" :image-size="60" />
+      </div>
     </div>
 
     <el-empty v-else description="用例不存在" />
+
+    <InterfaceResultDialog v-model="resultVisible" :result="result" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Back } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { Back, VideoPlay } from '@element-plus/icons-vue'
 import { caseApi } from '@/api'
-import type { TestCase } from '@/api/types'
-import { dateTimeText } from '@/utils/format'
+import type { InterfaceExecution, TestCase } from '@/api/types'
+import InterfaceResultDialog from '@/components/InterfaceResultDialog.vue'
+import { dateTimeText, caseSourceText, caseTypeText } from '@/utils/format'
 
 const route = useRoute()
 const router = useRouter()
 const detail = ref<TestCase | null>(null)
 const loading = ref(true)
+const running = ref(false)
+const result = ref<InterfaceExecution | null>(null)
+const resultVisible = ref(false)
+
+const interfaceEntries = computed(() =>
+  Object.entries(detail.value?.extra ?? {}).map(([key, value]) => ({ key, value })),
+)
 
 function priorityTag(priority: string): 'danger' | 'warning' | 'info' | 'primary' {
   if (priority === 'P0') {
@@ -100,6 +132,20 @@ function statusLabel(value: string): string {
     blocked: '阻塞',
   }
   return map[value] ?? value
+}
+
+async function runInterface(): Promise<void> {
+  if (!detail.value) return
+  running.value = true
+  try {
+    result.value = await caseApi.runInterface(detail.value.id)
+    resultVisible.value = true
+    detail.value = await caseApi.get(detail.value.id)
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '接口执行失败')
+  } finally {
+    running.value = false
+  }
 }
 
 onMounted(async () => {
@@ -147,5 +193,10 @@ onMounted(async () => {
   border: 1px solid var(--aitp-border);
   border-radius: 6px;
   padding: 10px 12px;
+}
+
+.iface-value {
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 </style>

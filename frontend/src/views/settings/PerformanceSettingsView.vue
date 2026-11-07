@@ -18,7 +18,7 @@
         <el-form-item label="JMeter 根目录">
           <el-input
             v-model="jmeterHome"
-            placeholder="例如 C:\\tools\\apache-jmeter-5.6.3 或 /opt/apache-jmeter-5.6.3"
+            placeholder="例如 C:\tools\apache-jmeter-5.6.3 或 /opt/apache-jmeter-5.6.3"
             clearable
           />
         </el-form-item>

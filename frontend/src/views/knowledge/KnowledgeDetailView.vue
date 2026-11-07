@@ -5,7 +5,13 @@
       <div class="toolbar" style="margin: 0">
         <el-button :icon="Back" @click="router.back()">返回</el-button>
         <el-button :icon="DocumentCopy" @click="router.push(`/knowledge/${id}/versions`)">版本记录</el-button>
-        <el-button :icon="Edit" @click="editing = !editing">编辑</el-button>
+        <el-button
+          v-if="detail?.reviewStatus === 'published'"
+          :icon="Edit"
+          @click="editing = !editing"
+        >
+          编辑
+        </el-button>
         <el-button v-if="detail?.reviewStatus === 'published'" type="warning" :icon="Remove" @click="revoke">
           撤销
         </el-button>
@@ -19,19 +25,87 @@
         <div class="knowledge-detail__head">
           <h3>{{ detail.title }}</h3>
           <div>
-            <el-tag :type="detail.reviewStatus === 'published' ? 'success' : 'info'" size="small" effect="plain">
-              {{ detail.reviewStatus === 'published' ? '已发布' : '已撤销' }}
+            <el-tag
+              v-if="detail.sourceType === 'assistant'"
+              size="small"
+              type="success"
+              effect="plain"
+            >
+              {{ detail.sourceTypeLabel }}
+            </el-tag>
+            <el-tag :type="articleStatusType" size="small" effect="plain">
+              {{ articleStatusLabel }}
             </el-tag>
             <el-tag size="small" effect="plain">v{{ detail.currentVersion ?? 1 }}</el-tag>
+            <el-tag
+              v-if="hasPendingProposal"
+              size="small"
+              type="warning"
+              effect="plain"
+              class="pending-tag"
+              @click="router.push(`/knowledge/${id}/versions`)"
+            >
+              待审 v{{ detail.draftVersion }}
+            </el-tag>
           </div>
         </div>
+        <el-alert
+          v-if="detail.reviewStatus === 'merged'"
+          type="info"
+          show-icon
+          :closable="false"
+          :title="detail.mergedIntoTitle
+            ? `此条目已并入《${detail.mergedIntoTitle}》，保留作溯源记录`
+            : '此条目已并入其他条目，保留作溯源记录'"
+          class="merged-alert"
+        />
         <el-descriptions :column="4" border size="small">
           <el-descriptions-item label="分类">{{ detail.category || '-' }}</el-descriptions-item>
           <el-descriptions-item label="标签">{{ detail.tags || '-' }}</el-descriptions-item>
           <el-descriptions-item label="功能点">{{ detail.moduleId ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="文件">{{ detail.filePath || '未落盘' }}</el-descriptions-item>
+          <el-descriptions-item label="来源">{{ detail.sourceTypeLabel || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="回答时间">{{ dateTimeText(detail.answeredAt) }}</el-descriptions-item>
+          <el-descriptions-item label="回答模型">{{ detail.answerModel || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="自动整理">
+            <el-tag v-if="detail.sourceType === 'assistant'" size="small" effect="plain"
+              :type="detail.organizeStatus === 'done' ? 'success' : 'info'">
+              {{ organizeText }}
+            </el-tag>
+            <span v-else class="muted">-</span>
+          </el-descriptions-item>
           <el-descriptions-item label="摘要" :span="4">{{ detail.summary || '-' }}</el-descriptions-item>
         </el-descriptions>
+      </div>
+
+      <div v-if="detail.sourceType === 'assistant'" class="panel panel-pad">
+        <div class="section-title">问答溯源</div>
+        <el-alert
+          v-if="detail.reviewRequired"
+          type="warning"
+          show-icon
+          :closable="false"
+          title="该回答命中人工复核规则，采纳前请确认结论与引用是否成立"
+          class="provenance-alert"
+        />
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item label="回答模式">{{ MODE_TEXT[detail.answerMode] || detail.answerMode || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="回答模型">{{ detail.answerModel || '-' }}</el-descriptions-item>
+        </el-descriptions>
+        <div class="provenance-refs">
+          <span class="muted">引用条目</span>
+          <el-tag
+            v-for="ref in detail.refs"
+            :key="ref.marker"
+            size="small"
+            effect="plain"
+            class="provenance-ref"
+            @click="router.push(`/knowledge/${ref.articleId}`)"
+          >
+            [{{ ref.marker }}] {{ ref.title }}
+          </el-tag>
+          <span v-if="!detail.refs?.length" class="muted">无</span>
+        </div>
       </div>
 
       <div class="panel panel-pad">
@@ -108,6 +182,43 @@ const loading = ref(true)
 const saving = ref(false)
 const editing = ref(false)
 
+const MODE_TEXT: Record<string, string> = {
+  llm: '大模型回答',
+  hybrid: '知识库+大模型补强',
+  kb: '知识库回答',
+}
+
+const organizeText = computed(() => {
+  const status = detail.value?.organizeStatus
+  if (status === 'running') {
+    return '后台自动整理中'
+  }
+  if (status === 'done') {
+    return '已整理完'
+  }
+  return '待自动整理'
+})
+
+const articleStatusLabel = computed(() => {
+  const status = detail.value?.reviewStatus
+  if (status === 'published') {
+    return '已发布'
+  }
+  return status === 'merged' ? '已合并' : '已撤销'
+})
+
+const articleStatusType = computed<'success' | 'warning' | 'info'>(() => {
+  const status = detail.value?.reviewStatus
+  if (status === 'published') {
+    return 'success'
+  }
+  return status === 'merged' ? 'warning' : 'info'
+})
+
+const hasPendingProposal = computed(
+  () => Number(detail.value?.draftVersion ?? 0) > Number(detail.value?.currentVersion ?? 1),
+)
+
 const form = reactive({ title: '', content: '', summary: '' })
 
 const { blockedVisible, blockedRefs, blockedMessage, handleError } = useReferenceGuard()
@@ -177,9 +288,34 @@ onMounted(() => {
   font-size: 17px;
 }
 
+.pending-tag {
+  cursor: pointer;
+}
+
+.merged-alert {
+  margin-bottom: 12px;
+}
+
 .section-title {
   font-weight: 600;
   font-size: 13px;
   margin-bottom: 8px;
+}
+
+.provenance-alert {
+  margin-bottom: 10px;
+}
+
+.provenance-refs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.provenance-ref {
+  cursor: pointer;
 }
 </style>

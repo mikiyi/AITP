@@ -20,7 +20,6 @@ CAP_REGRESSION_GENERATION = "regression_generation"
 CAP_REPORT_GENERATION = "report_generation"
 CAP_PROJECT_PROGRESS_BOARD = "project_progress_board"
 
-CAP_KNOWLEDGE_QA = "knowledge_qa"
 CAP_PROMPT_OPTIMIZE = "prompt_optimize"
 
 # 提示词库里已就绪、但此前未开成能力入口的提示词对应的能力
@@ -36,6 +35,14 @@ CAP_PERFORMANCE_SCRIPT = "performance_script"
 
 # 测试数据生成：SQL 分支走大模型，文件分支全程本地
 CAP_TEST_DATA_GENERATION = "test_data_generation"
+
+# 顺序执行的父记录不是可执行能力，只用于把整条流水线归成一条记录
+CAP_COMPOSITE = "composite"
+
+#: 非能力入口的伪能力中文名：不能出现在能力清单里，但记录列表要显示中文
+PSEUDO_CAPABILITY_LABELS: dict[str, str] = {
+    CAP_COMPOSITE: "多入口顺序执行",
+}
 
 # 输出格式
 OUTPUT_MARKDOWN = "markdown"
@@ -146,7 +153,7 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
         adoptable=True,
     ),
     CAP_BUG_ANALYSIS: CapabilitySpec(
-        CAP_BUG_ANALYSIS, "Bug 分析", "定位缺陷根因并给出修复建议",
+        CAP_BUG_ANALYSIS, "缺陷分析", "定位缺陷根因并给出修复建议",
         ("bug", "缺陷", "报错", "异常", "复现", "根因", "defect", "缺陷分析",
          "失败", "不对", "错误", "翻倍", "重复", "崩溃", "无法"),
         prompt_code="bug-analysis",
@@ -190,12 +197,6 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
         prompt_code="project-progress-board",
         variables=("projectName", "progressData", "period", "milestones"),
     ),
-    CAP_KNOWLEDGE_QA: CapabilitySpec(
-        CAP_KNOWLEDGE_QA, "知识问答", "基于知识库检索并回答",
-        ("知识", "问答", "查一下", "kb"),
-        prompt_code="knowledge-qa",
-        variables=("question", "context"),
-    ),
     CAP_PROMPT_OPTIMIZE: CapabilitySpec(
         CAP_PROMPT_OPTIMIZE, "提示词优化", "改写用户输入为更清晰的提示词",
         ("优化", "改写", "润色", "prompt", "提示词", "提示词优化", "优化提示词"),
@@ -235,9 +236,10 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
     ),
     CAP_AUTOMATION_SCRIPT: CapabilitySpec(
         CAP_AUTOMATION_SCRIPT, "自动化脚本生成", "按目标类型与框架生成可直接运行的 Python 自动化脚本",
-        ("自动化", "脚本", "selenium", "playwright", "appium", "pytest", "接口自动化",
-         "web自动化", "app自动化", "网页自动化", "移动端自动化", "ui自动化",
-         "自动化测试", "自动化脚本", "测试脚本", "autoscript", "代码生成"),
+        ("自动化", "脚本", "selenium", "playwright", "appium", "hypium", "uiautomator2",
+         "pytest", "接口自动化", "web自动化", "app自动化", "网页自动化", "移动端自动化",
+         "ui自动化", "自动化测试", "自动化脚本", "测试脚本", "autoscript", "代码生成",
+         "鸿蒙", "harmonyos", "hos"),
         prompt_code="automation-script",
         variables=(
             "projectName", "targetType", "framework", "language",
@@ -271,7 +273,6 @@ BINDABLE_CAPABILITIES: tuple[str, ...] = (
     CAP_REQUIREMENT_CONFIRM, CAP_TESTPOINT_GENERATION, CAP_CASE_GENERATION,
     CAP_XMIND_TO_CASE, CAP_BUG_ANALYSIS, CAP_LOG_ANALYSIS, CAP_SQL_ANALYSIS,
     CAP_REGRESSION_GENERATION, CAP_REPORT_GENERATION, CAP_PROJECT_PROGRESS_BOARD,
-    CAP_KNOWLEDGE_QA,
     CAP_API_TEST_DESIGN, CAP_TEST_PLAN,
     CAP_CASE_REVIEW, CAP_BUG_CLASSIFICATION, CAP_RISK_ASSESSMENT,
     CAP_AUTOMATION_SCRIPT, CAP_PERFORMANCE_SCRIPT, CAP_TEST_DATA_GENERATION,
@@ -298,7 +299,9 @@ def is_known(capability: str) -> bool:
 
 def label_of(capability: str) -> str:
     spec = CAPABILITIES.get(capability)
-    return spec.label if spec else capability
+    if spec:
+        return spec.label
+    return PSEUDO_CAPABILITY_LABELS.get(capability, capability)
 
 
 def spec_of(capability: str) -> CapabilitySpec | None:

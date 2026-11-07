@@ -1,12 +1,20 @@
 /*
- * 六套皮肤。
+ * 十套皮肤。
  *
- * 结构：main.css 的 :root 是默认（白色）皮肤，这里只放另外五套的覆盖规则；
+ * 结构：main.css 的 :root 是默认（白色）皮肤，这里只放另外九套的覆盖规则；
  * 皮肤编号写在 <html data-theme="..."> 上，由 stores/theme.ts 维护并记到 localStorage。
+ *
+ * 排列顺序：浅色皮肤（蓝/红/粉/橙/海洋/植物）在前，深色皮肤（黑/科技/工业）在后，
+ * 深色皮肤后面跟着两段「所有深色皮肤共用」的规则（Element Plus 中性色映射、表格与滚动条补丁）。
  *
  * 每套皮肤都要给足对比度：底色、卡片色、正文色、描边色四者互不接近，
  * 深色皮肤额外把 Element Plus 的文字、填充、遮罩一并换成深色版，
  * 免得弹框、输入框、下拉面板在黑底上还是白底。
+ *
+ * 浅色皮肤只需要覆盖 --aitp-* 加主色梯度，Element Plus 的中性色本来就是浅色版。
+ * 深色皮肤还要给出一组 --aitp-* 色阶变量（见下面每套深色皮肤的注释），
+ * 由 html[data-theme='black'], html[data-theme='tech'], html[data-theme='industry']
+ * 那条共用规则统一映射到 --el-*；新增深色皮肤时把 key 加进那组选择器即可，不必重抄 --el-*。
  */
 
 html[data-theme='blue'] {
@@ -81,7 +89,48 @@ html[data-theme='orange'] {
   --el-color-primary-dark-2: #b45e14;
 }
 
-/* 黑色皮肤：唯一的深色方案，Element Plus 的中性色全部换成深色版 */
+/* 海洋风：浅底带一点海蓝，主色是偏青的深海蓝绿 */
+html[data-theme='ocean'] {
+  --aitp-bg: #edf6f8;
+  --aitp-panel: #ffffff;
+  --aitp-border: #cbe2e8;
+  --aitp-text: #14333d;
+  --aitp-text-weak: #47707c;
+  --aitp-primary: #0f7b8c;
+  --aitp-subtle: #f1f8fa;
+  --aitp-primary-soft: #dbeef2;
+  --aitp-hover: #e4f1f5;
+  --el-color-primary-light-3: #57a3af;
+  --el-color-primary-light-5: #87bdc6;
+  --el-color-primary-light-7: #b7d7dd;
+  --el-color-primary-light-8: #cfe5e8;
+  --el-color-primary-light-9: #e7f2f4;
+  --el-color-primary-dark-2: #0c6270;
+}
+
+/* 植物风：浅底带一点草木绿，主色是耐看的叶绿深绿 */
+html[data-theme='plant'] {
+  --aitp-bg: #edf4ea;
+  --aitp-panel: #ffffff;
+  --aitp-border: #d6e5d1;
+  --aitp-text: #22301f;
+  --aitp-text-weak: #567349;
+  --aitp-primary: #2e7d32;
+  --aitp-subtle: #f3f8f2;
+  --aitp-primary-soft: #e1f0e1;
+  --aitp-hover: #e8f3e7;
+  --el-color-primary-light-3: #6da470;
+  --el-color-primary-light-5: #97be99;
+  --el-color-primary-light-7: #c0d8c2;
+  --el-color-primary-light-8: #d5e5d6;
+  --el-color-primary-light-9: #eaf2eb;
+  --el-color-primary-dark-2: #256428;
+}
+
+/*
+ * 黑色皮肤：中性色梯度变量（--aitp-*-light / -fill-* / -text-* / -shadow-*）
+ * 只在这里声明，实际写进 --el-* 的映射由下面的共用规则负责。
+ */
 html[data-theme='black'] {
   --aitp-bg: #14161a;
   --aitp-panel: #1d2026;
@@ -96,7 +145,6 @@ html[data-theme='black'] {
   --aitp-scrollbar-hover: #565d6b;
   --aitp-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px rgba(0, 0, 0, 0.45);
 
-  --el-color-primary: #4d8bff;
   --el-color-primary-light-3: #3f79e6;
   --el-color-primary-light-5: #6b9bec;
   --el-color-primary-light-7: #9bbcf4;
@@ -104,75 +152,221 @@ html[data-theme='black'] {
   --el-color-primary-light-9: #ccdffa;
   --el-color-primary-dark-2: #3a75e6;
 
-  --el-bg-color: #1d2026;
-  --el-bg-color-page: #14161a;
-  --el-bg-color-overlay: #23262d;
-  --el-text-color-primary: #e8eaed;
-  --el-text-color-regular: #c9cdd4;
-  --el-text-color-secondary: #9aa0a8;
-  --el-text-color-placeholder: #6b727c;
-  --el-text-color-disabled: #5b616b;
-  --el-border-color: #32363f;
-  --el-border-color-light: #2c3038;
-  --el-border-color-lighter: #262a31;
-  --el-border-color-extra-light: #212429;
-  --el-border-color-dark: #3d434e;
-  --el-border-color-darker: #454c58;
-  --el-fill-color: #23262d;
-  --el-fill-color-light: #2a2e35;
-  --el-fill-color-lighter: #212429;
-  --el-fill-color-blank: #1d2026;
-  --el-fill-color-dark: #2f333b;
-  --el-fill-color-darker: #363a43;
-  --el-disabled-bg-color: #23262d;
-  --el-disabled-text-color: #6b727c;
-  --el-disabled-border-color: #32363f;
-  --el-mask-color: rgba(0, 0, 0, 0.72);
-  --el-box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
-  --el-box-shadow-light: 0 0 12px rgba(0, 0, 0, 0.45);
-  --el-box-shadow-lighter: 0 0 6px rgba(0, 0, 0, 0.35);
+  /* 深色皮肤专用的中性色阶，供下面的共用映射规则取用 */
+  --aitp-overlay: #23262d;
+  --aitp-text-regular: #c9cdd4;
+  --aitp-text-placeholder: #6b727c;
+  --aitp-text-disabled: #5b616b;
+  --aitp-border-light: #2c3038;
+  --aitp-border-lighter: #262a31;
+  --aitp-border-extra-light: #212429;
+  --aitp-border-dark: #3d434e;
+  --aitp-border-darker: #454c58;
+  --aitp-fill-light: #2a2e35;
+  --aitp-fill-lighter: #212429;
+  --aitp-fill-dark: #2f333b;
+  --aitp-fill-darker: #363a43;
+  --aitp-mask: rgba(0, 0, 0, 0.72);
+  --aitp-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.55);
+  --aitp-shadow-md: 0 0 12px rgba(0, 0, 0, 0.45);
+  --aitp-shadow-sm: 0 0 6px rgba(0, 0, 0, 0.35);
+}
+
+/* 科技风：冷调近黑底 + 蓝灰面板，主色是电光青蓝 */
+html[data-theme='tech'] {
+  --aitp-bg: #070b12;
+  --aitp-panel: #0d1520;
+  --aitp-border: #1e2b3e;
+  --aitp-text: #dbe6f5;
+  --aitp-text-weak: #8ea6c2;
+  --aitp-primary: #0d92d6;
+  --aitp-subtle: #111a26;
+  --aitp-primary-soft: rgba(13, 146, 214, 0.18);
+  --aitp-hover: #16212f;
+  --aitp-scrollbar: #2a3c53;
+  --aitp-scrollbar-hover: #385073;
+  --aitp-shadow: 0 1px 2px rgba(0, 0, 0, 0.6), 0 6px 18px rgba(0, 6, 18, 0.55);
+
+  /* 深色皮肤的主色梯度往底色方向压，浅色皮肤那套往白混会让标签和 hover 糊成一片 */
+  --el-color-primary-light-3: #0c6b9f;
+  --el-color-primary-light-5: #0c527b;
+  --el-color-primary-light-7: #0b3857;
+  --el-color-primary-light-8: #0b2b44;
+  --el-color-primary-light-9: #0a1e32;
+  --el-color-primary-dark-2: #0a75ab;
+
+  --aitp-overlay: #131d2a;
+  --aitp-text-regular: #b8c8dd;
+  --aitp-text-placeholder: #64798f;
+  --aitp-text-disabled: #55677c;
+  --aitp-border-light: #1a2636;
+  --aitp-border-lighter: #16202e;
+  --aitp-border-extra-light: #111a26;
+  --aitp-border-dark: #26364c;
+  --aitp-border-darker: #2f435c;
+  --aitp-fill-light: #182432;
+  --aitp-fill-lighter: #111a26;
+  --aitp-fill-dark: #1d2937;
+  --aitp-fill-darker: #243345;
+  --aitp-mask: rgba(2, 6, 12, 0.74);
+  --aitp-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.62);
+  --aitp-shadow-md: 0 0 12px rgba(0, 0, 0, 0.5);
+  --aitp-shadow-sm: 0 0 6px rgba(0, 0, 0, 0.38);
+}
+
+/* 工业风：炭黑底 + 钢灰面板，主色是琥珀橙钢 */
+html[data-theme='industry'] {
+  --aitp-bg: #191817;
+  --aitp-panel: #232528;
+  --aitp-border: #3c4046;
+  --aitp-text: #eceae4;
+  --aitp-text-weak: #a6a9a6;
+  --aitp-primary: #cf7d18;
+  --aitp-subtle: #2c2e32;
+  --aitp-primary-soft: rgba(207, 125, 24, 0.18);
+  --aitp-hover: #2f3134;
+  --aitp-scrollbar: #4a4d52;
+  --aitp-scrollbar-hover: #5c6067;
+  --aitp-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 6px 18px rgba(0, 0, 0, 0.5);
+
+  --el-color-primary-light-3: #985f18;
+  --el-color-primary-light-5: #744b18;
+  --el-color-primary-light-7: #503617;
+  --el-color-primary-light-8: #3d2c17;
+  --el-color-primary-light-9: #2b2217;
+  --el-color-primary-dark-2: #a66413;
+
+  --aitp-overlay: #2c2e32;
+  --aitp-text-regular: #cfcfca;
+  --aitp-text-placeholder: #8b8d89;
+  --aitp-text-disabled: #6d6f6b;
+  --aitp-border-light: #363a3f;
+  --aitp-border-lighter: #32363b;
+  --aitp-border-extra-light: #2a2d31;
+  --aitp-border-dark: #474c53;
+  --aitp-border-darker: #555b63;
+  --aitp-fill-light: #33373c;
+  --aitp-fill-lighter: #262a2e;
+  --aitp-fill-dark: #3a3f45;
+  --aitp-fill-darker: #444a51;
+  --aitp-mask: rgba(6, 5, 3, 0.74);
+  --aitp-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+  --aitp-shadow-md: 0 0 12px rgba(0, 0, 0, 0.48);
+  --aitp-shadow-sm: 0 0 6px rgba(0, 0, 0, 0.36);
+}
+
+/*
+ * 深色皮肤共用：把上面各自的中性色阶一次性映射进 Element Plus。
+ * 新增深色皮肤时，只要补好上面那组 --aitp-* 变量，再把 key 加进这组选择器，
+ * 弹框、下拉面板、输入框、禁用态就会整体换成深色，不会出现「半页白底」。
+ */
+html[data-theme='black'],
+html[data-theme='tech'],
+html[data-theme='industry'] {
+  --el-color-primary: var(--aitp-primary);
+
+  --el-bg-color: var(--aitp-panel);
+  --el-bg-color-page: var(--aitp-bg);
+  --el-bg-color-overlay: var(--aitp-overlay);
+
+  --el-text-color-primary: var(--aitp-text);
+  --el-text-color-regular: var(--aitp-text-regular);
+  --el-text-color-secondary: var(--aitp-text-weak);
+  --el-text-color-placeholder: var(--aitp-text-placeholder);
+  --el-text-color-disabled: var(--aitp-text-disabled);
+
+  --el-border-color: var(--aitp-border);
+  --el-border-color-light: var(--aitp-border-light);
+  --el-border-color-lighter: var(--aitp-border-lighter);
+  --el-border-color-extra-light: var(--aitp-border-extra-light);
+  --el-border-color-dark: var(--aitp-border-dark);
+  --el-border-color-darker: var(--aitp-border-darker);
+
+  --el-fill-color: var(--aitp-subtle);
+  --el-fill-color-light: var(--aitp-fill-light);
+  --el-fill-color-lighter: var(--aitp-fill-lighter);
+  --el-fill-color-blank: var(--aitp-panel);
+  --el-fill-color-dark: var(--aitp-fill-dark);
+  --el-fill-color-darker: var(--aitp-fill-darker);
+
+  --el-disabled-bg-color: var(--aitp-subtle);
+  --el-disabled-text-color: var(--aitp-text-placeholder);
+  --el-disabled-border-color: var(--aitp-border);
+
+  --el-mask-color: var(--aitp-mask);
+  --el-box-shadow: var(--aitp-shadow-lg);
+  --el-box-shadow-light: var(--aitp-shadow-md);
+  --el-box-shadow-lighter: var(--aitp-shadow-sm);
 }
 
 /* 深色皮肤下，Element Plus 的表格与输入框默认还是白底，这里统一压暗 */
 html[data-theme='black'] .el-table,
+html[data-theme='tech'] .el-table,
+html[data-theme='industry'] .el-table,
 html[data-theme='black'] .el-table tr,
+html[data-theme='tech'] .el-table tr,
+html[data-theme='industry'] .el-table tr,
 html[data-theme='black'] .el-table th.el-table__cell,
+html[data-theme='tech'] .el-table th.el-table__cell,
+html[data-theme='industry'] .el-table th.el-table__cell,
 html[data-theme='black'] .el-table td.el-table__cell,
-html[data-theme='black'] .el-table--enable-row-hover .el-table__body tr:hover > td.el-table__cell {
+html[data-theme='tech'] .el-table td.el-table__cell,
+html[data-theme='industry'] .el-table td.el-table__cell,
+html[data-theme='black'] .el-table--enable-row-hover .el-table__body tr:hover > td.el-table__cell,
+html[data-theme='tech'] .el-table--enable-row-hover .el-table__body tr:hover > td.el-table__cell,
+html[data-theme='industry'] .el-table--enable-row-hover .el-table__body tr:hover > td.el-table__cell {
   background-color: var(--aitp-panel);
   border-color: var(--aitp-border);
 }
 
-html[data-theme='black'] .el-table th.el-table__cell {
+html[data-theme='black'] .el-table th.el-table__cell,
+html[data-theme='tech'] .el-table th.el-table__cell,
+html[data-theme='industry'] .el-table th.el-table__cell {
   background-color: var(--aitp-subtle);
 }
 
-html[data-theme='black'] .el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
+html[data-theme='black'] .el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell,
+html[data-theme='tech'] .el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell,
+html[data-theme='industry'] .el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
   background-color: var(--aitp-subtle);
 }
 
 html[data-theme='black'] .el-table__empty-block,
-html[data-theme='black'] .el-table__empty-text {
+html[data-theme='tech'] .el-table__empty-block,
+html[data-theme='industry'] .el-table__empty-block,
+html[data-theme='black'] .el-table__empty-text,
+html[data-theme='tech'] .el-table__empty-text,
+html[data-theme='industry'] .el-table__empty-text {
   background-color: var(--aitp-panel);
   color: var(--aitp-text-weak);
 }
 
-html[data-theme='black'] .el-table .el-table__cell {
+html[data-theme='black'] .el-table .el-table__cell,
+html[data-theme='tech'] .el-table .el-table__cell,
+html[data-theme='industry'] .el-table .el-table__cell {
   color: var(--aitp-text);
 }
 
 /* 分隔线与滚动条在深色下要跟着变浅，否则基本看不见 */
-html[data-theme='black'] ::-webkit-scrollbar-thumb {
-  background: #454b57;
+html[data-theme='black'] ::-webkit-scrollbar-thumb,
+html[data-theme='tech'] ::-webkit-scrollbar-thumb,
+html[data-theme='industry'] ::-webkit-scrollbar-thumb {
+  background: var(--aitp-scrollbar);
 }
 
-html[data-theme='black'] ::-webkit-scrollbar-thumb:hover {
-  background: #565d6b;
+html[data-theme='black'] ::-webkit-scrollbar-thumb:hover,
+html[data-theme='tech'] ::-webkit-scrollbar-thumb:hover,
+html[data-theme='industry'] ::-webkit-scrollbar-thumb:hover {
+  background: var(--aitp-scrollbar-hover);
 }
 
 /* 深色皮肤下的次级代码块 */
 html[data-theme='black'] .markdown-body pre,
-html[data-theme='black'] .markdown-body code {
+html[data-theme='black'] .markdown-body code,
+html[data-theme='tech'] .markdown-body pre,
+html[data-theme='tech'] .markdown-body code,
+html[data-theme='industry'] .markdown-body pre,
+html[data-theme='industry'] .markdown-body code {
   background: var(--aitp-subtle);
   border-color: var(--aitp-border);
 }

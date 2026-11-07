@@ -54,7 +54,7 @@ def build_xmind(title: str, nodes: list[Node]) -> bytes:
     now = utcnow_iso()
     metadata = {
         "creator": {
-            "name": "AITestPilot",
+            "name": "AITestPlatform",
             "version": "1.0.0",
         },
         "dataStructureVersion": "2",

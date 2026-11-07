@@ -1,6 +1,6 @@
 """测试用例 xlsx 导出。
 
-严格对齐 D:\\Qoter\\testSKill\\generate_test_cases.py：
+严格对齐参考实现 generate_test_cases.py：
 - 7 张表的顺序与表头逐格一致（功能/接口/边界/权限安全/UI/异常/覆盖矩阵）
 - 表头加粗、居中换行、填充 DAEEF3；冻结 A2；列宽 = min(max_len + 2, 30)
 - 优先级单元格 P0 填 FFC7CE、P1 填 FFEB9C

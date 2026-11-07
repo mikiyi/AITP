@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AITestPlatform">
+  <defs>
+    <linearGradient id="aitp-icon-bg" x1="8" y1="4" x2="56" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3B7CF6" />
+      <stop offset="1" stop-color="#1C46C9" />
+    </linearGradient>
+  </defs>
+
+  <rect width="64" height="64" rx="14" fill="url(#aitp-icon-bg)" />
+
+  <g fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" opacity="0.9">
+    <path d="M14 26 V19 A5 5 0 0 1 19 14 H26" />
+    <path d="M38 14 H45 A5 5 0 0 1 50 19 V26" />
+    <path d="M50 38 V45 A5 5 0 0 1 45 50 H38" />
+    <path d="M26 50 H19 A5 5 0 0 1 14 45 V38" />
+  </g>
+
+  <path
+    d="M22 34 L29 41"
+    fill="none"
+    stroke="#FF7A7A"
+    stroke-width="7"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M29 41 L43 25"
+    fill="none"
+    stroke="#6EE7B7"
+    stroke-width="7"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

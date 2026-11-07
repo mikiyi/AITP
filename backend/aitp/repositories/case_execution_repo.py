@@ -33,7 +33,9 @@ class CaseExecutionRepository(BaseRepository):
         ).fetchone()
         return dict(row) if row else None
 
-    def result_counts(self, project_id: int | None = None) -> dict[str, int]:
+    def result_counts(
+        self, project_id: int | None = None, version_id: int | None = None
+    ) -> dict[str, int]:
         sql = (
             "SELECT e.result, COUNT(*) AS c FROM biz_case_execution e"
             " JOIN biz_test_case c ON c.id = e.case_id"
@@ -43,5 +45,8 @@ class CaseExecutionRepository(BaseRepository):
         if project_id is not None:
             sql += " AND c.project_id = ?"
             params.append(project_id)
+        if version_id is not None:
+            sql += " AND c.version_id = ?"
+            params.append(version_id)
         sql += " GROUP BY e.result"
         return {r["result"]: int(r["c"]) for r in self.conn.execute(sql, params).fetchall()}

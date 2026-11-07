@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 from dataclasses import dataclass, field
@@ -17,7 +18,6 @@ from typing import Any, Iterable, Iterator
 
 from ..ai.capability_codes import (
     CAPABILITIES,
-    CAP_KNOWLEDGE_QA,
     CAP_PROMPT_OPTIMIZE,
     OUTPUT_JSON,
     CapabilitySpec,
@@ -25,6 +25,7 @@ from ..ai.capability_codes import (
     spec_of,
 )
 from ..ai.client import chat_with_fallback, stream_with_fallback
+from ..ai.masking import MaskInfo, cloud_mask_enabled
 from ..ai.resolver import resolve_candidates
 from ..ai.safety import build_safety_prompt, mark_review_required, needs_human_review
 from ..ai.types import ChatResult, Message, ResolvedAIConfig, StreamEvent
@@ -33,6 +34,7 @@ from ..errors import AppError, ErrorCode
 from ..db.connection import get_db
 from ..prompts.registry import get_registry
 from ..repositories.module_repo import ModuleCapabilityRepository, ModuleRepository
+from . import prompt_usage
 
 #: 第三方模型的数据外发提示
 EGRESS_WARNING = (
@@ -41,6 +43,8 @@ EGRESS_WARNING = (
 )
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.+?)```", re.DOTALL)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -71,6 +75,8 @@ class CapabilityRun:
     parsed: Any = None
     refs: list[dict[str, Any]] = field(default_factory=list)
     review_required: bool = False
+    #: 本次调用的外发脱敏结果（类型与数量），落库与前端提示都用它
+    mask: dict[str, Any] = field(default_factory=lambda: MaskInfo().as_dict())
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -89,6 +95,7 @@ class CapabilityRun:
             "parsed": self.parsed,
             "refs": self.refs,
             "reviewRequired": self.review_required,
+            "mask": self.mask,
         }
 
 
@@ -166,12 +173,11 @@ def build_messages(
 
 
 def prepare_variables(
-    conn: sqlite3.Connection,
     spec: CapabilitySpec,
     variables: dict[str, Any],
     binding: ModuleBinding,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """合并请求变量与功能点默认参数，并对需要检索的能力补上下文。"""
+) -> dict[str, Any]:
+    """合并请求变量与功能点默认参数。"""
     merged = merge_variables(spec, variables, binding.config)
     # 归属模块类能力（缺陷归类）需要候选模块；绑定了功能点时自动带入路径
     if (
@@ -180,12 +186,7 @@ def prepare_variables(
         and binding.module_path
     ):
         merged["modulePath"] = binding.module_path
-    refs: list[dict[str, Any]] = []
-    if spec.code == CAP_KNOWLEDGE_QA:
-        context, refs = retrieve_knowledge_context(conn, str(merged.get("question") or ""))
-        if context:
-            merged["context"] = context
-    return merged, refs
+    return merged
 
 
 def available_candidates(profile_id: int | None) -> list[ResolvedAIConfig]:
@@ -262,6 +263,8 @@ class RunPlan:
     profile_id: int | None = None
     #: 已去水印的图片（data URL），随消息一起发给多模态模型
     images: list[str] = field(default_factory=list)
+    #: 云端候选是否脱敏；来自系统配置 ai.mask.enabled，本地候选永远不脱敏
+    mask_enabled: bool = True
 
 
 def prepare_run(
@@ -278,7 +281,7 @@ def prepare_run(
     spec = require_capability(capability)
     binding = resolve_binding(conn, capability, module_id)
     registry = get_registry()
-    merged, refs = prepare_variables(conn, spec, variables, binding)
+    merged = prepare_variables(spec, variables, binding)
     merged = registry.fill_defaults(binding.prompt_code, merged)
     prompt_text = registry.render(binding.prompt_code, merged)
 
@@ -295,15 +298,17 @@ def prepare_run(
         prompt_text=prompt_text,
         messages=build_messages(prompt_text, extra_system, images),
         candidates=candidates,
-        refs=refs,
         profile_id=profile_id,
         images=list(images or []),
+        mask_enabled=cloud_mask_enabled(conn),
     )
 
 
 def execute_run(plan: RunPlan) -> CapabilityRun:
     """执行一次准备好的能力调用。"""
-    outcome = chat_with_fallback(plan.candidates, plan.messages)
+    outcome = chat_with_fallback(
+        plan.candidates, plan.messages, mask_enabled=plan.mask_enabled
+    )
     result: ChatResult = outcome.result
     text = result.content or ""
     output, parsed = _finalize_output(text, plan.spec)
@@ -338,6 +343,7 @@ def execute_run(plan: RunPlan) -> CapabilityRun:
         parsed=parsed,
         refs=plan.refs,
         review_required=review_required,
+        mask=outcome.mask.as_dict(),
     )
 
 
@@ -379,7 +385,9 @@ def stream_capability(
         module_id=module_id, profile_id=profile_id, extra_system=extra_system,
         images=images,
     )
-    return stream_with_fallback(plan.candidates, plan.messages), plan
+    return stream_with_fallback(
+        plan.candidates, plan.messages, mask_enabled=plan.mask_enabled
+    ), plan
 
 
 #: 属于系统侧的系统变量，不进「信息缺项」：没选模板不代表信息不足
@@ -399,7 +407,9 @@ def optional_variables_of(prompt_code: str) -> tuple[str, ...]:
 
 # ---------------- 提示词优化 ----------------
 
-def optimize_prompt(capability: str, raw_text: str) -> dict[str, Any]:
+def optimize_prompt(
+    capability: str, raw_text: str, *, conn: sqlite3.Connection | None = None
+) -> dict[str, Any]:
     """把用户的粗略输入改写成结构清晰的提示词。
 
     失败时保留原文并给出提示，不阻断主流程。
@@ -416,7 +426,9 @@ def optimize_prompt(capability: str, raw_text: str) -> dict[str, Any]:
     messages = build_messages(prompt_text)
 
     try:
-        outcome = chat_with_fallback(available_candidates(None), messages)
+        outcome = chat_with_fallback(
+            available_candidates(None), messages, mask_enabled=cloud_mask_enabled(conn)
+        )
     except Exception as exc:  # noqa: BLE001 - 优化失败不阻断主流程
         return {
             "optimized": raw_text,
@@ -426,6 +438,7 @@ def optimize_prompt(capability: str, raw_text: str) -> dict[str, Any]:
             "usage": {},
             "failed": True,
             "message": f"优化失败，已使用原文：{exc}",
+            "mask": MaskInfo(enabled=cloud_mask_enabled(conn)).as_dict(),
         }
 
     optimized = (outcome.result.content or "").strip()
@@ -438,6 +451,7 @@ def optimize_prompt(capability: str, raw_text: str) -> dict[str, Any]:
             "usage": outcome.result.usage.as_dict(),
             "failed": True,
             "message": "优化失败，已使用原文。",
+            "mask": outcome.mask.as_dict(),
         }
     return {
         "optimized": optimized,
@@ -447,6 +461,7 @@ def optimize_prompt(capability: str, raw_text: str) -> dict[str, Any]:
         "usage": outcome.result.usage.as_dict(),
         "failed": False,
         "message": "已优化，请确认后再执行。",
+        "mask": outcome.mask.as_dict(),
     }
 
 
@@ -798,7 +813,10 @@ def route_text(
             "rawText": text,
             "capabilityCatalog": _capability_catalog_text(catalog),
         })
-        outcome = chat_with_fallback(available_candidates(None), build_messages(prompt))
+        outcome = chat_with_fallback(
+            available_candidates(None), build_messages(prompt), mask_enabled=cloud_mask_enabled(conn)
+        )
+        prompt_usage.record(conn, "intent-router")
         payload = parse_route_payload(outcome.result.content or "")
         capability_routes = normalize_capability_routes(payload.get("routes") or [], top_k)
         if capability_routes:
@@ -818,7 +836,10 @@ def route_text(
                 "rawText": text,
                 "moduleCatalog": _module_catalog_text(options),
             })
-            outcome = chat_with_fallback(available_candidates(None), build_messages(prompt))
+            outcome = chat_with_fallback(
+                available_candidates(None), build_messages(prompt), mask_enabled=cloud_mask_enabled(conn)
+            )
+            prompt_usage.record(conn, "module-router")
             payload = parse_route_payload(outcome.result.content or "")
             module_routes = normalize_module_routes(payload.get("routes") or [], top_k)
             if module_routes:
@@ -846,23 +867,28 @@ def route_text(
     }
 
 
-# ---------------- 知识问答上下文 ----------------
+# ---------------- 知识库检索上下文（问答助手用） ----------------
 
 def retrieve_knowledge_context(
     conn: sqlite3.Connection, question: str, limit: int = 5
-) -> tuple[str, list[dict[str, Any]]]:
-    """从正式知识库检索上下文，返回 (带 [K1] 标记的正文, 引用清单)。"""
+) -> tuple[str, list[dict[str, Any]], str]:
+    """从正式知识库检索上下文，返回 (带 [K1] 标记的正文, 引用清单, 失败原因)。
+
+    第三个元素为空表示检索正常。失败必须和「没检索到」区分开：
+    把异常咽下去会让模型在没有任何依据的情况下照常作答。
+    """
     from ..repositories.knowledge_repo import KnowledgeRepository
 
     if not question.strip():
-        return "", []
+        return "", [], ""
     try:
-        result = KnowledgeRepository(conn).search(question, page_num=1, page_size=limit)
-    except Exception:
-        return "", []
+        result = _search_kb_for_ask(conn, question, KnowledgeRepository, limit)
+    except Exception as exc:  # noqa: BLE001 - 检索失败要显式回传，不能伪装成空结果
+        logger.warning("知识库检索失败: %s", exc)
+        return "", [], f"知识库检索失败（{type(exc).__name__}），本次回答没有引用任何知识条目"
     rows = result.get("list") or []
     if not rows:
-        return "", []
+        return "", [], ""
 
     blocks: list[str] = []
     refs: list[dict[str, Any]] = []
@@ -877,4 +903,30 @@ def retrieve_knowledge_context(
             "title": title,
             "category": row.get("category"),
         })
-    return "\n\n".join(blocks), refs
+    return "\n\n".join(blocks), refs, ""
+
+
+def _search_kb_for_ask(
+    conn: sqlite3.Connection, question: str, repo_cls: type[Any], limit: int
+) -> dict[str, Any]:
+    """问答链路专用检索：复用正式库的表 / 列 / published 过滤，额外开启兜底切词。
+
+    管理页与全局搜索走 KnowledgeRepository.search（不传兜底），语义不变；
+    这里只把问答这一条链路的 hybrid_search 打开 fallback_on_empty，
+    让「支付回调幂等排查结论是什么样子？」这类自然语言问句也能召回正式条目。
+    where_extra 仍强制 review_status='published'，待审版本不会进入检索。
+    """
+    from ..db.fts import hybrid_search
+
+    return hybrid_search(
+        conn,
+        fts_table=str(repo_cls.FTS_TABLE),
+        content_table=str(repo_cls.table),
+        keyword=question,
+        columns=list(repo_cls.FTS_COLUMNS),
+        extra_where="review_status = 'published'",
+        extra_params=(),
+        page_num=1,
+        page_size=max(1, int(limit)),
+        fallback_on_empty=True,
+    )

@@ -303,6 +303,7 @@ def _register_heif() -> bool:
 def _strip_svg_watermark(data: bytes) -> tuple[bytes, int]:
     """SVG 是文本格式：直接删掉带水印标识的图元。"""
     text = data.decode("utf-8", errors="replace")
+    text, _ = _sanitize_svg(text)
     removed = 0
     pattern = re.compile(
         r"<(text|image|rect|path|use)\b[^>]*?(?:id|class|aria-label)\s*=\s*[\"']([^\"']+)[\"'][^>]*>.*?</\1>",
@@ -333,6 +334,39 @@ def _strip_svg_watermark(data: bytes) -> tuple[bytes, int]:
         flags=re.IGNORECASE | re.DOTALL,
     )
     return cleaned.encode("utf-8"), removed
+
+
+#: SVG 是能在浏览器里当文档执行的格式，落盘前先剥掉可执行成分，
+#: 否则用户直接打开附件链接时，同源的脚本就能读到本地接口。
+_SVG_DANGEROUS_BLOCKS = re.compile(
+    r"<\s*(script|foreignObject|iframe|frame|embed|object)\b.*?<\s*/\s*\1\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+_SVG_DANGEROUS_SELF_CLOSING = re.compile(
+    r"<\s*(script|foreignObject|iframe|frame|embed|object)\b[^>]*/?>",
+    re.IGNORECASE,
+)
+_SVG_EVENT_ATTR = re.compile(r"""\s+on[a-z]+\s*=\s*(["']).*?\1""", re.IGNORECASE | re.DOTALL)
+_SVG_JS_HREF = re.compile(
+    r"""\s+(?:xlink:)?href\s*=\s*(["'])\s*(?:javascript|data)\s*:.*?\1""",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _sanitize_svg(text: str) -> tuple[str, int]:
+    """去掉脚本、可执行容器、事件属性与 javascript:/data: 引用。"""
+    stripped = 0
+
+    def _count(pattern: re.Pattern[str], source: str) -> str:
+        nonlocal stripped
+        cleaned, hits = pattern.subn("", source)
+        stripped += hits
+        return cleaned
+
+    cleaned = _count(_SVG_DANGEROUS_BLOCKS, text)
+    cleaned = _count(_SVG_DANGEROUS_SELF_CLOSING, cleaned)
+    cleaned = _count(_SVG_EVENT_ATTR, cleaned)
+    return _count(_SVG_JS_HREF, cleaned), stripped
 
 
 def _corner_blocks(width: int, height: int) -> list[tuple[int, int, int, int]]:

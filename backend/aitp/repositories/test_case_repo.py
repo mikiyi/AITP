@@ -47,26 +47,39 @@ class TestCaseRepository(BaseRepository):
             row.pop("extra_json", None)
         return page
 
-    def coverage_matrix(self, project_id: int) -> dict[str, Any]:
-        """覆盖矩阵：需求 -> 用例数量与状态分布。"""
+    def coverage_matrix(self, project_id: int, version_id: int | None = None) -> dict[str, Any]:
+        """覆盖矩阵：需求 -> 用例数量与状态分布。
+
+        join 用例时必须同时限 project_id，否则别的项目里同名 requirement_id 的用例会记进来；
+        给了 version_id 就只统计该版本的需求和该版本的用例。
+        """
+        case_version = " AND c.version_id = :version_id" if version_id else ""
+        req_version = " AND r.version_id = :version_id" if version_id else ""
+        params: dict[str, Any] = {"project_id": int(project_id)}
+        if version_id:
+            params["version_id"] = int(version_id)
         rows = self.conn.execute(
-            """
+            f"""
             SELECT r.id AS requirement_id, r.req_no, r.title,
                    COUNT(c.id) AS case_count,
                    SUM(CASE WHEN c.priority = 'P0' THEN 1 ELSE 0 END) AS p0_count,
                    SUM(CASE WHEN c.status = 'approved' THEN 1 ELSE 0 END) AS approved_count
             FROM biz_requirement r
             LEFT JOIN biz_test_case c
-                   ON c.requirement_id = r.id AND c.is_deleted = 0
-            WHERE r.project_id = ? AND r.is_deleted = 0
+                   ON c.requirement_id = r.id AND c.is_deleted = 0 AND c.project_id = r.project_id
+                   {case_version}
+            WHERE r.project_id = :project_id AND r.is_deleted = 0
+                   {req_version}
             GROUP BY r.id
             ORDER BY r.req_no
             """,
-            (project_id,),
+            params,
         ).fetchall()
         return {"list": [dict(r) for r in rows]}
 
-    def module_coverage_matrix(self, project_id: int) -> dict[str, Any]:
+    def module_coverage_matrix(
+        self, project_id: int, version_id: int | None = None
+    ) -> dict[str, Any]:
         """功能点覆盖矩阵：每个模块节点下的用例数与状态分布。
 
         覆盖矩阵按功能点统计，条数必须与用例列表里挂在该功能点上的用例数一致。
@@ -76,8 +89,12 @@ class TestCaseRepository(BaseRepository):
         module_repo = ModuleRepository(self.conn)
         nodes = module_repo.flat_tree(project_id)
         counts: dict[int, dict[str, int]] = {}
+        version_sql = " AND version_id = ?" if version_id else ""
+        params: list[Any] = [project_id]
+        if version_id:
+            params.append(int(version_id))
         rows = self.conn.execute(
-            """
+            f"""
             SELECT module_id,
                    COUNT(*) AS case_count,
                    SUM(CASE WHEN priority = 'P0' THEN 1 ELSE 0 END) AS p0_count,
@@ -88,9 +105,10 @@ class TestCaseRepository(BaseRepository):
                    SUM(CASE WHEN status = 'not_executed' THEN 1 ELSE 0 END) AS not_executed_count
             FROM biz_test_case
             WHERE project_id = ? AND is_deleted = 0 AND module_id IS NOT NULL
+                   {version_sql}
             GROUP BY module_id
             """,
-            (project_id,),
+            params,
         ).fetchall()
         for row in rows:
             counts[int(row["module_id"])] = {key: int(row[key] or 0) for key in row.keys()}

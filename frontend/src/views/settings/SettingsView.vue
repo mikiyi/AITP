@@ -43,6 +43,7 @@ const AUDIT_ACTION_OPTIONS = [
   { label: '备份', value: 'backup' },
   { label: '还原', value: 'restore' },
   { label: '执行', value: 'execute' },
+  { label: '取消', value: 'cancel' },
 ]
 
 /** 资源类型中文名（与后端 audit_service 的 RESOURCE_* 对应）。 */
@@ -57,6 +58,7 @@ const AUDIT_RESOURCE_OPTIONS = [
   { label: '知识待审条目', value: 'knowledge_draft' },
   { label: '知识版本', value: 'knowledge_version' },
   { label: '知识分类', value: 'knowledge_category' },
+  { label: '知识自动整理', value: 'knowledge_organize' },
   { label: '测试用例', value: 'test_case' },
   { label: '缺陷', value: 'bug' },
   { label: '测试报告', value: 'report' },
@@ -69,13 +71,21 @@ const AUDIT_RESOURCE_OPTIONS = [
   { label: '实验室附件', value: 'lab_attachment' },
   { label: '回归清单', value: 'regression' },
   { label: '实体关联', value: 'entity_relation' },
-  { label: '任务清单', value: 'todo' },
+  { label: '效能List', value: 'todo' },
   { label: '自动化脚本', value: 'automation_script' },
   { label: '自动化执行', value: 'automation_run' },
   { label: '测试文档模板', value: 'doc_template' },
   { label: 'SQL 分析', value: 'sql_analysis' },
   { label: '测试数据', value: 'test_data' },
   { label: '测试环境', value: 'test_env' },
+  { label: '项目版本', value: 'project_version' },
+  { label: '测试计划', value: 'test_plan' },
+  { label: '测试轮次', value: 'test_run' },
+  { label: '发布门禁', value: 'release_gate' },
+  { label: '后台任务', value: 'task' },
+  { label: 'CI 令牌', value: 'ci_token' },
+  { label: '通知渠道', value: 'notification_channel' },
+  { label: '访问口令', value: 'access_guard' },
 ]
 
 const auditColumns: ColumnDef[] = [

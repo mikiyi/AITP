@@ -7,6 +7,7 @@
 - 执行历史落库与筛选
 - 从 AI 产出一键入库（提取 xml / python 代码块）
 - 运行时体检与配置写入
+- 框架清单与平台归属：iOS / Android 用 Appium，鸿蒙用 Hypium
 - 安全：脚本内容不进命令行；附加参数不走 shell
 
     python backend/scripts/check_automation.py
@@ -233,6 +234,47 @@ def check_runtime(api: Api) -> None:
     check("JMeter 根目录写入后生效", status.get("jmeterHome") == "C:/opt/jmeter", str(status)[:200])
 
 
+def check_frameworks(api: Api) -> None:
+    """App 自动化的框架归属：iOS / Android 用 Appium，鸿蒙用 Hypium，清单由后端统一给。"""
+    frameworks = api.data("GET", "/api/v1/automation/runtime").get("frameworks") or []
+    codes = {str(item["code"]) for item in frameworks}
+    check("运行时体检带框架清单", bool(frameworks), str(frameworks)[:200])
+    check("鸿蒙框架 Hypium 已登记", "hypium" in codes, str(sorted(codes)))
+    check("Appium 已登记", "appium" in codes, str(sorted(codes)))
+
+    hypium: JsonDict = next((item for item in frameworks if item["code"] == "hypium"), {})
+    appium: JsonDict = next((item for item in frameworks if item["code"] == "appium"), {})
+    check("Hypium 只绑鸿蒙平台", hypium.get("platforms") == ["hos"], str(hypium)[:200])
+    check("Hypium 依赖 hypium 包与 hdc",
+          hypium.get("package") == "hypium" and hypium.get("command") == "hdc", str(hypium)[:200])
+    check("Appium 绑 iOS 与 Android",
+          sorted(appium.get("platforms") or []) == ["android", "ios"], str(appium)[:200])
+
+    app_only = api.data("GET", "/api/v1/automation/runtime?category=app")["frameworks"]
+    check("app 类别只返回 App 能用的框架",
+          all("app" in item["targets"] for item in app_only) and len(app_only) == 4,
+          str([item["code"] for item in app_only])[:200])
+    hos_only = api.data("GET", "/api/v1/automation/runtime?category=app&platforms=hos")["frameworks"]
+    check("勾了鸿蒙后只剩 Hypium 与 Pytest",
+          {item["code"] for item in hos_only} == {"hypium", "pytest"},
+          str([item["code"] for item in hos_only])[:200])
+    ios_only = api.data("GET", "/api/v1/automation/runtime?category=app&platforms=ios")["frameworks"]
+    check("勾了 iOS 后不再提供 Hypium",
+          "hypium" not in {item["code"] for item in ios_only},
+          str([item["code"] for item in ios_only])[:200])
+
+    _, body = api.call("POST", "/api/v1/automation/scripts", {
+        "name": "框架越界用例", "category": "web", "framework": "hypium", "content": "print(1)\n",
+    })
+    check("Web 脚本拒绝鸿蒙框架",
+          body.get("code") != ErrorCode.SUCCESS, str(body)[:200])
+    created = api.data("POST", "/api/v1/automation/scripts", {
+        "name": "鸿蒙脚本用例", "category": "app", "framework": "hypium",
+        "appPlatforms": "hos", "content": "print(1)\n",
+    })
+    check("App 脚本接受鸿蒙框架", created.get("framework") == "hypium", str(created)[:200])
+
+
 def check_runs_list(api: Api) -> None:
     listed = api.data("GET", "/api/v1/automation/runs?pageSize=100")
     check("执行历史可列出", int(listed.get("total") or 0) >= 3, str(listed.get("total")))
@@ -274,6 +316,7 @@ def main() -> int:
         check_jmeter_guard(api)
         check_from_output(api)
         check_runtime(api)
+        check_frameworks(api)
         check_runs_list(api)
         check_security(api)
     finally:

@@ -47,7 +47,7 @@ ROUTE_REPLY: dict[str, Any] = {
     ]
 }
 
-#: mock 里回给 Bug 分析能力的产出物：故意踩三条安全规则
+#: mock 里回给缺陷分析能力的产出物：故意踩三条安全规则
 #: 1. 出现批准性结论「可以上线」  2. 引用了库里不存在的 BUG-999  3. 自述信息不足
 BUG_REPLY = """# 现象归纳
 支付回调重复推送导致金额翻倍，属于资金一致性问题，优先级 P0。
@@ -255,7 +255,7 @@ def check_routing(client: Any) -> None:
     result = data_of(client, "POST", "/api/v1/lab/route", {"text": "支付回调重复推送导致金额翻倍"})
     routes = result.get("capabilityRoutes") or []
     check("路由走的是模型结果", result.get("source") == "ai", str(result.get("source")))
-    check("路由首位是 Bug 分析", bool(routes) and routes[0].get("capability") == "bug_analysis",
+    check("路由首位是缺陷分析", bool(routes) and routes[0].get("capability") == "bug_analysis",
           str(routes)[:200])
     scores = [float(item.get("score") or 0) for item in routes]
     check("路由候选按分数降序", scores == sorted(scores, reverse=True), str(scores))
@@ -372,7 +372,7 @@ def check_offline_fallback(client: Any) -> None:
     result = data_of(client, "POST", "/api/v1/lab/route", {"text": "支付回调重复推送导致金额翻倍"})
     routes = result.get("capabilityRoutes") or []
     check("无模型时路由走关键词兜底", result.get("source") == "fallback", str(result.get("source")))
-    check("兜底路由仍给出 Bug 分析",
+    check("兜底路由仍给出缺陷分析",
           bool(routes) and routes[0].get("capability") == "bug_analysis", str(routes)[:200])
 
 

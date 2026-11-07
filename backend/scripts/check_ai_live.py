@@ -2,7 +2,7 @@
 
 针对正在运行的服务（默认 http://127.0.0.1:8760），用商汤日日新逐个跑全部
 AI 能力，验证：SSE 流式、模型降级链、数据外发提示、执行记录、历史消息、
-一键采纳资产、Excel/Word 导出、知识问答、提示词优化、意图/模块路由、附件。
+一键采纳资产、Excel/Word 导出、知识库问答助手、提示词优化、意图/模块路由、附件。
 
 用法：
     .venv/Scripts/python.exe -X utf8 backend/scripts/check_ai_live.py
@@ -240,19 +240,19 @@ def section_prompt_optimize() -> None:
     check("提示词优化带模型与用量", bool(result.get("model")), _short(result.get("model"), 60))
 
 
-def section_knowledge_qa() -> None:
-    """知识问答三种模式：kb 纯检索、llm 纯模型、hybrid 检索+模型补强。"""
+def section_kb_assistant() -> None:
+    """问答助手三种模式：kb 纯检索、llm 纯模型、hybrid 检索+模型补强。"""
     for mode in ("kb", "llm", "hybrid"):
         try:
             result = _data("POST", "/api/v1/knowledge/ask",
                            {"question": "登录失败有哪些常见原因？", "mode": mode})
         except Exception as exc:  # noqa: BLE001
-            check(f"知识问答 {mode} 模式跑通", False, f"{type(exc).__name__}: {exc}")
+            check(f"问答助手 {mode} 模式跑通", False, f"{type(exc).__name__}: {exc}")
             continue
         answer = str(result.get("answer") or "")
         detail = f"egress={result.get('egress')} model={result.get('model')} ans={_short(answer, 60)}"
-        check(f"知识问答 {mode} 模式有回答", len(answer.strip()) >= 10, detail)
-        check(f"知识问答 {mode} 模式带引用结构", isinstance(result.get("refs"), list), detail)
+        check(f"问答助手 {mode} 模式有回答", len(answer.strip()) >= 10, detail)
+        check(f"问答助手 {mode} 模式带引用结构", isinstance(result.get("refs"), list), detail)
 
 
 def section_attachments() -> None:
@@ -459,7 +459,7 @@ def main() -> int:
         ("SSE 流式", section_stream),
         ("意图路由与预检", section_routing_preflight),
         ("提示词优化", section_prompt_optimize),
-        ("知识问答三模式", section_knowledge_qa),
+        ("问答助手三模式", section_kb_assistant),
         ("附件：文档与图片", section_attachments),
         ("采纳与导出", lambda: section_adopt_export(project_id)),
         ("执行记录与历史", section_history_records),

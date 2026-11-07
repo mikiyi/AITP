@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
+from contextlib import contextmanager
 from typing import Any, Callable, Iterator
 
 import httpx
@@ -18,6 +20,49 @@ _shared_client: httpx.Client | None = None
 # 客户端工厂：允许注入自定义 httpx.Client（测试用）
 ClientFactory = Callable[[ResolvedAIConfig | None], httpx.Client]
 
+#: NO_PROXY 里这两个变量都可能被读到，httpx 优先看小写的
+_NO_PROXY_KEYS = ("NO_PROXY", "no_proxy")
+
+
+def _unparsable_no_proxy_entry(entry: str) -> bool:
+    """判断 NO_PROXY 里的某一项 httpx 解析不了。
+
+    httpx 会把 NO_PROXY 拆成 "all://[::1]" 这样的挂载点，
+    而它自带的 URL 解析器处理不了不带端口的 IPv6 字面量，
+    建客户端时直接抛 InvalidURL（Invalid port: ':1]'）。
+    """
+    text = entry.strip()
+    if not text:
+        return False
+    if text.startswith("["):
+        return True
+    # 裸 IPv6（::1）有两个以上冒号；host:port 只有一个冒号，httpx 能解析
+    return text.count(":") > 1
+
+
+@contextmanager
+def _proxy_env_fixed() -> Iterator[None]:
+    """建客户端前把 NO_PROXY 里 httpx 解析不了的条目摘掉，退出时还原。"""
+    saved: dict[str, str | None] = {key: os.environ.get(key) for key in _NO_PROXY_KEYS}
+    changed = False
+    for key, raw in saved.items():
+        if not raw:
+            continue
+        parts = [part for part in raw.split(",") if part.strip()]
+        kept = [part for part in parts if not _unparsable_no_proxy_entry(part)]
+        if len(kept) != len(parts):
+            os.environ[key] = ",".join(kept)
+            changed = True
+    try:
+        yield
+    finally:
+        if changed:
+            for key, raw in saved.items():
+                if raw is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = raw
+
 
 def shared_client(cfg: ResolvedAIConfig | None = None) -> httpx.Client:
     """进程内共享的 httpx 客户端。
@@ -28,10 +73,11 @@ def shared_client(cfg: ResolvedAIConfig | None = None) -> httpx.Client:
     if _shared_client is None:
         with _client_lock:
             if _shared_client is None:
-                _shared_client = httpx.Client(
-                    timeout=httpx.Timeout(120.0, connect=10.0),
-                    limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
-                )
+                with _proxy_env_fixed():
+                    _shared_client = httpx.Client(
+                        timeout=httpx.Timeout(120.0, connect=10.0),
+                        limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+                    )
     return _shared_client
 
 

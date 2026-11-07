@@ -32,22 +32,36 @@ from ..services.test_data_service import (
 from .helpers import (
     audit,
     body,
+    check_ref_project,
     db,
     download_response,
     keyword_of,
     page_args,
     path_int,
     query_filters,
+    scope_arg,
 )
 
 bp = Blueprint("test_data", __name__)
 
-FILTERS = {"projectId": "project_id"}
+FILTERS = {"projectId": "project_id", "versionId": "version_id"}
 
 
 def _project_scope(filters: dict[str, Any]) -> int | None:
     raw = filters.get("project_id")
     return require_int(raw, "projectId") if raw not in (None, "") else None
+
+
+def _version_scope(filters: dict[str, Any]) -> int | None:
+    raw = filters.get("version_id")
+    return require_int(raw, "versionId") if raw not in (None, "") else None
+
+
+def _guard_batch_scope(batch: dict[str, Any]) -> None:
+    """批次详情/归档是整包文件，带 projectId 时必须同项目。"""
+    project_id = scope_arg()
+    if project_id is not None and int(batch.get("projectId") or -1) != project_id:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "批次不属于该项目")
 
 
 @bp.get("/formats")
@@ -64,10 +78,22 @@ def create_files() -> Response:
     if not ProjectRepository(conn).get(project_id):
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "项目不存在")
     module_id = data.get("moduleId")
+    version_id = data.get("versionId")
+    module_id = (
+        check_ref_project(conn, "biz_module", require_int(module_id, "moduleId"),
+                          project_id, "功能点", "moduleId")
+        if module_id not in (None, "") else None
+    )
+    version_id = (
+        check_ref_project(conn, "biz_project_version", require_int(version_id, "versionId"),
+                          project_id, "项目版本", "versionId")
+        if version_id not in (None, "") else None
+    )
     batch = generate_files(
         conn,
         project_id=project_id,
-        module_id=require_int(module_id, "moduleId") if module_id not in (None, "") else None,
+        module_id=module_id,
+        version_id=version_id,
         ext=data.get("ext"),
         size_bytes=data.get("sizeBytes"),
         file_count=data.get("fileCount", 1),
@@ -86,12 +112,14 @@ def create_files() -> Response:
 def list_batch_rows() -> Response:
     conn = db()
     page_num, page_size = page_args()
+    filters = query_filters(FILTERS)
     page = list_batches(
         conn,
-        _project_scope(query_filters(FILTERS)),
+        _project_scope(filters),
         page_num,
         page_size,
         keyword_of() or None,
+        _version_scope(filters),
     )
     return ok(page.as_dict())
 
@@ -102,6 +130,7 @@ def get_batch_detail(pk: str) -> Response:
     batch = get_batch(conn, path_int(pk))
     if not batch:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "批次不存在或已删除")
+    _guard_batch_scope(batch)
     return ok(batch)
 
 
@@ -116,8 +145,11 @@ def download_file(pk: str) -> Response:
 def download_archive(pk: str) -> Response:
     conn = db()
     batch_id = path_int(pk)
+    batch = get_batch(conn, batch_id)
+    if not batch:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "批次不存在或已删除")
+    _guard_batch_scope(batch)
     content, name = read_archive(conn, batch_id)
-    batch = get_batch(conn, batch_id) or {}
     return download_response(content, name, "application/zip",
                              count=int(batch.get("createdFiles") or 0))
 
@@ -129,6 +161,7 @@ def remove_batch(pk: str) -> Response:
     batch = get_batch(conn, batch_id)
     if not batch:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "批次不存在或已删除")
+    _guard_batch_scope(batch)
     delete_batch(conn, batch_id)
     audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_TEST_DATA,
           batch_id, str(batch["batchNo"]), {"files": batch["createdFiles"]})

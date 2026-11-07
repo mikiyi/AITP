@@ -109,6 +109,7 @@ def generate_files(
     project_id: int,
     module_id: int | None,
     ext: Any,
+    version_id: int | None = None,
     size_bytes: Any = None,
     file_count: Any = 1,
     name_prefix: Any = "",
@@ -155,7 +156,7 @@ def generate_files(
 
     repo = TestDataBatchRepository(conn)
     file_repo = TestDataFileRepository(conn)
-    batch_no = repo.next_batch_no(project_id)
+    batch_no = repo.next_batch_no()
     root = generated_root()
     batch_dir = _safe_batch_dir(root, batch_no)
     batch_dir.mkdir(parents=True, exist_ok=True)
@@ -163,6 +164,7 @@ def generate_files(
     batch_id = repo.insert({
         "project_id": project_id,
         "module_id": module_id,
+        "version_id": version_id,
         "batch_no": batch_no,
         "ext": fmt.ext,
         "format_label": fmt.label,
@@ -229,11 +231,16 @@ def generate_files(
 
 
 def list_batches(conn: sqlite3.Connection, project_id: int | None, page: int, size: int,
-                 keyword: str | None) -> Page:
+                 keyword: str | None, version_id: int | None = None) -> Page:
     """批次列表只带统计，明细按需展开，避免一次拉出上千个文件名。"""
     repo = TestDataBatchRepository(conn)
+    filters: dict[str, Any] = {}
+    if project_id:
+        filters["project_id"] = project_id
+    if version_id:
+        filters["version_id"] = version_id
     result = repo.list(
-        filters={"project_id": project_id} if project_id else None,
+        filters=filters or None,
         keyword=keyword,
         page_num=page,
         page_size=size,

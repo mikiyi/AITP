@@ -34,6 +34,18 @@
             </span>
           </div>
         </el-form-item>
+        <el-form-item label="外发脱敏">
+          <el-radio-group v-model="aiMaskEnabled">
+            <el-radio :value="true">true</el-radio>
+            <el-radio :value="false">false</el-radio>
+          </el-radio-group>
+          <div class="ai-config-hint">
+            <el-icon class="ai-config-hint__icon"><InfoFilled /></el-icon>
+            <span class="ai-config-hint__text">
+              true：调用云端模型前自动把手机号、身份证、邮箱、银行卡号、API Key、账号口令替换成占位文本，AI 记录只留类型与数量；false：原样发送。本地模型不出本机，始终不脱敏。
+            </span>
+          </div>
+        </el-form-item>
         <el-form-item label="默认超时（秒）">
           <el-input v-model="aiTimeoutDefault" placeholder="整数，单位秒，默认 60" style="width: 200px" />
           <div class="ai-config-hint">
@@ -91,7 +103,9 @@
       <el-table v-loading="loading" :data="profiles" border stripe>
         <el-table-column prop="name" label="名称" min-width="120" />
         <el-table-column prop="provider" label="供应商" width="100" />
-        <el-table-column prop="model" label="模型" min-width="140" show-overflow-tooltip />
+        <el-table-column label="模型" min-width="140" show-overflow-tooltip>
+          <template #default="scope">{{ scope.row.model || '-' }}</template>
+        </el-table-column>
         <el-table-column prop="baseUrl" label="Base URL" min-width="150" show-overflow-tooltip />
         <el-table-column prop="priority" label="优先级" width="90" sortable />
         <el-table-column label="API Key" width="160">
@@ -396,8 +410,10 @@ const loading = ref(false)
 
 const AI_DEGRADE_KEY = 'ai.degrade.enabled'
 const AI_TIMEOUT_KEY = 'ai.timeout.default'
+const AI_MASK_KEY = 'ai.mask.enabled'
 const aiDegradeEnabled = ref(true)
 const aiTimeoutDefault = ref('60')
+const aiMaskEnabled = ref(true)
 const savingConfig = ref(false)
 
 const dialogVisible = ref(false)
@@ -501,6 +517,7 @@ async function loadAiConfig(): Promise<void> {
     const find = (key: string): string =>
       configs.find((item) => item.key === key)?.value ?? ''
     aiDegradeEnabled.value = find(AI_DEGRADE_KEY).toLowerCase() !== 'false'
+    aiMaskEnabled.value = find(AI_MASK_KEY).toLowerCase() !== 'false'
     const timeout = find(AI_TIMEOUT_KEY)
     aiTimeoutDefault.value = timeout || '60'
   } catch {
@@ -513,6 +530,7 @@ async function saveAiConfig(): Promise<void> {
   try {
     await settingsApi.updateConfig([
       { key: AI_DEGRADE_KEY, value: aiDegradeEnabled.value ? 'true' : 'false', valueType: 'bool' },
+      { key: AI_MASK_KEY, value: aiMaskEnabled.value ? 'true' : 'false', valueType: 'bool' },
       { key: AI_TIMEOUT_KEY, value: aiTimeoutDefault.value.trim(), valueType: 'int' },
     ])
     ElMessage.success('已保存')

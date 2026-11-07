@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AITestPlatform">
+  <g fill="none" stroke="#2F6FED" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M14 26 V19 A5 5 0 0 1 19 14 H26" />
+    <path d="M38 14 H45 A5 5 0 0 1 50 19 V26" />
+    <path d="M50 38 V45 A5 5 0 0 1 45 50 H38" />
+    <path d="M26 50 H19 A5 5 0 0 1 14 45 V38" />
+  </g>
+
+  <path
+    d="M22 34 L29 41"
+    fill="none"
+    stroke="#E5484D"
+    stroke-width="7"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M29 41 L43 25"
+    fill="none"
+    stroke="#21B573"
+    stroke-width="7"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

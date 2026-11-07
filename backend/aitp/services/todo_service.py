@@ -41,6 +41,7 @@ _EDITABLE_COLUMNS = {
     "isPinned": "is_pinned",
     "projectId": "project_id",
     "moduleId": "module_id",
+    "versionId": "version_id",
     "parentId": "parent_id",
 }
 
@@ -90,7 +91,7 @@ def _normalize(conn: sqlite3.Connection, data: dict[str, Any], *, creating: bool
             payload[column] = _clean_int(raw, "progress", 0, 100)
         elif column == "is_pinned":
             payload[column] = 1 if raw in (True, 1, "1", "true", "yes") else 0
-        elif column in ("project_id", "module_id"):
+        elif column in ("project_id", "module_id", "version_id"):
             payload[column] = None if raw in (None, "", 0, "0") else _clean_int(raw, key, 1, 1 << 30)
         elif column == "parent_id":
             payload[column] = 0 if raw in (None, "", 0, "0") else _clean_int(raw, key, 1, 1 << 30)
@@ -149,9 +150,49 @@ def _rollup_parent(conn: sqlite3.Connection, parent_id: int) -> None:
     repo.update(int(parent_id), fields)
 
 
+def _guard_scope(
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    *,
+    creating: bool,
+    current_project_id: Any = None,
+) -> None:
+    """待办的项目/功能点/版本必须同属一个项目，且不允许把待办整体改挂到别的项目。"""
+    project_id = payload.get("project_id")
+    if creating:
+        if project_id is not None:
+            if conn.execute(
+                "SELECT id FROM biz_project WHERE id = ? AND is_deleted = 0",
+                (int(project_id),),
+            ).fetchone() is None:
+                raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "项目不存在")
+    else:
+        if project_id is not None and int(project_id) != int(current_project_id or 0):
+            raise AppError(ErrorCode.ILLEGAL_OPERATION, "不支持把待办改挂到别的项目")
+    effective = project_id if project_id is not None else current_project_id
+    if effective in (None, "", 0):
+        return
+    for column, table, label in (
+        ("module_id", "biz_module", "功能点"),
+        ("version_id", "biz_project_version", "项目版本"),
+    ):
+        value = payload.get(column)
+        if value is None:
+            continue
+        row = conn.execute(
+            f"SELECT project_id FROM {table} WHERE id = ? AND is_deleted = 0",
+            (int(value),),
+        ).fetchone()
+        if row is None:
+            raise AppError(ErrorCode.RESOURCE_NOT_FOUND, f"{label}不存在")
+        if int(row["project_id"] or -1) != int(effective):
+            raise AppError(ErrorCode.ILLEGAL_OPERATION, f"{label}不属于该项目，不能挂到本项目下")
+
+
 def create_todo(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str, Any]:
     title = require_str(data.get("title"), "title", 200)
     payload = _normalize(conn, data, creating=True)
+    _guard_scope(conn, payload, creating=True)
     payload["title"] = title
     payload["parent_id"] = _guard_parent(conn, payload.get("parent_id", 0))
     payload["todo_no"] = next_no(conn, "biz_todo", "todo_no", "TD")
@@ -170,6 +211,7 @@ def update_todo(conn: sqlite3.Connection, pk: int, data: dict[str, Any]) -> dict
     if row is None:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "任务不存在")
     payload = _normalize(conn, data, creating=False)
+    _guard_scope(conn, payload, creating=False, current_project_id=row.get("project_id"))
     if "parent_id" in payload:
         payload["parent_id"] = _guard_parent(conn, payload["parent_id"], self_id=pk)
         payload["sort_order"] = repo.next_sort_order(int(payload["parent_id"]))
@@ -232,6 +274,8 @@ def batch_update(conn: sqlite3.Connection, ids: list[int], data: dict[str, Any])
     """批量改状态 / 优先级 / 分类，返回真正被改到的 id。"""
     repo = TodoRepository(conn)
     payload = _normalize(conn, data, creating=False)
+    if payload.get("project_id") is not None:
+        raise AppError(ErrorCode.ILLEGAL_OPERATION, "不支持批量把待办改挂到别的项目")
     if not payload:
         raise AppError(ErrorCode.PARAM_ERROR, "没有可更新的字段")
     updated: list[int] = []
@@ -241,6 +285,9 @@ def batch_update(conn: sqlite3.Connection, ids: list[int], data: dict[str, Any])
         if row is None:
             continue
         fields = dict(payload)
+        _guard_scope(conn, fields, creating=False, current_project_id=row.get("project_id"))
+        if "parent_id" in fields:
+            fields["parent_id"] = _guard_parent(conn, fields["parent_id"], self_id=item)
         status = fields.get("status")
         if status == TODO_DONE:
             fields["completed_at"] = utcnow_iso()
@@ -273,7 +320,7 @@ def reorder(conn: sqlite3.Connection, ids: list[int]) -> dict[str, Any]:
 
 
 def move(conn: sqlite3.Connection, pk: int, direction: str) -> dict[str, Any]:
-    """在同一层内上移/下移一位，交换相邻 sort_order。"""
+    """在同一层内上移/下移一位；按界面实际显示顺序交换位置。"""
     if direction not in ("up", "down"):
         raise AppError(ErrorCode.PARAM_ERROR, "参数 direction 只能是 up / down")
     repo = TodoRepository(conn)
@@ -285,19 +332,51 @@ def move(conn: sqlite3.Connection, pk: int, direction: str) -> dict[str, Any]:
     current = next((i for i, item in enumerate(siblings) if int(item["id"]) == pk), None)
     if current is None:
         return {"moved": False, "reason": "同级任务未找到"}
-    target = current - 1 if direction == "up" else current + 1
-    if target < 0 or target >= len(siblings):
-        return {"moved": False, "reason": "已经在边界"}
-    a, b = siblings[current], siblings[target]
-    repo.update(int(a["id"]), {"sort_order": int(b.get("sort_order") or 0)})
-    repo.update(int(b["id"]), {"sort_order": int(a.get("sort_order") or 0)})
-    return {"moved": True, "ids": [int(a["id"]), int(b["id"])]}
+    if parent_id:
+        # 子任务列表只按 sort_order 展示，直接整组重排即可
+        ids = [int(item["id"]) for item in siblings]
+        target = current - 1 if direction == "up" else current + 1
+        if target < 0 or target >= len(ids):
+            return {"moved": False, "reason": "已经在边界"}
+        neighbor = ids[target]
+        ids[current], ids[target] = ids[target], ids[current]
+        for index, item in enumerate(ids, start=1):
+            repo.update(item, {"sort_order": index})
+        return {"moved": True, "ids": [pk, neighbor]}
+    # 顶层按「置顶 + 优先级」分组展示，跨组交换 sort_order 是无效的，
+    # 因此只在同组内移动，到组边界时明确告知原因。
+    bucket = _display_bucket(row)
+    same = [item for item in siblings if _display_bucket(item) == bucket]
+    pos = next((i for i, item in enumerate(same) if int(item["id"]) == pk), None)
+    if pos is None:
+        return {"moved": False, "reason": "同级任务未找到"}
+    target = pos - 1 if direction == "up" else pos + 1
+    if target < 0 or target >= len(same):
+        return {"moved": False, "reason": "已在当前优先级分组边界，跨组请先调整优先级或置顶"}
+    order = [int(item["id"]) for item in same]
+    neighbor = order[target]
+    order[pos], order[target] = order[target], order[pos]
+    for index, item in enumerate(order, start=1):
+        repo.update(item, {"sort_order": index})
+    return {"moved": True, "ids": [pk, neighbor]}
+
+
+def _display_bucket(row: dict[str, Any]) -> tuple[int, str]:
+    return int(row.get("is_pinned") or 0), str(row.get("priority") or "")
 
 
 def _root_siblings(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """顶层任务的实际展示顺序：与列表一致，置顶优先、优先级、sort_order。
+
+    任务清单默认展示全部项目，若按项目过滤同级任务，跨项目的相邻行
+    会判定为「边界」或与界面上看不到的行交换，移动看起来没反应。
+    """
     rows = conn.execute(
         "SELECT * FROM biz_todo WHERE parent_id = 0 AND is_deleted = 0"
-        " ORDER BY sort_order ASC, id ASC"
+        " ORDER BY is_pinned DESC,"
+        " CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1"
+        " WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END ASC,"
+        " sort_order ASC, id DESC"
     ).fetchall()
     return [dict(row) for row in rows]
 
@@ -321,10 +400,16 @@ def list_todos(
     return items, int(page.total)
 
 
-def export_rows(conn: sqlite3.Connection, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def export_rows(
+    conn: sqlite3.Connection,
+    filters: dict[str, Any] | None = None,
+    *,
+    view: str = "all",
+    keyword: str | None = None,
+) -> list[dict[str, Any]]:
     """导出用扁平行：只导顶层任务，子任务在标题里标注。"""
     repo = TodoRepository(conn)
-    rows = repo.list_all(filters or {}, None, limit=1000)
+    rows = repo.list_export(view, filters or {}, keyword)
     today = date.today().isoformat()
     status_labels = {"open": "待办", "doing": "进行中", "done": "已完成", "cancelled": "已取消"}
     priority_labels = {"urgent": "紧急", "high": "高", "medium": "中", "low": "低"}

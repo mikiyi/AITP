@@ -10,7 +10,6 @@ from ..common.enums import REQUIREMENT_STATUS
 from ..common.validators import check_choice, optional_str, require_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
-from ..repositories.project_repo import ProjectRepository
 from ..repositories.requirement_repo import RequirementRepository
 from ..services import audit_service, tabular_export
 from .helpers import (
@@ -18,15 +17,20 @@ from .helpers import (
     audit,
     batch_soft_delete,
     body,
+    check_ref_project,
     commit,
     db,
     download_response,
+    guard_project_scope,
     ids_of,
     keyword_of,
     page_args,
     page_payload,
     path_int,
     query_filters,
+    reject_project_move,
+    require_project,
+    scope_arg,
     tabular_format_of,
 )
 
@@ -84,8 +88,10 @@ def list_requirements() -> Response:
 def requirement_options() -> Response:
     conn = db()
     repo = RequirementRepository(conn)
-    project_id = request_int("projectId")
-    rows = repo.list_by_project(project_id) if project_id else repo.list_all(None, None, limit=500)
+    project_id = scope_arg()
+    if project_id is None:
+        raise AppError(ErrorCode.PARAM_ERROR, "projectId 必填：需求下拉按项目取，不返回全库")
+    rows = repo.list_by_project(project_id)
     return ok([
         {"id": r["id"], "reqNo": r["req_no"], "title": r["title"], "projectId": r["project_id"]}
         for r in rows
@@ -98,6 +104,8 @@ def export_requirements() -> Response:
     conn = db()
     fmt = tabular_format_of(request.args.get("format"))
     filters = query_filters(FILTERS)
+    if "project_id" not in filters:
+        raise AppError(ErrorCode.PARAM_ERROR, "projectId 必填：导出不允许全库口径")
     rows = RequirementRepository(conn).list_all(filters, keyword_of() or None, limit=10000)
     content, mimetype, extension = tabular_export.render(
         fmt, REQUIREMENT_TABULAR_COLUMNS, [_to_public(row) for row in rows]
@@ -115,6 +123,7 @@ def get_requirement(pk: str) -> Response:
     row = RequirementRepository(conn).get(path_int(pk))
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "需求不存在")
+    guard_project_scope(row, scope_arg(), "需求")
     return ok(_to_public(row))
 
 
@@ -124,8 +133,10 @@ def create_requirement() -> Response:
     data = body()
     project_id = require_int(data.get("projectId"), "projectId")
     title = require_str(data.get("title"), "title", 500)
-    if not ProjectRepository(conn).get(project_id):
-        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "项目不存在")
+    require_project(conn, project_id)
+    version_id = check_ref_project(
+        conn, "biz_project_version", data.get("versionId"), project_id, "项目版本", "versionId"
+    )
     status = check_choice(data.get("status"), REQUIREMENT_STATUS, "status", "draft") or "draft"
     repo = RequirementRepository(conn)
     new_id = repo.insert({
@@ -135,6 +146,7 @@ def create_requirement() -> Response:
         "content": optional_str(data.get("content"), "content", 200000),
         "source": optional_str(data.get("source"), "source", 200),
         "version": optional_str(data.get("version"), "version", 50),
+        "version_id": version_id,
         "status": status,
         "priority": optional_str(data.get("priority"), "priority", 20),
         "tags": optional_str(data.get("tags"), "tags", 500),
@@ -154,10 +166,14 @@ def update_requirement(pk: str) -> Response:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "需求不存在")
     data = body()
     payload = {k: v for k, v in data.items() if k in WRITE_FIELDS}
+    reject_project_move(data, row.get("project_id"), "需求")
     if "versionId" in data:
-        payload["version_id"] = data["versionId"]
-    if "projectId" in data:
-        payload["project_id"] = data["projectId"]
+        payload["version_id"] = check_ref_project(
+            conn, "biz_project_version", data["versionId"],
+            row.get("project_id"), "项目版本", "versionId",
+        )
+    payload.pop("projectId", None)
+    payload.pop("project_id", None)
     if "status" in payload:
         payload["status"] = check_choice(payload["status"], REQUIREMENT_STATUS, "status", row["status"])
     repo.update(target, payload)
@@ -191,9 +207,3 @@ def batch_delete_requirements() -> Response:
         conn, RequirementRepository(conn), ids, audit_service.RESOURCE_REQUIREMENT
     ))
 
-
-def request_int(name: str) -> int | None:
-    raw = request.args.get(name)
-    if raw in (None, ""):
-        return None
-    return require_int(raw, name)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AITestPilot (AITP) 停止脚本 —— macOS / Linux
+# AITestPlatform (AITP) 停止脚本 —— macOS / Linux
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

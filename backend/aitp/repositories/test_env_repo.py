@@ -17,6 +17,15 @@ from .base import BaseRepository
 #: 支持的数据库类型；健康监测按类型决定默认端口与探测方式
 DB_TYPES: tuple[str, ...] = ("mysql", "postgresql", "sqlserver", "oracle", "sqlite", "other")
 
+#: 环境类型：生产环境执行前需要二次确认
+ENV_KINDS: tuple[str, ...] = ("dev", "test", "staging", "prod")
+ENV_KIND_LABELS: dict[str, str] = {
+    "dev": "开发",
+    "test": "测试",
+    "staging": "预发",
+    "prod": "生产",
+}
+
 #: 各数据库类型的默认端口，前端选类型时自动带出
 DB_DEFAULT_PORTS: dict[str, int] = {
     "mysql": 3306,
@@ -89,10 +98,13 @@ class TestEnvRepository(BaseRepository):
         return {
             "id": row.get("id"),
             "name": row.get("name"),
+            "kind": row.get("env_kind") or "test",
+            "kindLabel": ENV_KIND_LABELS.get(str(row.get("env_kind") or "test"), ""),
             "description": row.get("description"),
             "app": {
                 "baseUrl": row.get("app_base_url"),
                 "healthPath": row.get("app_health_path"),
+                "metricsUrl": row.get("app_metrics_url") or "",
             },
             "db": {
                 "type": row.get("db_type"),
@@ -102,6 +114,7 @@ class TestEnvRepository(BaseRepository):
                 "username": row.get("db_username"),
                 "passwordMasked": row.get("db_password_mask") or "",
                 "hasPassword": bool(row.get("db_password_ref")),
+                "metricsUrl": row.get("db_metrics_url") or "",
             },
             "isDefault": bool(row.get("is_default")),
             "sortOrder": row.get("sort_order"),

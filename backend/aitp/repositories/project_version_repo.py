@@ -49,16 +49,39 @@ class ProjectVersionRepository(BaseRepository):
             params.append(exclude_id)
         return self.conn.execute(sql, params).fetchone() is not None
 
-    def count_assets(self, version_id: int) -> int:
-        """统计关联到该版本的资产总数（需求+用例+缺陷+报告）。"""
-        row = self.conn.execute(
-            """
-            SELECT
-              (SELECT COUNT(*) FROM biz_requirement WHERE version_id = ? AND is_deleted = 0) +
-              (SELECT COUNT(*) FROM biz_test_case WHERE version_id = ? AND is_deleted = 0) +
-              (SELECT COUNT(*) FROM biz_bug WHERE version_id = ? AND is_deleted = 0) +
-              (SELECT COUNT(*) FROM biz_report WHERE version_id = ? AND is_deleted = 0)
-            """,
-            (version_id, version_id, version_id, version_id),
-        ).fetchone()
+    #: 所有带 version_id 的业务表；删版本前必须一并检查，否则会留下悬空引用
+    VERSION_TABLES = (
+        "biz_requirement",
+        "biz_test_case",
+        "biz_bug",
+        "biz_report",
+        "biz_automation_script",
+        "biz_test_data_batch",
+        "biz_sql_analysis",
+        "biz_test_plan",
+        "biz_test_run",
+        "biz_release_gate",
+    )
+
+    def count_assets(
+        self, version_id: int, project_id: int | None = None
+    ) -> int:
+        """统计关联到该版本的资产/执行记录总数。
+
+        给了 project_id 就只数本项目：版本号在跨项目引用校验尚未完全收口前可能
+        被别的项目误挂，不限项目会把 A 的资产算进 B 版本的 assetCount。
+        """
+        scoped = project_id is not None and int(project_id) > 0
+        clauses = [
+            f"(SELECT COUNT(*) FROM {table} WHERE version_id = ? AND is_deleted = 0"
+            + (" AND project_id = ?" if scoped else "")
+            + ")"
+            for table in self.VERSION_TABLES
+        ]
+        params: list[Any] = []
+        for _ in self.VERSION_TABLES:
+            params.append(version_id)
+            if project_id is not None and int(project_id) > 0:
+                params.append(int(project_id))
+        row = self.conn.execute("SELECT " + " + ".join(clauses), params).fetchone()
         return int(row[0]) if row else 0

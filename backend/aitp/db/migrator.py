@@ -35,28 +35,61 @@ def applied_versions(conn: sqlite3.Connection) -> set[int]:
     return {int(r["version"]) for r in rows}
 
 
+def applied_checksums(conn: sqlite3.Connection) -> dict[int, str]:
+    _ensure_version_table(conn)
+    rows = conn.execute("SELECT version, checksum FROM sys_schema_version").fetchall()
+    return {int(r["version"]): str(r["checksum"] or "") for r in rows}
+
+
+def migration_version(path: Path) -> int:
+    """版本号取文件名前缀，不取「目录里第几个文件」。
+
+    按下标编号时，中间插一个或改一个文件名，整库的版本映射就集体错位，
+    迁移会被跳过或被重复应用。
+    """
+    prefix = path.name.split("_", 1)[0]
+    if not prefix.isdigit():
+        raise ValueError(f"迁移文件名必须以序号开头，如 024_xxx.sql：{path.name}")
+    return int(prefix)
+
+
 def migration_files() -> list[Path]:
     return sorted(MIGRATIONS_DIR.glob("*.sql"))
 
 
-def run_migrations(conn: sqlite3.Connection, migrations_dir: Path | None = None) -> list[int]:
+def drifted_versions(conn: sqlite3.Connection, directory: Path) -> list[int]:
+    """已应用但内容被改过的迁移版本（只报告，不阻断启动）。"""
+    recorded = applied_checksums(conn)
+    drift: list[int] = []
+    for path in sorted(directory.glob("*.sql")):
+        version = migration_version(path)
+        stored = recorded.get(version)
+        if stored and stored != _checksum(path.read_text(encoding="utf-8")):
+            drift.append(version)
+    return drift
+
+
+def run_migrations(
+    conn: sqlite3.Connection, migrations_dir: Path | None = None
+) -> list[int]:
     """应用所有未执行的迁移，返回本次应用的版本号列表。"""
     directory = migrations_dir or MIGRATIONS_DIR
     _ensure_version_table(conn)
     done = applied_versions(conn)
     applied: list[int] = []
 
-    for index, path in enumerate(sorted(directory.glob("*.sql")), start=1):
-        if index in done:
+    for path in sorted(directory.glob("*.sql")):
+        version = migration_version(path)
+        if version in done:
             continue
         sql = path.read_text(encoding="utf-8")
         with conn:
             conn.executescript(sql)
             conn.execute(
                 "INSERT INTO sys_schema_version (version, applied_at, checksum, app_version) VALUES (?, ?, ?, ?)",
-                (index, utcnow_iso(), _checksum(sql), APP_VERSION),
+                (version, utcnow_iso(), _checksum(sql), APP_VERSION),
             )
-        applied.append(index)
+        applied.append(version)
     return applied
 
 

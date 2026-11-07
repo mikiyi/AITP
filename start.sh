@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AITestPilot (AITP) 启动脚本 —— macOS / Linux / Windows(Git Bash)
+# AITestPlatform (AITP) 启动脚本 —— macOS / Linux / Windows(Git Bash)
 # 用法: ./start.sh [--build] [--reinstall] [--no-browser]
 set -euo pipefail
 
@@ -41,7 +41,7 @@ log_deploy() {
 }
 
 echo "============================================================"
-echo "  AITestPilot (AITP) 本地 AI 测试工作台"
+echo "  AITestPlatform (AITP) 本地 AI 测试工作台"
 echo "  http://${HOST}:${PORT}"
 echo "============================================================"
 
@@ -66,13 +66,24 @@ health_ok() {
     fi
 }
 
+# open 只在 macOS 存在；Linux 用 xdg-open，Git Bash 用 rundll32
+open_url() {
+    if command -v open >/dev/null 2>&1; then
+        open "$1"
+    elif command -v xdg-open >/dev/null 2>&1; then
+        xdg-open "$1"
+    elif command -v rundll32.exe >/dev/null 2>&1; then
+        rundll32.exe url.dll,FileProtocolHandler "$1"
+    fi
+}
+
 EXISTING_PIDS="$(port_pids)"
 if [ -n "$EXISTING_PIDS" ]; then
     if health_ok; then
         echo "[0/4] AITP 已在运行（PID: $(echo "$EXISTING_PIDS" | tr '\n' ' ')），直接打开页面。"
         log_deploy "[script] 检测到服务已在运行，跳过启动 | port=$PORT"
         if [ "$OPEN_BROWSER" = "1" ]; then
-            if command -v open >/dev/null 2>&1; then open "http://${HOST}:${PORT}"; fi
+            open_url "http://${HOST}:${PORT}"
         fi
         exit 0
     fi
@@ -92,8 +103,9 @@ venv_python() {
     fi
 }
 
+# 首选 3.12 / 3.11：这两个区间是 AITP 全部门禁验证过的版本，3.13 只按"能装就装"处理
 find_python() {
-    for candidate in python3.13 python3.12 python3.11 python3 python; do
+    for candidate in python3.12 python3.11 python3.13 python3 python; do
         if command -v "$candidate" >/dev/null 2>&1; then
             if "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
                 command -v "$candidate"
@@ -180,12 +192,18 @@ log_deploy "[script] 启动服务 | host=$HOST port=$PORT"
 if [ "$OPEN_BROWSER" = "1" ]; then
     (
         sleep 2
-        if command -v open >/dev/null 2>&1; then open "http://${HOST}:${PORT}"; fi
+        open_url "http://${HOST}:${PORT}"
     ) &
 fi
 
-"$PY_BIN" backend/run.py
-
-echo
-echo "[AITP] 服务已停止。"
-log_deploy "[script] 服务退出 | host=$HOST port=$PORT"
+if "$PY_BIN" backend/run.py; then
+    echo
+    echo "[AITP] 服务已停止。"
+    log_deploy "[script] 服务退出 | host=$HOST port=$PORT"
+else
+    STATUS=$?
+    echo
+    echo "[AITP] 服务未能启动（退出码 ${STATUS}）。环境自检的原因见上方提示，排查后可重跑 ./start.sh。"
+    log_deploy "[script] 服务启动失败 | host=$HOST port=$PORT exit=$STATUS"
+    exit "$STATUS"
+fi

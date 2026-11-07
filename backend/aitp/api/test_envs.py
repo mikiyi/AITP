@@ -13,7 +13,13 @@ from flask import Blueprint, Response
 from ..common.validators import check_choice, optional_int, optional_str, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
-from ..repositories.test_env_repo import DB_DEFAULT_PORTS, DB_TYPES, TestEnvRepository
+from ..repositories.test_env_repo import (
+    DB_DEFAULT_PORTS,
+    DB_TYPES,
+    ENV_KIND_LABELS,
+    ENV_KINDS,
+    TestEnvRepository,
+)
 from ..services import audit_service, env_probe_service
 from .helpers import audit, body, commit, db, path_int
 
@@ -38,6 +44,7 @@ def list_envs() -> Response:
         "list": _repo(conn).list_public(),
         "dbTypes": list(DB_TYPES),
         "dbDefaultPorts": DB_DEFAULT_PORTS,
+        "kinds": [{"value": key, "label": ENV_KIND_LABELS[key]} for key in ENV_KINDS],
     })
 
 
@@ -62,14 +69,17 @@ def create_env() -> Response:
         raise AppError(ErrorCode.PARAM_ERROR, f"数据库类型只能是：{'、'.join(DB_TYPES)}")
     new_id = repo.insert({
         "name": name,
+        "env_kind": _kind_of(data),
         "description": optional_str(data.get("description"), "description", 500),
         "app_base_url": app["app_base_url"],
         "app_health_path": app["app_health_path"],
+        "app_metrics_url": app["app_metrics_url"],
         "db_type": dbinfo["db_type"],
         "db_host": dbinfo["db_host"],
         "db_port": dbinfo["db_port"],
         "db_name": dbinfo["db_name"],
         "db_username": dbinfo["db_username"],
+        "db_metrics_url": dbinfo["db_metrics_url"],
         "db_password_ref": "",
         "db_password_mask": "",
         "is_default": 1 if data.get("isDefault") else 0,
@@ -97,19 +107,23 @@ def update_env(pk: str) -> Response:
     payload: dict[str, Any] = {}
     if "name" in data:
         payload["name"] = require_str(data["name"], "name", 100)
+    if "kind" in data:
+        payload["env_kind"] = _kind_of(data)
     if "description" in data:
         payload["description"] = optional_str(data["description"], "description", 500)
     if "app" in data and isinstance(data["app"], dict):
         app = _app_of(data["app"])
         payload["app_base_url"] = app["app_base_url"]
         payload["app_health_path"] = app["app_health_path"]
+        payload["app_metrics_url"] = app["app_metrics_url"]
     if "db" in data and isinstance(data["db"], dict):
         dbinfo = _db_of(data["db"])
         if dbinfo["db_type"] not in DB_TYPES:
             raise AppError(ErrorCode.PARAM_ERROR, f"数据库类型只能是：{'、'.join(DB_TYPES)}")
-        for snake, key in (("db_type", "type"), ("db_host", "host"), ("db_name", "name"), ("db_username", "username")):
-            payload[snake] = dbinfo[key]
+        for snake in ("db_type", "db_host", "db_name", "db_username"):
+            payload[snake] = dbinfo[snake]
         payload["db_port"] = dbinfo["db_port"]
+        payload["db_metrics_url"] = dbinfo["db_metrics_url"]
     if "isDefault" in data:
         payload["is_default"] = 1 if data["isDefault"] else 0
     if "sortOrder" in data:
@@ -119,7 +133,9 @@ def update_env(pk: str) -> Response:
     if "isDefault" in data and data["isDefault"]:
         repo.clear_other_defaults(target)
     if "dbPassword" in data or (isinstance(data.get("db"), dict) and "password" in data["db"]):
-        repo.save_password(target, _password_of(data))
+        # 留空表示不改口令，避免编辑其他字段时误清已存口令
+        if _password_of(data):
+            repo.save_password(target, _password_of(data))
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_TEST_ENV, target,
           str(payload.get("name", row.get("name", "")) or ""), {"fields": sorted(payload.keys())})
@@ -132,6 +148,7 @@ def delete_env(pk: str) -> Response:
     repo = _repo(conn)
     target = path_int(pk)
     row = _require_env(repo, target)
+    _require_not_referenced(conn, target)
     repo.soft_delete(target)
     # 删掉密钥库里的口令本体，不留孤儿密文
     if row.get("db_password_ref"):
@@ -160,21 +177,30 @@ def set_env_password(pk: str) -> Response:
 
 @bp.post("/<pk>/probe")
 def probe_env(pk: str) -> Response:
-    """对一套环境做健康探测：应用 HTTP + 数据库 TCP，纯本机、不进大模型。"""
+    """对一套环境做健康探测：应用 HTTP + 数据库 TCP + 资源指标，纯本机、不进大模型。
+
+    quiet=true 表示首页轮询用的静默探测：不写操作日志、不 commit，
+    避免每 15 秒自动刷新把操作日志刷满。
+    """
     conn = db()
     repo = _repo(conn)
     target = path_int(pk)
     row = _require_env(repo, target)
+    data = body()
+    quiet = bool(data.get("quiet"))
     result = env_probe_service.probe_env(
         app_base_url=str(row.get("app_base_url") or ""),
         app_health_path=str(row.get("app_health_path") or ""),
         db_type=str(row.get("db_type") or ""),
         db_host=str(row.get("db_host") or ""),
         db_port=row.get("db_port"),
+        app_metrics_url=str(row.get("app_metrics_url") or ""),
+        db_metrics_url=str(row.get("db_metrics_url") or ""),
     )
-    audit(conn, audit_service.AUDIT_ACTION_EXECUTE, audit_service.RESOURCE_TEST_ENV, target,
-          str(row.get("name") or ""), {"overall": result.get("overall")})
-    commit(conn)
+    if not quiet:
+        audit(conn, audit_service.AUDIT_ACTION_EXECUTE, audit_service.RESOURCE_TEST_ENV, target,
+              str(row.get("name") or ""), {"overall": result.get("overall")})
+        commit(conn)
     return ok(result)
 
 
@@ -192,11 +218,41 @@ def probe_draft() -> Response:
         db_type=str(dbinfo.get("type") or "mysql"),
         db_host=str(dbinfo.get("host") or ""),
         db_port=dbinfo.get("port"),
+        app_metrics_url=str(app.get("metricsUrl") or ""),
+        db_metrics_url=str(dbinfo.get("metricsUrl") or ""),
     )
     return ok(result)
 
 
 # ---------------- 入参整理 ----------------
+
+def _kind_of(data: dict[str, Any]) -> str:
+    raw = data.get("kind")
+    if raw in (None, ""):
+        return "test"
+    return check_choice(str(raw), ENV_KINDS, "kind") or "test"
+
+
+def _require_not_referenced(conn: Any, env_id: int) -> None:
+    """被计划/轮次/脚本引用的环境不能删，否则历史执行记录会指向空环境。"""
+    refs: list[str] = []
+    for table, column, label in (
+        ("biz_test_plan", "default_env_id", "测试计划"),
+        ("biz_test_run", "env_id", "测试轮次"),
+        ("biz_automation_script", "env_id", "自动化脚本"),
+    ):
+        count = int(conn.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE {column} = ? AND is_deleted = 0",
+            (env_id,),
+        ).fetchone()[0])
+        if count:
+            refs.append(f"{count} 个{label}")
+    if refs:
+        raise AppError(
+            ErrorCode.RESOURCE_REFERENCED,
+            f"该环境仍被 {'、'.join(refs)} 引用，请先解除引用再删除",
+        )
+
 
 def _app_of(data: dict[str, Any]) -> dict[str, str]:
     raw = data.get("app")
@@ -204,6 +260,8 @@ def _app_of(data: dict[str, Any]) -> dict[str, str]:
     return {
         "app_base_url": optional_str(app.get("baseUrl") or app.get("app_base_url"), "app.baseUrl", 300),
         "app_health_path": optional_str(app.get("healthPath") or app.get("app_health_path"), "app.healthPath", 200),
+        "app_metrics_url": optional_str(
+            app.get("metricsUrl") or app.get("app_metrics_url"), "app.metricsUrl", 500),
     }
 
 
@@ -223,6 +281,8 @@ def _db_of(data: dict[str, Any]) -> dict[str, Any]:
         "db_port": port,
         "db_name": optional_str(dbinfo.get("name") or dbinfo.get("db_name"), "db.name", 200),
         "db_username": optional_str(dbinfo.get("username") or dbinfo.get("db_username"), "db.username", 120),
+        "db_metrics_url": optional_str(
+            dbinfo.get("metricsUrl") or dbinfo.get("db_metrics_url"), "db.metricsUrl", 500),
     }
 
 

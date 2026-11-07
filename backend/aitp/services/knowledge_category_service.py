@@ -31,3 +31,11 @@ def ensure_category(conn: sqlite3.Connection, value: object) -> str:
 
 def is_system(name: str) -> bool:
     return name in SYSTEM_CATEGORIES
+
+
+def list_names(conn: sqlite3.Connection) -> list[str]:
+    """现有分类名清单，供提示词限定模型只能从已有分类里选。"""
+    return [
+        str(row.get("name") or "")
+        for row in KnowledgeCategoryRepository(conn).list_categories()
+    ]

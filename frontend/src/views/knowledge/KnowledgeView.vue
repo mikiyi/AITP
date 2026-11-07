@@ -3,6 +3,7 @@
     <div class="page-header">
       <h2 class="page-title">知识库管理</h2>
       <div class="toolbar" style="margin: 0">
+        <ProjectSwitcher />
         <el-input
           v-model="keyword"
           placeholder="全文检索（已发布条目）"
@@ -81,7 +82,13 @@
               </el-button>
             </template>
             <template #sourceType="{ row }">
-              <el-tag size="small" effect="plain">{{ row.sourceType }}</el-tag>
+              <el-tag
+                size="small"
+                effect="plain"
+                :type="row.sourceType === 'assistant' ? 'success' : 'info'"
+              >
+                {{ row.sourceTypeLabel || row.sourceType }}
+              </el-tag>
             </template>
             <template #producer="{ row }">
               {{ row.producer || '-' }}
@@ -111,17 +118,49 @@
             sync-query
             query-prefix="a_"
             @row-click="onArticleClick"
+            @loaded="onArticlesLoaded"
           >
             <template #toolbar>
               <BaseExportMenu :resolve-url="resolveArticleExportUrl" />
             </template>
+            <template #sourceType="{ row }">
+              <el-tag
+                size="small"
+                effect="plain"
+                :type="row.sourceType === 'assistant' ? 'success' : 'info'"
+              >
+                {{ row.sourceTypeLabel || row.sourceType }}
+              </el-tag>
+            </template>
             <template #reviewStatus="{ row }">
-              <el-tag :type="row.reviewStatus === 'published' ? 'success' : 'info'" size="small" effect="plain">
-                {{ row.reviewStatus === 'published' ? '已发布' : '已撤销' }}
+              <el-tag :type="articleStatusType(row)" size="small" effect="plain">
+                {{ articleStatusLabel(row) }}
               </el-tag>
             </template>
             <template #currentVersion="{ row }">
-              v{{ row.currentVersion ?? 1 }}
+              <span>v{{ row.currentVersion ?? 1 }}</span>
+              <el-tag
+                v-if="hasPendingProposal(row)"
+                size="small"
+                type="warning"
+                effect="plain"
+                class="version-pending"
+              >
+                待审 v{{ row.draftVersion }}
+              </el-tag>
+            </template>
+            <template #organize="{ row }">
+              <el-button
+                v-if="row.sourceType === 'assistant' && row.reviewStatus === 'published'"
+                link
+                :type="row.organizeStatus === 'done' ? 'success' : 'primary'"
+                :loading="row.organizeStatus === 'running'"
+                :disabled="row.organizeStatus === 'running' || row.organizeStatus === 'done'"
+                @click.stop="startOrganize(row)"
+              >
+                {{ organizeLabel(row) }}
+              </el-button>
+              <span v-else class="muted">-</span>
             </template>
             <template #actions="{ row }">
               <el-button link type="primary" @click.stop="openArticle(row)">查看</el-button>
@@ -162,7 +201,8 @@
           </el-select>
         </el-form-item>
         <el-form-item label="功能点">
-          <el-select v-model="form.moduleId" clearable filterable placeholder="选择功能点">
+          <!-- 弹窗会盖住页头的项目切换器，这里把项目名写进占位文案，避免选错功能点 -->
+          <el-select v-model="form.moduleId" clearable filterable :placeholder="modulePlaceholder">
             <el-option v-for="item in moduleOptions" :key="item.id" :label="item.path" :value="item.id" />
           </el-select>
         </el-form-item>
@@ -219,6 +259,57 @@
       <MarkdownView v-if="previewContent" :source="previewContent" />
     </el-drawer>
 
+    <!-- 外发前的站内检查：浏览器打不开任意本地文件，这里把内容与路径一起摆出来 -->
+    <el-drawer
+      v-model="sanitizeVisible"
+      title="外发前数据检查：知识库问答助手来源条目"
+      size="52%"
+      @closed="onSanitizeClosed"
+    >
+      <el-skeleton v-if="sanitizeLoading" :rows="6" animated />
+      <template v-else>
+        <el-alert
+          type="info"
+          show-icon
+          :closable="false"
+          :title="sanitizeMeta?.fileMode === 'mirror'
+            ? `共 ${sanitizeMeta?.articleCount ?? 0} 篇，文件目录：${sanitizeMeta?.storagePath ?? ''}`
+            : '当前为仅存数据库模式，没有 .md 文件，下面展示数据库正文'"
+          class="sanitize-hint"
+        />
+        <el-alert
+          type="success"
+          show-icon
+          :closable="false"
+          title="发送到云端模型前会自动脱敏手机号、身份证、邮箱、银行卡号、API Key 与账号口令；这里展示的是脱敏前原文，便于人工核对。"
+          class="sanitize-hint"
+        />
+        <el-empty v-if="!sanitizeFiles.length" description="还没有问答助手来源的正式条目" />
+        <div v-for="file in sanitizeFiles" :key="file.articleId" class="sanitize-item">
+          <div class="sanitize-item__head">
+            <span class="sanitize-item__title">{{ file.title }}</span>
+            <el-tag size="small" effect="plain" :type="file.exists ? 'success' : 'warning'">
+              {{ file.fromFile ? '已读取 .md' : '数据库正文' }}
+            </el-tag>
+            <el-tag v-if="file.truncated" size="small" type="warning" effect="plain">已截断</el-tag>
+          </div>
+          <div class="sanitize-item__path">
+            <span class="muted">{{ file.absolutePath || '未落盘（仅存数据库）' }}</span>
+            <el-button
+              v-if="file.absolutePath"
+              link
+              type="primary"
+              size="small"
+              @click="copyPath(file.absolutePath)"
+            >
+              复制路径
+            </el-button>
+          </div>
+          <pre class="sanitize-item__content">{{ file.content }}</pre>
+        </div>
+      </template>
+    </el-drawer>
+
     <ReferenceBlockDialog
       v-model="blockedVisible"
       :message="blockedMessage"
@@ -228,7 +319,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Files, Plus, Search } from '@element-plus/icons-vue'
@@ -237,17 +328,28 @@ import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import MarkdownView from '@/components/MarkdownView.vue'
 import MetricCard from '@/components/MetricCard.vue'
 import { knowledgeApi, moduleApi, workbenchApi } from '@/api'
-import type { KnowledgeArticle, KnowledgeDraft, KnowledgeStorage, ModuleOption } from '@/api/types'
+import type { PagePayload } from '@/api/request'
+import type {
+  AssistantPreview,
+  AssistantPreviewFile,
+  KnowledgeArticle,
+  KnowledgeDraft,
+  KnowledgeStorage,
+  ModuleOption,
+} from '@/api/types'
+import { useAiGuardStore } from '@/stores/aiGuard'
 import { useAppStore } from '@/stores/app'
 import { useBadgeStore } from '@/stores/badges'
 import { DEFAULT_KNOWLEDGE_CATEGORY, useKnowledgeCategoryStore } from '@/stores/knowledgeCategory'
 import { useReferenceGuard } from '@/composables/useReferenceGuard'
 import ReferenceBlockDialog from '@/components/ReferenceBlockDialog.vue'
+import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 
 const router = useRouter()
 const appStore = useAppStore()
 const badgeStore = useBadgeStore()
 const categoryStore = useKnowledgeCategoryStore()
+const aiGuard = useAiGuardStore()
 
 const activeTab = ref('drafts')
 const keyword = ref('')
@@ -256,6 +358,12 @@ const storageInfo = ref<KnowledgeStorage | null>(null)
 const tagCount = ref(0)
 const moduleOptions = ref<ModuleOption[]>([])
 
+const modulePlaceholder = computed(() =>
+  appStore.currentProject
+    ? `当前项目「${appStore.currentProject.name}」的功能点`
+    : '请先在本页「项目」下拉选择项目',
+)
+
 const { blockedVisible, blockedRefs, blockedMessage, handleError } = useReferenceGuard()
 
 const draftTableRef = ref<TableExpose | null>(null)
@@ -263,30 +371,58 @@ const articleTableRef = ref<TableExpose | null>(null)
 
 const categoryOptions = computed(() => categoryStore.options)
 
+function articleStatusLabel(row: KnowledgeArticle): string {
+  if (row.reviewStatus === 'published') {
+    return '已发布'
+  }
+  return row.reviewStatus === 'merged' ? '已合并' : '已撤销'
+}
+
+function articleStatusType(row: KnowledgeArticle): 'success' | 'warning' | 'info' {
+  if (row.reviewStatus === 'published') {
+    return 'success'
+  }
+  return row.reviewStatus === 'merged' ? 'warning' : 'info'
+}
+
+/** 草稿版本号高于当前版本，说明有未审的整理/编辑提案。 */
+function hasPendingProposal(row: KnowledgeArticle): boolean {
+  return Number(row.draftVersion ?? 0) > Number(row.currentVersion ?? 1)
+}
+
 const draftColumns: ColumnDef[] = [
   { prop: 'title', label: '标题', minWidth: 220 },
-  { prop: 'sourceType', label: '来源', width: 110, slot: 'sourceType' },
+  { prop: 'sourceType', label: '来源', width: 130, slot: 'sourceType' },
   { prop: 'producer', label: '产出能力', width: 140, slot: 'producer' },
   { prop: 'reviewStatus', label: '状态', width: 100, slot: 'reviewStatus' },
+  { prop: 'answeredAt', label: '回答时间', width: 170 },
   { prop: 'createdAt', label: '产生时间', width: 170 },
   { prop: 'id', label: '操作', width: 140, slot: 'actions' },
 ]
 
+const SOURCE_TYPE_OPTIONS = [
+  { label: '知识库问答助手', value: 'assistant' },
+  { label: 'AI 产出', value: 'ai_output' },
+  { label: '手工录入', value: 'manual' },
+  { label: '会话', value: 'session' },
+  { label: '测试用例', value: 'case' },
+  { label: '缺陷', value: 'bug' },
+  { label: '测试报告', value: 'report' },
+]
+
 const draftSearchFields: SearchField[] = [
   { prop: 'keyword', label: '标题' },
-  { prop: 'sourceType', label: '来源', type: 'select', options: [
-    { label: 'AI 产出', value: 'ai_output' },
-    { label: '手工录入', value: 'manual' },
-    { label: '会话', value: 'session' },
-  ] },
+  { prop: 'sourceType', label: '来源', type: 'select', options: SOURCE_TYPE_OPTIONS },
 ]
 
 const articleColumns: ColumnDef[] = [
   { prop: 'title', label: '标题', minWidth: 220 },
+  { prop: 'sourceType', label: '来源', width: 130, slot: 'sourceType' },
   { prop: 'category', label: '分类', width: 110 },
-  { prop: 'currentVersion', label: '版本', width: 80, slot: 'currentVersion' },
+  { prop: 'currentVersion', label: '版本', width: 130, slot: 'currentVersion' },
   { prop: 'reviewStatus', label: '状态', width: 100, slot: 'reviewStatus' },
   { prop: 'updatedAt', label: '更新时间', width: 170 },
+  { prop: 'organizeStatus', label: '自动整理', width: 130, slot: 'organize' },
   { prop: 'id', label: '操作', width: 160, slot: 'actions' },
 ]
 
@@ -442,6 +578,151 @@ async function restore(row: KnowledgeArticle): Promise<void> {
   }
 }
 
+// ---------------- 问答助手来源条目的自动整理 ----------------
+
+function organizeLabel(row: KnowledgeArticle): string {
+  if (row.organizeStatus === 'running') {
+    return '后台自动整理中'
+  }
+  if (row.organizeStatus === 'done') {
+    return '已整理完'
+  }
+  return '待自动整理'
+}
+
+const sanitizeVisible = ref(false)
+const sanitizeLoading = ref(false)
+const sanitizeMeta = ref<AssistantPreview | null>(null)
+const sanitizeFiles = ref<AssistantPreviewFile[]>([])
+let sanitizeResolve: (() => void) | null = null
+
+function onSanitizeClosed(): void {
+  sanitizeResolve?.()
+  sanitizeResolve = null
+}
+
+/** 打开站内 .md 检查，用户关闭抽屉后 resolve，确认框随之重新出现。 */
+async function openSanitizePreview(): Promise<void> {
+  // 先挂关闭回调再发请求：用户可能在请求返回前就关掉抽屉
+  const closed = new Promise<void>((resolve) => {
+    sanitizeResolve = resolve
+  })
+  sanitizeVisible.value = true
+  sanitizeLoading.value = true
+  try {
+    const payload = await knowledgeApi.assistantPreview()
+    sanitizeMeta.value = payload
+    sanitizeFiles.value = payload.files ?? []
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '读取外发数据失败')
+  } finally {
+    sanitizeLoading.value = false
+  }
+  await closed
+}
+
+async function copyPath(path: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(path)
+    ElMessage.success('路径已复制')
+  } catch {
+    ElMessage.warning('复制失败，请手动选择路径')
+  }
+}
+
+let organizeTimer = 0
+let watchingArticleId: number | null = null
+
+function stopOrganizePolling(): void {
+  if (organizeTimer) {
+    window.clearInterval(organizeTimer)
+    organizeTimer = 0
+  }
+}
+
+function startOrganizePolling(articleId: number): void {
+  if (organizeTimer && watchingArticleId === articleId) {
+    return
+  }
+  stopOrganizePolling()
+  watchingArticleId = articleId
+  organizeTimer = window.setInterval(() => {
+    void pollOrganize()
+  }, 4000)
+}
+
+async function pollOrganize(): Promise<void> {
+  const articleId = watchingArticleId
+  if (!articleId) {
+    stopOrganizePolling()
+    return
+  }
+  try {
+    const status = await knowledgeApi.organizeStatus(articleId)
+    if (status.organizeStatus === 'running') {
+      return
+    }
+    stopOrganizePolling()
+    await articleTableRef.value?.load()
+    if (status.task?.status === 'success') {
+      ElMessage.success('自动整理完成，已生成待审核的整理提案')
+    } else if (status.task?.status === 'failed') {
+      ElMessage.error(`自动整理失败：${status.task.errorMessage || '未知原因'}`)
+    } else if (status.task?.status === 'cancelled') {
+      ElMessage.warning('自动整理已取消')
+    }
+  } catch {
+    // 轮询失败不打扰用户，下一次表格加载会重新判断是否需要继续
+    stopOrganizePolling()
+  }
+}
+
+/** 列表里只要有「整理中」就继续轮询，刷新页面或切回本页也能接上。 */
+function onArticlesLoaded(payload: PagePayload<KnowledgeArticle>): void {
+  const running = (payload.list ?? []).find((row) => row.organizeStatus === 'running')
+  if (running) {
+    startOrganizePolling(Number(running.id))
+  } else {
+    stopOrganizePolling()
+  }
+}
+
+async function startOrganize(row: KnowledgeArticle): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      '是否要调用LLM将来源于知识库问答助手的知识库正式数据做自动去重、归类、整理？',
+      '自动整理确认',
+      { type: 'warning', confirmButtonText: '开始整理', cancelButtonText: '不整理' },
+    )
+  } catch {
+    return
+  }
+  // 本地首选失败会降级到云端，是否外发以后端候选链为准
+  let externalPossible = true
+  try {
+    externalPossible = (await knowledgeApi.assistantEgress('hybrid')).externalPossible
+  } catch {
+    externalPossible = true
+  }
+  const confirmed = await aiGuard.ensureExternalConfirmed({
+    externalPossible,
+    onInspect: externalPossible ? openSanitizePreview : undefined,
+  })
+  if (!confirmed) {
+    return
+  }
+  try {
+    await knowledgeApi.organizeArticle(row.id, { desensitized: externalPossible })
+    ElMessage.success('已提交后台自动整理，结果会生成待审核的整理提案')
+    await articleTableRef.value?.load()
+    startOrganizePolling(Number(row.id))
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '发起自动整理失败')
+  }
+}
+
+onBeforeUnmount(stopOrganizePolling)
+
 const previewVisible = ref(false)
 const previewTitle = ref('')
 const previewContent = ref('')
@@ -595,6 +876,10 @@ onMounted(() => {
   margin-left: 4px;
 }
 
+.version-pending {
+  margin-left: 6px;
+}
+
 .knowledge-stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -616,5 +901,53 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.sanitize-hint {
+  margin-bottom: 10px;
+}
+
+.sanitize-item {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--aitp-border);
+}
+
+.sanitize-item:last-child {
+  border-bottom: none;
+}
+
+.sanitize-item__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sanitize-item__title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.sanitize-item__path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 6px;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.sanitize-item__content {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--aitp-subtle);
+  border: 1px solid var(--aitp-border);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

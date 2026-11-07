@@ -2,12 +2,16 @@
 /data/
 /knowledge/
 
+# 过程文档（测试用例集、缺陷记录等，只留本机不入库）
+/docs/
+
 # 前端
 node_modules/
 frontend/dist/
 backend/aitp/static/
 
 # Python
+/build/
 __pycache__/
 *.py[cod]
 .venv/

@@ -11,6 +11,7 @@ keyword 注入串与通配符、批量接口异常入参、软删后编号复用
 
 from __future__ import annotations
 
+import io
 import pathlib
 import sqlite3
 import sys
@@ -397,6 +398,20 @@ def section_cases(api: Api, ctx: dict[str, int]) -> None:
     check("用例批量采纳只收合法项",
           adopt.get("count", 0) == 1 and len(adopt.get("created") or []) == 1,
           str(adopt)[:200])
+    # 能力页左侧新增的版本下拉要把版本带到采纳出来的资产上，这里盯住这条链路别断
+    case_version = api.create(f"{V1}/project-versions", {"projectId": ctx["p2"], "name": "采纳版本",
+                                                         "versionCode": "vADOPT"})
+    versioned = api.data("POST", f"{V1}/test-cases/adopt", {
+        "projectId": ctx["p2"], "versionId": case_version["id"],
+        "cases": [{"title": "采纳带版本", "caseType": "functional"}]})
+    versioned_case = (versioned.get("created") or [{}])[0]
+    versioned_detail = api.data("GET", f"{V1}/test-cases/{versioned_case.get('id')}")
+    check("采纳用例带上能力页所选版本",
+          versioned_detail.get("versionId") == case_version["id"], str(versioned_detail)[:200])
+    versioned_list = api.data("GET", f"{V1}/test-cases?projectId={ctx['p2']}&versionId={case_version['id']}")
+    check("用例列表按版本可筛",
+          any(str(item.get("id")) == str(versioned_case.get("id"))
+              for item in versioned_list.get("list") or []), str(versioned_list)[:200])
     coverage = api.data("GET", f"{V1}/test-cases/coverage?projectId={ctx['p1']}")
     check("用例覆盖率可读且不含 NaN", isinstance(coverage, dict), str(coverage)[:120])
     tree = api.data("GET", f"{V1}/test-cases/tree?projectId={ctx['p1']}")
@@ -405,6 +420,8 @@ def section_cases(api: Api, ctx: dict[str, int]) -> None:
         api.remove(f"{V1}/test-cases/{row['id']}")
     for item in adopt.get("created") or []:
         api.remove(f"{V1}/test-cases/{item['id']}")
+    api.remove(f"{V1}/test-cases/{versioned_case.get('id')}")
+    api.remove(f"{V1}/project-versions/{case_version['id']}")
 
 
 def section_bugs(api: Api, ctx: dict[str, int]) -> None:
@@ -585,11 +602,20 @@ def section_reports(api: Api, ctx: dict[str, int]) -> None:
     adopt = api.data("POST", f"{V1}/reports/adopt", {
         "projectId": ctx["p2"], "title": "采纳的产出", "content": "# 结论"})
     check("AI 产出采纳为报告", bool(adopt.get("id")), str(adopt)[:160])
+    report_version = api.create(f"{V1}/project-versions", {"projectId": ctx["p2"], "name": "报告版本",
+                                                           "versionCode": "vRPT"})
+    versioned_report = api.data("POST", f"{V1}/reports/adopt", {
+        "projectId": ctx["p2"], "versionId": report_version["id"],
+        "title": "采纳带版本报告", "content": "# 结论"})
+    check("采纳报告带上能力页所选版本",
+          versioned_report.get("versionId") == report_version["id"], str(versioned_report)[:160])
     templates = api.data("GET", f"{V1}/reports/templates")
     check("报告模板清单可读", isinstance(templates, (dict, list)), str(templates)[:120])
     api.remove(f"{V1}/reports/{report['id']}")
     api.remove(f"{V1}/reports/{gen['id']}")
     api.remove(f"{V1}/reports/{adopt['id']}")
+    api.remove(f"{V1}/reports/{versioned_report['id']}")
+    api.remove(f"{V1}/project-versions/{report_version['id']}")
 
 
 def section_regressions(api: Api, ctx: dict[str, int]) -> None:
@@ -841,6 +867,12 @@ def section_assets(api: Api, ctx: dict[str, int]) -> None:
           any(t.get("id") == tpl["id"] for t in options.get("list") or []), str(options)[:160])
     api.expect("模板 kind 非法下拉被拒绝", "GET", f"{V1}/doc-templates/options?kind=nope",
                ErrorCode.PARAM_ERROR)
+    for ext, label in ((".xlsx", "Excel"), (".docx", "Word")):
+        api.expect(f"{label} 模板损坏被拒绝", "POST", f"{tpl_path}/upload",
+                   ErrorCode.PARAM_ERROR, None, data={
+                       "file": (io.BytesIO(b"not-a-zip-at-all"), f"损坏的模板{ext}"),
+                       "content_type": "multipart/form-data",
+                   })
     api.remove(f"{V1}/doc-templates/{tpl['id']}")
 
     td = f"{V1}/test-data"

@@ -144,7 +144,7 @@ def _grow(
 # ---------------------------------------------------------------- 文本族
 
 _TEXT_HEADER = (
-    "AITP 测试数据文件（AITestPilot 本地生成，非业务数据）\r\n"
+    "AITP 测试数据文件（AITestPlatform 本地生成，非业务数据）\r\n"
     f"生成基准时间：{_STAMP}\r\n"
 )
 
@@ -164,7 +164,7 @@ def _payload_code(fmt: FileFormat, target: int) -> BuiltFile:
     head = (
         f"// AITP 测试数据源码骨架：.{fmt.ext}（{fmt.label}）\n"
         "export const aitpFixture = {\n"
-        "  project: 'AITestPilot',\n"
+        "  project: 'AITestPlatform',\n"
         "  module: 'test-data-generation',\n"
     )
     return _grow(
@@ -180,7 +180,7 @@ def _payload_python(fmt: FileFormat, target: int) -> BuiltFile:
     head = (
         f'"""AITP 测试数据脚本骨架：.{fmt.ext}（{fmt.label}）。\n'
         "基准时间：" + _STAMP + "\n\"\"\"\n\n"
-        "FIXTURE = {\n    'project': 'AITestPilot',\n"
+        "FIXTURE = {\n    'project': 'AITestPlatform',\n"
     )
     tail = (
         "}\n\n\ndef build(index: int) -> dict:\n"
@@ -193,7 +193,7 @@ def _payload_html(fmt: FileFormat, target: int) -> BuiltFile:
     head = (
         '<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n<meta charset="utf-8">\n'
         f"<title>AITP 测试数据 .{fmt.ext}</title>\n</head>\n"
-        "<body>\n<h1>AITestPilot 测试数据</h1>\n<ul>\n"
+        "<body>\n<h1>AITestPlatform 测试数据</h1>\n<ul>\n"
     )
     # HTML 末尾只能补空白，非空白会让严格解析器报错
     return _grow(head, lambda index: f"<li>测试数据 {index}</li>\n", "</ul>\n</body>\n</html>\n", target, " ")
@@ -212,7 +212,7 @@ def _payload_css(fmt: FileFormat, target: int) -> BuiltFile:
 
 def _payload_json(fmt: FileFormat, target: int) -> BuiltFile:
     head = (
-        '{\n  "producer": "AITestPilot",\n'
+        '{\n  "producer": "AITestPlatform",\n'
         f'  "format": "{fmt.ext}",\n  "generatedAt": "{_STAMP}",\n  "items": [\n'
     )
     tail = '    {"id": 0, "name": "AITP 收尾项", "pass": true}\n  ]\n}\n'
@@ -229,7 +229,7 @@ def _payload_json(fmt: FileFormat, target: int) -> BuiltFile:
 def _payload_xml(fmt: FileFormat, target: int) -> BuiltFile:
     head = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
-        f'<aitp producer="AITestPilot" format="{fmt.ext}" label="{fmt.label}">\n'
+        f'<aitp producer="AITestPlatform" format="{fmt.ext}" label="{fmt.label}">\n'
     )
     return _grow(
         head,
@@ -242,7 +242,7 @@ def _payload_xml(fmt: FileFormat, target: int) -> BuiltFile:
 
 def _payload_yaml(fmt: FileFormat, target: int) -> BuiltFile:
     head = (
-        f"# AITP 测试数据 .{fmt.ext}\nproducer: AITestPilot\n"
+        f"# AITP 测试数据 .{fmt.ext}\nproducer: AITestPlatform\n"
         f"generatedAt: '{_STAMP}'\nitems:\n"
     )
     return _grow(
@@ -256,7 +256,7 @@ def _payload_yaml(fmt: FileFormat, target: int) -> BuiltFile:
 
 def _payload_toml(fmt: FileFormat, target: int) -> BuiltFile:
     head = (
-        f"# AITP 测试数据 .{fmt.ext}\n[meta]\nproducer = \"AITestPilot\"\n"
+        f"# AITP 测试数据 .{fmt.ext}\n[meta]\nproducer = \"AITestPlatform\"\n"
         f"generated_at = \"{_STAMP}\"\n"
     )
     return _grow(
@@ -269,7 +269,7 @@ def _payload_toml(fmt: FileFormat, target: int) -> BuiltFile:
 
 
 def _payload_ini(fmt: FileFormat, target: int) -> BuiltFile:
-    head = f"; AITP 测试数据 .{fmt.ext}\n[aitp]\nproducer = AITestPilot\nformat = {fmt.ext}\n"
+    head = f"; AITP 测试数据 .{fmt.ext}\n[aitp]\nproducer = AITestPlatform\nformat = {fmt.ext}\n"
     return _grow(
         head,
         lambda index: f"[item{index}]\nname = 测试数据{index}\n\n",
@@ -356,7 +356,7 @@ def _payload_pdf(fmt: FileFormat, target: int) -> BuiltFile:
     """手写最小 PDF：正文流里的注释长度可控，按差值微调即可命中目标字节数。"""
 
     def render(pad: int) -> bytes:
-        text = "BT /F1 12 Tf 72 720 Td (AITestPilot test fixture ." + fmt.ext + ") Tj ET"
+        text = "BT /F1 12 Tf 72 720 Td (AITestPlatform test fixture ." + fmt.ext + ") Tj ET"
         stream = text + ("\n%" + "A" * pad) if pad > 0 else text
         stream_bytes = stream.encode("latin-1", "replace")
         objects = [
@@ -463,7 +463,7 @@ def _rewrite_zip(
 
 def _payload_zip(fmt: FileFormat, target: int) -> BuiltFile:
     readme = (
-        "AITestPilot 测试数据包\n"
+        "AITestPlatform 测试数据包\n"
         f"格式：.{fmt.ext}（{fmt.label}）\n"
         f"基准时间：{_STAMP}\n"
     ).encode()
@@ -477,7 +477,7 @@ def _payload_docx(fmt: FileFormat, target: int) -> BuiltFile:
     from docx import Document
 
     doc = Document()
-    doc.add_heading("AITestPilot 测试数据", level=1)
+    doc.add_heading("AITestPlatform 测试数据", level=1)
     doc.add_paragraph(f"格式：.{fmt.ext}（{fmt.label}）；基准时间：{_STAMP}")
     table = doc.add_table(rows=2, cols=3)
     table.rows[0].cells[0].text = "编号"
@@ -545,7 +545,7 @@ def _tar_bytes(files: list[tuple[str, bytes]]) -> bytes:
 def _payload_tar(fmt: FileFormat, target: int) -> BuiltFile:
     """tar 以 512 字节块存储：填充条目按字节换算，能命中任意 512 的整数倍。"""
     readme = (
-        f"AITestPilot 测试数据 .{fmt.ext}（{fmt.label}）基准时间 {_STAMP}\n"
+        f"AITestPlatform 测试数据 .{fmt.ext}（{fmt.label}）基准时间 {_STAMP}\n"
     ).encode("utf-8")
 
     def build(pad_bytes: int) -> bytes:
@@ -568,7 +568,7 @@ def _payload_tar(fmt: FileFormat, target: int) -> BuiltFile:
 
 def _payload_gz(fmt: FileFormat, target: int) -> BuiltFile:
     raw = (
-        f"AITestPilot 测试数据 .{fmt.ext}（{fmt.label}）\n基准时间 {_STAMP}\n"
+        f"AITestPlatform 测试数据 .{fmt.ext}（{fmt.label}）\n基准时间 {_STAMP}\n"
     ).encode("utf-8") + b"AITP-FILL\n" * 32
     payload = gzip.compress(raw, compresslevel=1)
     # gzip 解码在读完自身流后停止，尾部字节被忽略

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from flask import Blueprint, Response
+from flask import Blueprint, Response, request
 
 from ..common.validators import check_choice, optional_int, optional_str, require_int, require_str
 from ..envelope import ok
@@ -27,13 +27,18 @@ from .helpers import (
     attach_version_codes,
     audit,
     body,
+    check_ref_project,
     commit,
     db,
+    guard_project_scope,
     keyword_of,
     page_args,
     page_payload,
     path_int,
     query_filters,
+    reject_project_move,
+    require_project,
+    scope_arg,
 )
 
 bp = Blueprint("sql_analyses", __name__)
@@ -52,6 +57,9 @@ def list_sql_analyses() -> Response:
     page_num, page_size = page_args()
     repo = SqlAnalysisRepository(conn)
     filters = query_filters(FILTERS)
+    # 「无风险」是本模块的合法取值，不能被 query_filters 的 none→NULL 通用别名吃掉
+    if str(request.args.get("riskLevel") or "").strip().lower() == "none":
+        filters["risk_level"] = "none"
     page = repo.list(filters, keyword_of() or None, page_num=page_num, page_size=page_size)
     payload = page_payload(page)
     payload["list"] = attach_version_codes(conn, [decorate(row) for row in payload["list"]])
@@ -64,6 +72,7 @@ def get_sql_analysis(pk: str) -> Response:
     row = SqlAnalysisRepository(conn).get(path_int(pk))
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "SQL 分析记录不存在")
+    guard_project_scope(row, scope_arg(), "SQL 分析记录")
     return ok(decorate(row))
 
 
@@ -72,16 +81,21 @@ def create_sql_analysis() -> Response:
     conn = db()
     data = body()
     project_id = require_int(data.get("projectId"), "projectId")
-    if not ProjectRepository(conn).get(project_id):
-        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "项目不存在")
+    require_project(conn, project_id)
     title = require_str(data.get("title"), "title", _TITLE_MAX)
+    module_id = check_ref_project(
+        conn, "biz_module", data.get("moduleId"), project_id, "功能点", "moduleId"
+    )
+    version_id = check_ref_project(
+        conn, "biz_project_version", data.get("versionId"), project_id, "项目版本", "versionId"
+    )
     risk = check_choice(data.get("riskLevel"), RISK_LEVELS, "riskLevel", "none") or "none"
     repo = SqlAnalysisRepository(conn)
     new_id = repo.insert({
         "project_id": project_id,
-        "module_id": data.get("moduleId"),
-        "version_id": optional_int(data.get("versionId"), "versionId"),
-        "sql_no": repo.next_sql_no(project_id),
+        "module_id": module_id,
+        "version_id": version_id,
+        "sql_no": repo.next_sql_no(),
         "title": title,
         "sql_text": optional_str(data.get("sqlText"), "sqlText", _SQL_MAX),
         "analysis": optional_str(data.get("analysis"), "analysis", _ANALYSIS_MAX),
@@ -105,17 +119,18 @@ def update_sql_analysis(pk: str) -> Response:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "SQL 分析记录不存在")
     data = body()
     payload: dict[str, Any] = {}
+    reject_project_move(data, row.get("project_id"), "SQL 分析记录")
     if "title" in data:
         payload["title"] = require_str(data.get("title"), "title", _TITLE_MAX)
-    if "projectId" in data:
-        project_id = require_int(data.get("projectId"), "projectId")
-        if not ProjectRepository(conn).get(project_id):
-            raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "项目不存在")
-        payload["project_id"] = project_id
     if "moduleId" in data:
-        payload["module_id"] = data.get("moduleId")
+        payload["module_id"] = check_ref_project(
+            conn, "biz_module", data["moduleId"], row.get("project_id"), "功能点", "moduleId"
+        )
     if "versionId" in data:
-        payload["version_id"] = optional_int(data.get("versionId"), "versionId")
+        payload["version_id"] = check_ref_project(
+            conn, "biz_project_version", data["versionId"],
+            row.get("project_id"), "项目版本", "versionId",
+        )
     if "sqlText" in data:
         payload["sql_text"] = optional_str(data.get("sqlText"), "sqlText", _SQL_MAX)
     if "analysis" in data:

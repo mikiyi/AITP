@@ -7,7 +7,7 @@ from typing import Any
 from flask import Blueprint, Response, request
 
 from ..common.enums import BUG_RELATION, BUG_SEVERITY, BUG_STATUS, BUG_TYPE
-from ..common.validators import check_choice, optional_str, require_int, require_str
+from ..common.validators import check_choice, optional_int, optional_str, require_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.base import dumps, loads
@@ -19,15 +19,20 @@ from .helpers import (
     audit,
     batch_soft_delete,
     body,
+    check_ref_project,
     commit,
     db,
     download_response,
+    guard_project_scope,
     ids_of,
     keyword_of,
     page_args,
     page_payload,
     path_int,
     query_filters,
+    reject_project_move,
+    require_project,
+    scope_arg,
     tabular_format_of,
 )
 
@@ -58,6 +63,37 @@ def _with_steps(row: dict[str, Any]) -> dict[str, Any]:
     return item
 
 
+def _linked_cases(
+    conn: Any, case_ids: list[int], project_id: int | None = None
+) -> list[dict[str, Any]]:
+    """缺陷详情里回显关联用例，形成「轮次失败 → 缺陷 → 用例」的双向入口。
+
+    回显带上项目条件：脏关联不能把别的项目的用例标题暴露到本项目的缺陷详情里。
+    """
+    if not case_ids:
+        return []
+    placeholders = ",".join("?" for _ in case_ids)
+    scope = " AND project_id = ?" if project_id is not None else ""
+    params: list[Any] = [*case_ids]
+    if project_id is not None:
+        params.append(int(project_id))
+    rows = conn.execute(
+        "SELECT id, case_no, title, status, priority FROM biz_test_case"
+        f" WHERE is_deleted = 0 AND id IN ({placeholders}){scope} ORDER BY case_no",
+        params,
+    ).fetchall()
+    return [
+        {
+            "id": int(row["id"]),
+            "caseNo": row["case_no"],
+            "title": row["title"],
+            "status": row["status"],
+            "priority": row["priority"],
+        }
+        for row in rows
+    ]
+
+
 def _to_public(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": row.get("id"),
@@ -85,6 +121,20 @@ def _to_public(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _foreign_project_cases(
+    conn: Any, case_ids: list[int], project_id: Any
+) -> list[int]:
+    """返回不属于该项目的用例 id；跨项目关联会污染覆盖矩阵和轮次统计。"""
+    if not case_ids or project_id is None:
+        return []
+    placeholders = ",".join("?" for _ in case_ids)
+    rows = conn.execute(
+        f"SELECT id FROM biz_test_case WHERE project_id <> ? AND id IN ({placeholders})",
+        [int(project_id), *case_ids],
+    ).fetchall()
+    return sorted(int(row["id"]) for row in rows)
+
+
 @bp.get("")
 def list_bugs() -> Response:
     conn = db()
@@ -102,12 +152,13 @@ def bug_stats() -> Response:
     conn = db()
     project_id = request.args.get("projectId")
     pid = require_int(project_id, "projectId") if project_id else None
+    vid = scope_arg(field="versionId")
     repo = BugRepository(conn)
-    counts = repo.status_counts(pid)
+    counts = repo.status_counts(pid, vid)
     result = {status: counts.get(status, 0) for status in BUG_STATUS}
     return ok({
         "statusCounts": result,
-        "openCount": repo.open_bug_count(pid),
+        "openCount": repo.open_bug_count(pid, vid),
         "total": sum(result.values()),
     })
 
@@ -137,6 +188,8 @@ def export_bugs() -> Response:
     conn = db()
     fmt = tabular_format_of(request.args.get("format"))
     filters = query_filters(FILTERS)
+    if "project_id" not in filters:
+        raise AppError(ErrorCode.PARAM_ERROR, "projectId 必填：导出不允许全库口径")
     rows = BugRepository(conn).list_all(filters, keyword_of() or None, limit=10000)
     content, mimetype, extension = tabular_export.render(
         fmt, BUG_TABULAR_COLUMNS, [_to_public(row) for row in rows]
@@ -155,8 +208,11 @@ def get_bug(pk: str) -> Response:
     row = repo.get_detail(path_int(pk))
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "缺陷不存在")
+    guard_project_scope(row, scope_arg(), "缺陷")
     payload = _to_public(row)
-    payload["linkedCaseIds"] = repo.linked_case_ids(path_int(pk))
+    linked_case_ids = repo.linked_case_ids(path_int(pk))
+    payload["linkedCaseIds"] = linked_case_ids
+    payload["linkedCases"] = _linked_cases(conn, linked_case_ids, row.get("project_id"))
     payload["logs"] = repo.list_logs(path_int(pk))
     return ok(payload)
 
@@ -167,12 +223,20 @@ def create_bug() -> Response:
     data = body()
     project_id = require_int(data.get("projectId"), "projectId")
     title = require_str(data.get("title"), "title", 500)
+    require_project(conn, project_id)
+    module_id = check_ref_project(
+        conn, "biz_module", data.get("moduleId"), project_id, "功能点", "moduleId"
+    )
+    version_id = check_ref_project(
+        conn, "biz_project_version", data.get("versionId"), project_id, "项目版本", "versionId"
+    )
     severity = check_choice(data.get("severity"), BUG_SEVERITY, "severity", "P2") or "P2"
     bug_type = check_choice(data.get("bugType"), BUG_TYPE, "bugType", "functional") or "functional"
     repo = BugRepository(conn)
     new_id = repo.insert({
         "project_id": project_id,
         "bug_no": repo.next_bug_no(project_id),
+        "version_id": version_id,
         "title": title,
         "severity": severity,
         "status": "open",
@@ -187,7 +251,7 @@ def create_bug() -> Response:
         "version": optional_str(data.get("version"), "version", 64),
         "env": optional_str(data.get("env"), "env", 200),
         "module": optional_str(data.get("module"), "module", 200),
-        "module_id": data.get("moduleId"),
+        "module_id": module_id,
     })
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_CREATE, audit_service.RESOURCE_BUG, new_id, title,
@@ -204,13 +268,24 @@ def update_bug(pk: str) -> Response:
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "缺陷不存在")
     data = body()
-    payload = {k: v for k, v in data.items() if k in WRITE_FIELDS}
+    payload = {k: v for k, v in data.items() if k in WRITE_FIELDS and k != "status"}
+    reject_project_move(data, row.get("project_id"), "缺陷")
+    payload.pop("project_id", None)
+    requested_status = None
+    if "status" in data:
+        requested_status = check_choice(data.get("status"), BUG_STATUS, "status")
+        if not requested_status:
+            raise AppError(ErrorCode.PARAM_ERROR, "status 不能为空")
     if "versionId" in data:
-        payload["version_id"] = data["versionId"]
+        payload["version_id"] = check_ref_project(
+            conn, "biz_project_version", data["versionId"],
+            row.get("project_id"), "项目版本", "versionId",
+        )
     if "moduleId" in data:
-        payload["module_id"] = data["moduleId"]
-    if "projectId" in data:
-        payload["project_id"] = data["projectId"]
+        payload["module_id"] = check_ref_project(
+            conn, "biz_module", data["moduleId"],
+            row.get("project_id"), "功能点", "moduleId",
+        )
     if "bugType" in data:
         payload["bug_type"] = data["bugType"]
     if "expectedResult" in data:
@@ -224,6 +299,12 @@ def update_bug(pk: str) -> Response:
     if "steps" in data:
         payload["steps_json"] = dumps(data.get("steps") or [])
     repo.update(target, payload)
+    if requested_status and requested_status != row["status"]:
+        repo.transition(
+            target, requested_status,
+            operator=str(data.get("operator") or ""),
+            comment=str(data.get("transitionComment") or "编辑时更新状态"),
+        )
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_BUG, target,
           str(payload.get("title", row.get("title", "")) or ""), {"fields": sorted(payload.keys())})
@@ -288,7 +369,8 @@ def link_bug_cases(pk: str) -> Response:
     conn = db()
     repo = BugRepository(conn)
     target = path_int(pk)
-    if not repo.get(target):
+    bug_row = repo.get(target)
+    if not bug_row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "缺陷不存在")
     data = body()
     case_ids = data.get("caseIds")
@@ -301,6 +383,12 @@ def link_bug_cases(pk: str) -> Response:
         raise AppError(
             ErrorCode.RESOURCE_NOT_FOUND,
             f"用例不存在：{ '、'.join(str(i) for i in missing) }",
+        )
+    foreign = _foreign_project_cases(conn, ids, bug_row.get("project_id"))
+    if foreign:
+        raise AppError(
+            ErrorCode.ILLEGAL_OPERATION,
+            f"用例 {'、'.join(str(i) for i in foreign)} 不属于该缺陷所在项目",
         )
     linked = repo.link_cases(target, ids, relation)
     commit(conn)

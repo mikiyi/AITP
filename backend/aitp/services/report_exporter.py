@@ -3,13 +3,15 @@
 四种产物来自同一份报告快照，内容结构一致，只是渲染通道不同：
 - md    → YAML frontmatter + 正文与章节
 - html  → 单文件 HTML（内嵌 CSS），可离线双击打开
-- pdf   → reportlab 直出的 .pdf；中文字体按 simhei → msyh → 占位 逐级降级
+- pdf   → reportlab 直出的 .pdf；中文字体在本机字体目录按黑体类优先逐级探测，找不到才降级为英文占位
 - print → 面向浏览器的打印视图，用户自行「另存为 PDF」
 """
 
 from __future__ import annotations
 
 import html as html_lib
+import os
+import platform
 import re
 from io import BytesIO
 from pathlib import Path
@@ -22,6 +24,7 @@ SECTION_LABELS: dict[str, str] = {
     "case": "用例情况",
     "bug": "缺陷情况",
     "coverage": "覆盖情况",
+    "trend": "趋势",
     "risk": "风险",
     "conclusion": "结论与建议",
 }
@@ -42,10 +45,26 @@ STATUS_LABELS: dict[str, str] = {
 EXPORT_FORMATS = ("md", "html", "pdf", "print")
 FORMAT_EXTENSIONS = {"md": "md", "html": "html", "pdf": "pdf", "print": "html"}
 
-# 中文字体候选：simhei.ttf 优先，其次 msyh.ttc（取第一个子字体），最后退化为英文占位
-_FONT_CANDIDATES: tuple[tuple[str, str, int | None], ...] = (
-    ("AitpCJK", "C:/Windows/Fonts/simhei.ttf", None),
-    ("AitpCJK", "C:/Windows/Fonts/msyh.ttc", 0),
+# 中文字体候选：文件名按「黑体类优先、宋体类兜底」排序，目录按「系统自带优先、用户目录最后」排序。
+# 三份系统都列全，不按当前系统硬切，避免用户把 Windows 字体拷到 Linux 后反而找不到。
+_FONT_NAME = "AitpCJK"
+_FONT_PATTERNS: tuple[str, ...] = (
+    "simhei.ttf",  # Windows 黑体
+    "msyh.ttc",  # Windows 微软雅黑
+    "msyh.ttf",
+    "PingFang.ttc",  # macOS 苹方
+    "STHeiti Medium.ttc",  # macOS 黑体-简
+    "NotoSansCJK*.ttc",  # Linux / 思源黑体，ttc 取第 0 个子字体
+    "NotoSansCJK*.otc",
+    "SourceHanSansCN*.otf",
+    "SourceHanSansCN*.ttf",
+    "wqy-zenhei*.ttc",  # Linux 文泉驿正黑
+    "wqy-microhei*.ttc",
+    "DroidSansFallback.ttf",
+    "simsun.ttc",  # Windows 宋体
+    "Songti.ttc",  # macOS 宋体
+    "Arial Unicode.ttf",
+    "NotoSerifCJK*.ttc",
 )
 
 _HTML_TAG_RE = re.compile(r"</?[A-Za-z][^>]*>")
@@ -379,33 +398,104 @@ def render_html(
         f"<title>{html_lib.escape(title)}</title>\n"
         f"<style>{_HTML_CSS}</style>\n</head>\n<body>\n"
         f"<h1>{html_lib.escape(title)}</h1>\n{_meta_html(report)}\n{action}\n{body}\n"
-        f'<div class="footer">由 AITestPilot 导出于 {utcnow_iso()}</div>\n'
+        f'<div class="footer">由 AITestPlatform 导出于 {utcnow_iso()}</div>\n'
         "</body>\n</html>\n"
     )
 
 
 # ---------------- PDF ----------------
 
-def _register_cjk_font() -> tuple[str, bool]:
-    """注册中文字体，返回 (字体名, 是否降级告警)。"""
+#: 系统字体目录：Windows 走 SystemRoot，macOS 走三个标准库目录，Linux 走 fontconfig 常用位置。
+_FONT_DIRS: dict[str, tuple[str, ...]] = {
+    "Windows": (
+        "%SystemRoot%\\Fonts",
+        "%LOCALAPPDATA%\\Microsoft\\Windows\\Fonts",
+    ),
+    "Darwin": (
+        "/System/Library/Fonts",
+        "/System/Library/Fonts/Supplemental",
+        "/Library/Fonts",
+        "~/Library/Fonts",
+    ),
+    "Linux": (
+        "/usr/share/fonts",
+        "/usr/local/share/fonts",
+        "~/.fonts",
+        "~/.local/share/fonts",
+    ),
+}
+
+
+def _font_dirs() -> list[Path]:
+    system = platform.system()
+    names = _FONT_DIRS.get(system) or _FONT_DIRS["Linux"]
+    dirs: list[Path] = []
+    for raw in names:
+        expanded = os.path.expandvars(os.path.expanduser(raw))
+        path = Path(expanded)
+        if path.is_dir() and path not in dirs:
+            dirs.append(path)
+    return dirs
+
+
+def _cjk_font_files() -> list[Path]:
+    """按候选顺序列出本机存在的中文字体文件。
+
+    只按文件名匹配、不读字体内容，所以顺序里黑体类在前就能保证 PDF 首选无衬线；
+    目录不存在时直接跳过，未知系统按 Linux 位置尝试。
+    """
+    dirs = _font_dirs()
+    found: list[Path] = []
+    seen: set[str] = set()
+    for pattern in _FONT_PATTERNS:
+        for directory in dirs:
+            try:
+                candidates = sorted(directory.rglob(pattern))
+            except OSError:
+                continue
+            for candidate in candidates:
+                key = str(candidate).casefold()
+                if key in seen or not candidate.is_file():
+                    continue
+                seen.add(key)
+                found.append(candidate)
+    return found
+
+
+_font_result: tuple[str, bool, str] | None = None
+
+
+def _cjk_font() -> tuple[str, bool, str]:
+    """返回 (字体名, 是否降级, 命中的字体文件)，结果按进程缓存。"""
+    global _font_result
+    if _font_result is not None:
+        return _font_result
+
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
 
-    for name, path, subfont_index in _FONT_CANDIDATES:
-        if not Path(path).exists():
-            continue
+    name, degraded, resolved = "Helvetica", True, ""
+    for path in _cjk_font_files():
         try:
-            if subfont_index is None:
-                pdfmetrics.registerFont(TTFont(name, path))
+            if path.suffix.lower() in {".ttc", ".otc"}:
+                pdfmetrics.registerFont(TTFont(_FONT_NAME, str(path), subfontIndex=0))
             else:
-                pdfmetrics.registerFont(TTFont(name, path, subfontIndex=subfont_index))
-        except Exception:  # 字体损坏或格式不支持时继续尝试下一个
+                pdfmetrics.registerFont(TTFont(_FONT_NAME, str(path)))
+        except Exception:  # 字体损坏、CFF 轮廓或格式不支持时继续尝试下一个
             continue
         pdfmetrics.registerFontFamily(
-            name, normal=name, bold=name, italic=name, boldItalic=name
+            _FONT_NAME, normal=_FONT_NAME, bold=_FONT_NAME, italic=_FONT_NAME, boldItalic=_FONT_NAME
         )
-        return name, False
-    return "Helvetica", True
+        name, degraded, resolved = _FONT_NAME, False, str(path)
+        break
+    _font_result = (name, degraded, resolved)
+    return _font_result
+
+
+def _register_cjk_font() -> tuple[str, bool]:
+    """注册中文字体，返回 (字体名, 是否降级告警)。"""
+    registered = _cjk_font()
+    return registered[0], registered[1]
 
 
 def _inline_markup(text: str) -> str:
@@ -596,7 +686,7 @@ def render_pdf(report: dict[str, Any], items: list[dict[str, Any]]) -> tuple[byt
         topMargin=18 * mm,
         bottomMargin=18 * mm,
         title=title,
-        author="AITestPilot",
+        author="AITestPlatform",
     )
 
     story: list[Any] = [Paragraph(_inline_markup(title), styles["h1"])]
@@ -634,14 +724,14 @@ def render_pdf(report: dict[str, Any], items: list[dict[str, Any]]) -> tuple[byt
 
     story.append(Spacer(1, 14))
     story.append(
-        Paragraph(f"由 AITestPilot 导出于 {utcnow_iso()}", styles["quote"])
+        Paragraph(f"由 AITestPlatform 导出于 {utcnow_iso()}", styles["quote"])
     )
 
     def _footer(canvas: Any, doc_obj: Any) -> None:
         canvas.saveState()
         canvas.setFont(font_name, 8)
         canvas.setFillColor(colors.HexColor("#909399"))
-        canvas.drawString(20 * mm, 12 * mm, "AITestPilot")
+        canvas.drawString(20 * mm, 12 * mm, "AITestPlatform")
         canvas.drawRightString(A4[0] - 20 * mm, 12 * mm, f"第 {doc_obj.page} 页")
         canvas.restoreState()
 

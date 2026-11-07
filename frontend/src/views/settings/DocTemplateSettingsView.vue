@@ -30,10 +30,10 @@
           class="tpl-search"
           placeholder="搜索模板名称 / 说明"
           clearable
+          @input="scheduleQuery"
           @keyup.enter="reload"
           @clear="reload"
         />
-        <el-button size="small" :icon="Search" @click="reload">查询</el-button>
         <div class="spacer" />
         <el-button size="small" :icon="Refresh" :loading="loading" @click="reload">刷新</el-button>
       </div>
@@ -61,6 +61,21 @@
             <span v-else class="muted">手工填写</span>
           </template>
         </el-table-column>
+        <el-table-column label="模板下载" min-width="200">
+          <template #default="{ row }">
+            <el-link
+              v-if="downloadable(row)"
+              type="primary"
+              :icon="fileIcon(row.fileType)"
+              :underline="false"
+              :title="`下载最近一次上传的模板原件（${formatSize(row.fileSize)}）`"
+              @click="downloadTemplate(row)"
+            >
+              {{ row.fileName }}
+            </el-link>
+            <span v-else class="muted">-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="版式" min-width="140" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="row.styleHint">{{ row.styleHint }}</span>
@@ -72,7 +87,9 @@
             {{ row.kind === 'case' ? row.columns.length : '-' }}
           </template>
         </el-table-column>
-        <el-table-column prop="updatedAt" label="更新时间" width="170" show-overflow-tooltip />
+        <el-table-column label="更新时间" width="170" show-overflow-tooltip>
+          <template #default="{ row }">{{ dateTimeText(row.updatedAt) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="140" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
@@ -98,7 +115,7 @@
       v-model="dialogVisible"
       :title="editingId ? '编辑模板' : '新增模板'"
       width="760px"
-      @closed="resetForm"
+      @closed="onDialogClosed"
     >
       <el-form label-width="110px">
         <el-form-item label="模板名称" required>
@@ -129,13 +146,15 @@
               <el-button :icon="Upload" :loading="uploading">上传模板文件</el-button>
             </el-upload>
             <span class="muted tpl-form-hint">
-              支持 docx / xlsx / csv / md / txt / json，≤5MB；上传后自动提取正文、列名与字体字号
+              支持 docx / xlsx / csv / md / txt / json，≤5MB；上传后自动提取正文，xlsx、csv、带表格的 docx / Markdown
+              还会带出列名，docx / xlsx 带出字体字号（其余格式无字体信息）；原文件留在本机，保存后列表里可再下载
             </span>
           </div>
           <div v-if="form.fileName" class="tpl-file">
             <span class="text-mono">{{ form.fileName }}</span>
             <span class="muted">{{ formatSize(form.fileSize) }}</span>
             <el-button link type="danger" @click="clearFile">清除</el-button>
+            <span v-if="editingId" class="muted tpl-form-hint">清除并保存会删掉本机留存的原文件</span>
           </div>
           <div v-if="form.styleHint" class="muted tpl-form-hint">解析出版式：{{ form.styleHint }}</div>
         </el-form-item>
@@ -146,7 +165,7 @@
             placeholder="用逗号分隔，例如：用例编号,用例标题,用例类型,优先级,前置条件,测试步骤,预期结果"
           />
           <div class="muted tpl-form-hint">
-            导出 Excel 时按这个顺序排列表头；留空则用默认列。上传 xlsx 模板会自动带出表头。
+            导出 Excel 时按这个顺序排列表头；留空则用默认列。上传 xlsx、csv 或带表格的 docx / Markdown 模板会自动带出表头。
           </div>
         </el-form-item>
 
@@ -180,8 +199,10 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadRequestOptions } from 'element-plus'
-import { Back, Plus, Refresh, Search, Upload } from '@element-plus/icons-vue'
+import { Back, Document, Grid, Plus, Refresh, Upload } from '@element-plus/icons-vue'
 import { templateApi } from '@/api'
+import { useAutoQuery } from '@/composables/useAutoQuery'
+import { dateTimeText } from '@/utils/format'
 import type { DocTemplate, DocTemplateKind } from '@/api/types'
 
 const router = useRouter()
@@ -221,6 +242,21 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
+/** 表格里给文件类型配的图标：表格类用网格，其余用文档。 */
+function fileIcon(fileType: string) {
+  const type = String(fileType || '').toLowerCase()
+  return type === 'xlsx' || type === 'csv' ? Grid : Document
+}
+
+/** 只有留存过原文件的模板才能下载；上线前上传的老模板没有留存，显示「-」。 */
+function downloadable(row: DocTemplate): boolean {
+  return Boolean(row.storedName)
+}
+
+function downloadTemplate(row: DocTemplate): void {
+  window.open(templateApi.fileDownloadUrl(row.id), '_blank')
+}
+
 async function load(): Promise<void> {
   loading.value = true
   try {
@@ -244,6 +280,8 @@ function reload(): void {
   void load()
 }
 
+const scheduleQuery = useAutoQuery(reload)
+
 function onPageChange(page: number): void {
   pageNum.value = page
   void load()
@@ -256,6 +294,8 @@ const editingId = ref<number | null>(null)
 const saving = ref(false)
 const uploading = ref(false)
 const columnsText = ref('')
+/** 本次弹窗里上传过的原件，关闭时统一清理没保存的，避免在 data/doc_templates 越堆越多。 */
+const uploadedNames = new Set<string>()
 
 const form = reactive({
   name: '',
@@ -266,6 +306,8 @@ const form = reactive({
   fileName: '',
   fileType: '',
   fileSize: 0,
+  /** 上传后留在本机的原文件名，保存时一起回传，模板才可能被再下载。 */
+  storedName: '',
   isDefault: false,
 })
 
@@ -283,6 +325,7 @@ function resetForm(): void {
     fileName: '',
     fileType: '',
     fileSize: 0,
+    storedName: '',
     isDefault: false,
   })
 }
@@ -293,6 +336,20 @@ function openCreate(): void {
     form.kind = filterKind.value
   }
   dialogVisible.value = true
+}
+
+async function onDialogClosed(): Promise<void> {
+  const names = Array.from(uploadedNames)
+  uploadedNames.clear()
+  resetForm()
+  if (!names.length) return
+  try {
+    // 已保存的模板原件会被后端跳过，这里只会删掉取消保存的那部分
+    await templateApi.cleanupUploads(names)
+  } catch (err) {
+    // 清理失败不影响用户操作，后端下次上传时仍会跳过被引用的文件
+    console.warn('清理未保存的模板原件失败', err)
+  }
 }
 
 function openEdit(row: DocTemplate): void {
@@ -306,6 +363,7 @@ function openEdit(row: DocTemplate): void {
     fileName: row.fileName,
     fileType: row.fileType,
     fileSize: row.fileSize,
+    storedName: row.storedName,
     isDefault: row.isDefault,
   })
   columnsText.value = row.columns.join(',')
@@ -316,6 +374,7 @@ function clearFile(): void {
   form.fileName = ''
   form.fileType = ''
   form.fileSize = 0
+  form.storedName = ''
   form.styleHint = ''
 }
 
@@ -328,7 +387,9 @@ async function uploadTemplate(options: UploadRequestOptions): Promise<void> {
     form.fileName = parsed.fileName
     form.fileType = parsed.fileType
     form.fileSize = parsed.fileSize
+    form.storedName = parsed.storedName
     form.styleHint = parsed.styleHint
+    uploadedNames.add(parsed.storedName)
     form.content = parsed.content
     if (form.kind === 'case' && parsed.columns.length) {
       columnsText.value = parsed.columns.join(',')
@@ -364,6 +425,7 @@ async function save(): Promise<void> {
       fileName: form.fileName,
       fileType: form.fileType,
       fileSize: form.fileSize,
+      storedName: form.storedName,
       columns: columnsText.value
         .split(/[,，]/)
         .map((item) => item.trim())

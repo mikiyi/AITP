@@ -8,7 +8,7 @@
 
       <el-form label-width="120px" label-position="right">
         <el-form-item label="项目">
-          <span class="tdf-project">{{ projectName || '请先在右上角选择项目' }}</span>
+          <span class="tdf-project">{{ projectName || '请先在本页「项目」下拉选择项目' }}</span>
           <span class="tdf-tip">批次与文件都归到该项目下，便于按项目清理</span>
         </el-form-item>
 
@@ -343,7 +343,7 @@ async function loadCatalog(): Promise<void> {
 
 async function generate(): Promise<void> {
   if (!appStore.currentProjectId) {
-    ElMessage.warning('请先在右上角选择项目')
+    ElMessage.warning('请先在本页「项目」下拉选择项目')
     return
   }
   if (!form.ext) {

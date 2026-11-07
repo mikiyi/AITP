@@ -86,9 +86,10 @@ def _register_secret_store(cfg: AppConfig) -> None:
 
 def _register_profile_loader(cfg: AppConfig) -> None:
     """把数据库里的 AI 档案接入配置解析器（DB > env > 默认）。"""
-    from .ai.resolver import set_profile_loader
+    from .ai.resolver import set_profile_loader, set_setting_loader
     from .db.connection import get_standalone_conn
     from .repositories.ai_profile_repo import AIProfileRepository
+    from .repositories.sys_config_repo import SysConfigRepository
 
     def _load() -> list[dict[str, Any]]:
         conn = get_standalone_conn(cfg.db_path)
@@ -97,7 +98,31 @@ def _register_profile_loader(cfg: AppConfig) -> None:
         finally:
             conn.close()
 
+    def _setting(key: str, default: str) -> str:
+        conn = get_standalone_conn(cfg.db_path)
+        try:
+            return str(SysConfigRepository(conn).get_value(key, default))
+        finally:
+            conn.close()
+
     set_profile_loader(_load)
+    set_setting_loader(_setting)
+
+
+def _register_prompt_overrides(cfg: AppConfig) -> None:
+    """把库里的提示词自定义正文接入注册表（自定义 > 磁盘默认）。"""
+    from .db.connection import get_standalone_conn
+    from .prompts.registry import get_registry
+    from .repositories.prompt_override_repo import PromptOverrideRepository
+
+    def _load() -> dict[str, str]:
+        conn = get_standalone_conn(cfg.db_path)
+        try:
+            return PromptOverrideRepository(conn).list_bodies()
+        finally:
+            conn.close()
+
+    get_registry().set_override_loader(_load)
 
 
 def _check_bind_host(cfg: AppConfig) -> None:
@@ -118,18 +143,102 @@ def _check_bind_host(cfg: AppConfig) -> None:
     )
 
 
+def _run_startup_preflight(cfg: AppConfig) -> None:
+    """迁移前先验 SQLite 能力与目录可写，失败时一次说清原因。
+
+    这两项只有跨平台时才会踩到（系统自带 Python 的 SQLite 过旧、目录只读或被占用），
+    放到迁移之后就是半启动状态加一屏裸 SQL 错误。
+    """
+    import sqlite3
+    import sys
+
+    from .common.preflight import PreflightError, check_runtime
+
+    problems = check_runtime(cfg)
+    if problems:
+        for item in problems:
+            log_deploy_event("preflight", item)
+        raise PreflightError(
+            "AITP 启动自检未通过：\n" + "\n".join(f"  - {item}" for item in problems)
+        )
+    log_deploy_event(
+        "preflight",
+        "启动自检通过",
+        python=sys.version.split()[0],
+        sqlite=sqlite3.sqlite_version,
+        platform=sys.platform,
+    )
+
+
 def _apply_pending_migrations(cfg: AppConfig) -> None:
     """启动时补齐未应用的迁移，避免升级后接口因缺列报错。"""
     from .db.connection import get_standalone_conn
-    from .db.migrator import run_migrations
+    from .db.migrator import MIGRATIONS_DIR, drifted_versions, run_migrations
 
     conn = get_standalone_conn(cfg.db_path)
     try:
         applied = run_migrations(conn)
+        drift = drifted_versions(conn, MIGRATIONS_DIR)
     finally:
         conn.close()
     if applied:
         log_deploy_event("migrate", "已应用数据库迁移", versions=applied)
+    if drift:
+        # 已应用的迁移被改过：新库和老库结构会悄悄分叉，必须留痕
+        log_deploy_event(
+            "migrate-drift",
+            "已应用的迁移文件内容被修改过，新装环境可能与本机不一致",
+            versions=drift,
+        )
+
+
+def _reconcile_interrupted(cfg: AppConfig) -> None:
+    """启动时把上次没跑完的任务判为中断。
+
+    服务被 kill 时正在执行的 AI 调用/脚本跑不会有机会写终态，
+    这些行会永远停在 running，任务清单和概览就一直显示「执行中」，
+    用户以为还在跑，实际早没了。
+    """
+    from .common.time_utils import utcnow_iso
+    from .db.connection import get_standalone_conn
+    from .services import knowledge_assistant_service
+
+    reason = "服务重启时任务仍在执行，已标记为中断"
+    now = utcnow_iso()
+    statements = (
+        "UPDATE biz_ai_task SET status = 'failed', error_message = ?, finished_at = ?,"
+        " updated_at = ? WHERE status IN ('pending', 'running') AND is_deleted = 0",
+        "UPDATE biz_ai_step SET status = 'failed', error_message = ?, completed_at = ?,"
+        " updated_at = ? WHERE status IN ('pending', 'running') AND is_deleted = 0",
+        "UPDATE biz_automation_run SET status = 'error', error_message = ?, finished_at = ?,"
+        " updated_at = ? WHERE status = 'running' AND is_deleted = 0",
+        "UPDATE sys_task SET status = 'failed', error_message = ?, finished_at = ?,"
+        " updated_at = ? WHERE status = 'running'",
+    )
+    conn = get_standalone_conn(cfg.db_path)
+    try:
+        recovered = sum(conn.execute(sql, (reason, now, now)).rowcount for sql in statements)
+        # 整理任务被标记失败后，条目状态要回到「待自动整理」，否则按钮一直显示执行中
+        recovered += knowledge_assistant_service.reconcile(conn)
+        conn.commit()
+    finally:
+        conn.close()
+    if recovered:
+        log_deploy_event("reconcile", "已将上次未跑完的任务标记为中断", count=recovered)
+
+
+def _start_task_queue(app: Flask, cfg: AppConfig) -> None:
+    """恢复上次排队的后台任务；没有排队任务就不常驻轮询。"""
+    from .services import automation_jobs  # noqa: F401 - 导入即注册处理器
+    from .services import backup_schedule  # noqa: F401 - 导入即注册处理器
+    from .services import interface_jobs  # noqa: F401 - 导入即注册处理器
+    from .services import knowledge_assistant_service  # noqa: F401 - 导入即注册处理器
+    from .services import notification_service  # noqa: F401 - 导入即注册处理器
+    from .services import job_queue
+
+    job_queue.set_app(app)
+    job_queue.start_workers_if_pending(cfg.db_path)
+    backup_schedule.start_scheduler(cfg.db_path)
 
 
 def _auto_reindex_knowledge(cfg: AppConfig) -> None:
@@ -181,11 +290,15 @@ def create_app(config: AppConfig | None = None) -> Flask:
         static=str(cfg.static_dir),
     )
     _check_bind_host(cfg)
+    _run_startup_preflight(cfg)
 
     _apply_pending_migrations(cfg)
+    _reconcile_interrupted(cfg)
+    _start_task_queue(app, cfg)
     _auto_reindex_knowledge(cfg)
     _register_secret_store(cfg)
     _register_profile_loader(cfg)
+    _register_prompt_overrides(cfg)
 
     register_error_handlers(app)
     register_middleware(app)

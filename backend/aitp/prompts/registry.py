@@ -4,15 +4,17 @@
 - 提示词文件放在 AITP_PROMPTS_DIR（默认 backend/prompts），文件名即 code
 - 文件开头可选 YAML frontmatter（title / description）
 - 正文里的 `{{变量名}}` 会被替换；未提供的变量直接报错，不留残缺模板
+- 用户在提示词库改过的正文存在库里，装载后覆盖磁盘正文；标题/说明/可选变量仍以磁盘为准
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ..errors import AppError, ErrorCode
 
@@ -25,6 +27,11 @@ _CODE_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
 OPTIONAL_PLACEHOLDER = "（未提供）"
 
 
+def variables_of(text: str) -> tuple[str, ...]:
+    """正文里出现过的变量名，按首次出现顺序去重。"""
+    return tuple(dict.fromkeys(_VAR_RE.findall(text)))
+
+
 @dataclass(frozen=True, slots=True)
 class PromptTemplate:
     code: str
@@ -35,6 +42,8 @@ class PromptTemplate:
     variables: tuple[str, ...]
     optional: tuple[str, ...]
     mtime: float
+    #: 正文是否来自库里的自定义版本（True 时 body 不是磁盘默认正文）
+    customized: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -45,7 +54,12 @@ class PromptTemplate:
             "optional": list(self.optional),
             "path": str(self.path),
             "mtime": self.mtime,
+            "customized": self.customized,
         }
+
+
+#: 从库里批量装载自定义正文：code -> body
+OverrideLoader = Callable[[], dict[str, str]]
 
 
 class PromptRegistry:
@@ -55,6 +69,11 @@ class PromptRegistry:
         self._root = root
         self._cache: dict[str, PromptTemplate] = {}
         self._lock = threading.Lock()
+        self._override_loader: OverrideLoader | None = None
+        self._overrides: dict[str, str] = {}
+        self._overrides_loaded = False
+        #: 缓存键：(文件 mtime, 自定义正文指纹)，任一变了就重新装载
+        self._keys: dict[str, tuple[float, str]] = {}
 
     @property
     def root(self) -> Path:
@@ -63,6 +82,24 @@ class PromptRegistry:
         from flask import current_app
 
         return Path(current_app.config["AITP_PROMPTS_DIR"])
+
+    def set_override_loader(self, loader: OverrideLoader | None) -> None:
+        """接入自定义正文来源；不给 loader 就是纯磁盘模式（校验脚本用）。"""
+        with self._lock:
+            self._override_loader = loader
+            self._overrides_loaded = False
+            self._overrides = {}
+            self._cache = {}
+            self._keys = {}
+
+    def invalidate(self, code: str) -> None:
+        """自定义正文刚被写入或删除，让下一次读取重新装载。"""
+        with self._lock:
+            self._overrides.pop(code, None)
+            self._cache.pop(code, None)
+            self._keys.pop(code, None)
+            # 装载标记也要清，否则新写入的 code 会被当成「没有自定义」。
+            self._overrides_loaded = False
 
     def path_of(self, code: str) -> Path:
         if not _CODE_RE.fullmatch(code or ""):
@@ -76,14 +113,26 @@ class PromptRegistry:
         except OSError:
             raise AppError(ErrorCode.PROMPT_NOT_FOUND, f"提示词不存在：{code}") from None
 
+        override = self._override_of(code)
+        key = (mtime, hashlib.sha256(override.encode("utf-8")).hexdigest()[:16] if override else "")
         cached = self._cache.get(code)
-        if cached is not None and cached.mtime == mtime:
+        if cached is not None and self._keys.get(code) == key:
             return cached
 
-        template = self._load(code, path, mtime)
+        template = self._load(code, path, mtime, override)
         with self._lock:
             self._cache[code] = template
+            self._keys[code] = key
         return template
+
+    def default_template(self, code: str) -> PromptTemplate:
+        """磁盘默认模板（忽略自定义正文），用于变量校验和「恢复默认」对照。"""
+        path = self.path_of(code)
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            raise AppError(ErrorCode.PROMPT_NOT_FOUND, f"提示词不存在：{code}") from None
+        return self._load(code, path, mtime)
 
     def render(self, code: str, variables: dict[str, Any] | None = None) -> str:
         template = self.get(code)
@@ -133,7 +182,9 @@ class PromptRegistry:
                 continue
         return result
 
-    def _load(self, code: str, path: Path, mtime: float) -> PromptTemplate:
+    def _load(
+        self, code: str, path: Path, mtime: float, override: str | None = None
+    ) -> PromptTemplate:
         try:
             raw = path.read_text(encoding="utf-8")
         except OSError as exc:
@@ -160,8 +211,9 @@ class PromptRegistry:
                     )
             raw = raw[match.end():]
 
-        body = raw.strip()
-        variables = tuple(dict.fromkeys(_VAR_RE.findall(body)))
+        # 变量表跟着最终正文走：自定义正文删掉的变量不再必填，新增的变量渲染时会拦住。
+        body = (override if override is not None else raw).strip()
+        variables = variables_of(body)
         return PromptTemplate(
             code=code,
             path=path,
@@ -171,7 +223,27 @@ class PromptRegistry:
             variables=variables,
             optional=tuple(name for name in optional if name in variables),
             mtime=mtime,
+            customized=override is not None,
         )
+
+    def _override_of(self, code: str) -> str | None:
+        if self._override_loader is None:
+            return None
+        if not self._overrides_loaded:
+            self._load_overrides()
+        return self._overrides.get(code) or None
+
+    def _load_overrides(self) -> None:
+        loader = self._override_loader
+        if loader is None:
+            return
+        try:
+            overrides = dict(loader())
+        except Exception:  # noqa: BLE001 - 库里读不到就退回磁盘默认，不能阻断 AI 调用
+            overrides = {}
+        with self._lock:
+            self._overrides = overrides
+            self._overrides_loaded = True
 
 
 _registry: PromptRegistry | None = None

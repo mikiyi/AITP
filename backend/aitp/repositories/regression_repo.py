@@ -138,6 +138,7 @@ def regression_summary(row: dict[str, Any]) -> dict[str, Any]:
         "changeScope": row.get("change_scope"),
         "affectedModules": row.get("affected_modules"),
         "version": row.get("version"),
+        "versionId": row.get("version_id"),
         "riskLevel": row.get("risk_level"),
         "status": row.get("status"),
         "source": row.get("source"),

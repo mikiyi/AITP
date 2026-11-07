@@ -9,7 +9,7 @@ from ..common.pagination import RowDict, RowList
 from ..common.security import content_checksum
 from ..common.time_utils import utcnow_iso
 from ..errors import AppError, ErrorCode
-from .base import BaseRepository
+from .base import BaseRepository, dumps, loads
 
 VERSION_STATUS_PENDING = "pending"
 VERSION_STATUS_PUBLISHED = "published"
@@ -28,7 +28,7 @@ class KnowledgeVersionRepository(BaseRepository):
         rows = self.conn.execute(
             "SELECT id, article_id, version, title, summary, category, tags, review_status,"
             " reviewer, review_comment, reviewed_at, change_log, checksum, created_by,"
-            " created_at, updated_at, LENGTH(content) AS content_length"
+            " merge_targets_json, created_at, updated_at, LENGTH(content) AS content_length"
             " FROM biz_knowledge_version WHERE article_id = ? ORDER BY version DESC",
             (article_id,),
         ).fetchall()
@@ -60,6 +60,7 @@ class KnowledgeVersionRepository(BaseRepository):
     def create_version(self, article_id: int, title: str, content: str, *,
                        summary: str = "", category: str = "", tags: str = "",
                        change_log: str = "", created_by: str = "",
+                       merge_targets: list[int] | None = None,
                        review_status: str = VERSION_STATUS_PENDING,
                        reviewer: str = "", review_comment: str = "") -> int:
         version = self.next_version(article_id)
@@ -78,6 +79,7 @@ class KnowledgeVersionRepository(BaseRepository):
             "change_log": change_log,
             "checksum": content_checksum(content),
             "created_by": created_by,
+            "merge_targets_json": dumps(merge_targets) if merge_targets else None,
         })
         self.conn.execute(
             "UPDATE biz_knowledge_article SET draft_version = ?, updated_at = ? WHERE id = ?",
@@ -117,7 +119,41 @@ class KnowledgeVersionRepository(BaseRepository):
             " review_comment = ?, reviewed_at = ?, updated_at = ? WHERE id = ?",
             (VERSION_STATUS_PUBLISHED, reviewer, review_comment, now, now, snapshot["id"]),
         )
-        return self.get_version(article_id, version) or {}
+        merged_ids = self._apply_merge_targets(article_id, snapshot.get("merge_targets_json"), now)
+        result = self.get_version(article_id, version) or {}
+        if merged_ids:
+            result["mergedArticleIds"] = merged_ids
+        return result
+
+    def _apply_merge_targets(self, article_id: int, raw: Any, now: str) -> list[int]:
+        """把版本上记录的重复条目标为已合并，让它们退出检索与统计。
+
+        只处理仍是已发布、且没有自己待审版本的条目：后者说明人工正在改它，
+        合并会把未审改动一起吞掉。
+        """
+        targets: list[int] = []
+        for value in loads(raw, []) or []:
+            try:
+                target = int(value)
+            except (TypeError, ValueError):
+                continue
+            if target != article_id and target not in targets:
+                targets.append(target)
+        if not targets:
+            return []
+        placeholders = ", ".join("?" for _ in targets)
+        self.conn.execute(
+            f"UPDATE biz_knowledge_article SET review_status = 'merged', merged_into = ?,"
+            f" updated_at = ? WHERE id IN ({placeholders}) AND is_deleted = 0"
+            " AND review_status = 'published'"
+            " AND id NOT IN (SELECT article_id FROM biz_knowledge_version WHERE review_status = ?)",
+            (article_id, now, *targets, VERSION_STATUS_PENDING),
+        )
+        rows = self.conn.execute(
+            f"SELECT id FROM biz_knowledge_article WHERE merged_into = ? AND id IN ({placeholders})",
+            (article_id, *targets),
+        ).fetchall()
+        return [int(row["id"]) for row in rows]
 
     def reject_version(self, article_id: int, version: int, reviewer: str = "",
                        review_comment: str = "") -> dict[str, Any]:

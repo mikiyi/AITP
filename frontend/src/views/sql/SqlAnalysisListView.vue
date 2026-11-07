@@ -2,7 +2,10 @@
   <div class="page">
     <div class="page-header">
       <h2 class="page-title">SQL 分析</h2>
-      <el-button type="primary" :icon="Plus" @click="openCreate">新建分析</el-button>
+      <div class="toolbar" style="margin: 0">
+        <ProjectSwitcher />
+        <el-button type="primary" :icon="Plus" @click="openCreate">新建分析</el-button>
+      </div>
     </div>
 
     <div class="panel panel-pad">
@@ -11,6 +14,7 @@
         :columns="columns"
         :fetcher="fetcher"
         :search-fields="searchFields"
+        :extra-query="extraQuery"
         sync-query
         @row-click="openDetail"
       >
@@ -19,7 +23,6 @@
             {{ row.riskLabel }}
           </el-tag>
         </template>
-        <template #projectId="{ row }">{{ projectName(row.projectId) }}</template>
         <template #sqlText="{ row }">
           <span class="text-mono sql-preview">{{ row.sqlText || '-' }}</span>
         </template>
@@ -64,7 +67,7 @@
           <el-input v-model="form.title" placeholder="例如：订单列表查询未走索引" />
         </el-form-item>
         <el-form-item label="项目" required>
-          <el-select v-model="form.projectId" placeholder="选择项目">
+          <el-select v-model="form.projectId" placeholder="选择项目" @change="onProjectChange">
             <el-option v-for="item in appStore.projects" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
@@ -117,18 +120,24 @@ import { Plus } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
 import MarkdownView from '@/components/MarkdownView.vue'
+import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import { projectVersionApi, sqlAnalysisApi } from '@/api'
 import type { SqlAnalysis } from '@/api/types'
+import { useProjectScope } from '@/composables/useProjectScope'
 import { useAppStore } from '@/stores/app'
 
 const appStore = useAppStore()
 const tableRef = ref<TableExpose | null>(null)
 
+/** 列表只展示本页当前项目的分析。 */
+const extraQuery = computed(() => ({
+  projectId: appStore.currentProjectId ?? undefined,
+}))
+
 const columns: ColumnDef[] = [
   { prop: 'sqlNo', label: '编号', width: 110 },
   { prop: 'title', label: '标题', minWidth: 190 },
   { prop: 'riskLevel', label: '风险级别', width: 100, slot: 'riskLevel' },
-  { prop: 'projectId', label: '项目', width: 140, slot: 'projectId' },
   { prop: 'versionCode', label: '版本号', width: 100 },
   { prop: 'versionName', label: '版本名称', width: 120 },
   { prop: 'sqlText', label: 'SQL', minWidth: 200, slot: 'sqlText' },
@@ -148,12 +157,6 @@ const searchFields = computed<SearchField[]>(() => [
       { label: '高风险', value: 'high' },
     ],
   },
-  {
-    prop: 'projectId',
-    label: '项目',
-    type: 'select',
-    options: appStore.projects.map((item) => ({ label: item.name, value: item.id })),
-  },
   { prop: 'versionId', label: '版本', type: 'select', options: versionOptions.value },
 ])
 
@@ -171,7 +174,11 @@ async function loadVersionOptions(): Promise<void> {
   } catch { versionOptions.value = [] }
 }
 
-watch(() => appStore.currentProjectId, () => { void loadVersionOptions() }, { immediate: true })
+useProjectScope({
+  load: () => void loadVersionOptions(),
+  // 旧项目的版本筛选在新项目里不存在，留着会把列表筛成空。
+  resetScopedFilters: () => tableRef.value?.clearFilter('versionId'),
+})
 
 function fetcher(query: Record<string, unknown>) {
   return sqlAnalysisApi.list(query)
@@ -218,11 +225,8 @@ const form = reactive({
 /** 表单里的版本下拉跟随表单中选的项目。 */
 const formVersionOptions = ref<Array<{ label: string; value: number }>>([])
 const formVersionProjectId = ref<number | null>(null)
-const pendingVersionId = ref<number | null>(null)
 
 watch(() => form.projectId, async (pid) => {
-  form.versionId = pendingVersionId.value
-  pendingVersionId.value = null
   if (!pid) {
     formVersionOptions.value = []
     formVersionProjectId.value = null
@@ -240,13 +244,19 @@ watch(() => form.projectId, async (pid) => {
   } catch { formVersionOptions.value = [] }
 }, { immediate: true })
 
+/** 表单里换了项目，版本必须跟着换，否则会挂到别的项目的版本上。 */
+function onProjectChange(): void {
+  form.versionId = null
+}
+
 function openCreate(): void {
   editing.value = null
-  pendingVersionId.value = null
+  const fq = tableRef.value?.filterQuery() ?? {}
   Object.assign(form, {
     title: '',
     projectId: appStore.currentProjectId ?? null,
-    versionId: null,
+    // 列表正按版本筛选时，新建的 SQL 分析直接挂到该版本下，保存后不会从列表里消失。
+    versionId: fq.versionId ? Number(fq.versionId) : null,
     riskLevel: 'none',
     sqlText: '',
     analysis: '',
@@ -256,10 +266,10 @@ function openCreate(): void {
 
 function openEdit(row: SqlAnalysis): void {
   editing.value = row
-  pendingVersionId.value = (row as any).versionId ?? null
   Object.assign(form, {
     title: row.title,
     projectId: row.projectId,
+    versionId: row.versionId ?? null,
     riskLevel: row.riskLevel,
     sqlText: row.sqlText,
     analysis: row.analysis,

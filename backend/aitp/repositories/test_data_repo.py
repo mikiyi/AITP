@@ -28,6 +28,7 @@ def decorate_batch(row: RowDict) -> dict[str, Any]:
         "id": row.get("id"),
         "projectId": row.get("project_id"),
         "moduleId": row.get("module_id"),
+        "versionId": row.get("version_id"),
         "batchNo": row.get("batch_no"),
         "ext": row.get("ext"),
         "formatLabel": row.get("format_label") or "",
@@ -67,8 +68,10 @@ class TestDataBatchRepository(BaseRepository):
     order_whitelist = {"id", "batch_no", "ext", "file_count", "total_bytes", "created_at"}
     searchable = ["batch_no", "ext", "format_label", "remark"]
 
-    def next_batch_no(self, project_id: int) -> str:
-        return next_no(self.conn, self.table, "batch_no", "TD", project_id)
+    def next_batch_no(self) -> str:
+        # 批次号在库里是全局唯一，生成目录也是全局的（generated/<batch_no>），
+        # 不能按项目分段计数，否则不同项目会撞号触发唯一索引冲突。
+        return next_no(self.conn, self.table, "batch_no", "TD")
 
 
 class TestDataFileRepository(BaseRepository):

@@ -14,7 +14,9 @@ from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.ai_record_repo import AIRecordRepository
 from ..services import ai_record_service, audit_service
-from .helpers import audit, body, commit, db, keyword_of, page_args, page_payload, path_int
+from .helpers import (
+    audit, body, commit, db, keyword_of, page_args, page_payload, path_int, scope_arg,
+)
 
 bp = Blueprint("ai_records", __name__)
 
@@ -27,7 +29,6 @@ def list_records() -> Response:
     filters: dict[str, object] = {}
     for key, column in (
         ("capability", "capability"),
-        ("reviewStatus", "review_status"),
         ("riskLevel", "risk_level"),
         ("sessionId", "session_id"),
         ("taskId", "task_id"),
@@ -36,13 +37,27 @@ def list_records() -> Response:
         if value in (None, ""):
             continue
         filters[column] = optional_int(value, key) if column in ("session_id", "task_id") else value
-    page = repo.list(filters, keyword_of() or None, page_num=page_num, page_size=page_size)
+    # 「待复核」与「无需复核」在库里都是 pending，靠 review_required 区分；
+    # 直接按 review_status 过滤会把两类混在一起。
+    review_status = str(request.args.get("reviewStatus") or "").strip()
+    if review_status in ("pending", "not_required"):
+        filters["review_status"] = ai_record_service.REVIEW_PENDING
+        filters["review_required"] = review_status == "pending"
+    elif review_status:
+        filters["review_status"] = review_status
+    page = repo.page_scoped(filters, keyword_of() or None, scope_arg(), page_num, page_size)
     payload = page_payload(page)
     payload["list"] = [repo.decorate(row) for row in payload["list"]]
+    project_id = scope_arg()
     payload["stats"] = {
-        "pending": repo.count_by_review(ai_record_service.REVIEW_PENDING),
-        "approved": repo.count_by_review(ai_record_service.REVIEW_APPROVED),
-        "rejected": repo.count_by_review(ai_record_service.REVIEW_REJECTED),
+        "pending": repo.count_by_review(
+            ai_record_service.REVIEW_PENDING, project_id, review_required=True
+        ),
+        "notRequired": repo.count_by_review(
+            ai_record_service.REVIEW_PENDING, project_id, review_required=False
+        ),
+        "approved": repo.count_by_review(ai_record_service.REVIEW_APPROVED, project_id),
+        "rejected": repo.count_by_review(ai_record_service.REVIEW_REJECTED, project_id),
     }
     return ok(payload)
 

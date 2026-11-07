@@ -23,6 +23,9 @@
           <template #default="{ row }">
             <div class="env-name">
               {{ row.name }}
+              <el-tag v-if="row.kind && row.kind !== 'test'" size="small" :type="kindTagType(row.kind)" effect="plain">
+                {{ row.kindLabel || row.kind }}
+              </el-tag>
               <el-tag v-if="row.isDefault" size="small" type="success" effect="plain">默认</el-tag>
             </div>
             <div v-if="row.description" class="muted env-desc">{{ row.description }}</div>
@@ -78,6 +81,14 @@
         <el-form-item label="环境名称" required>
           <el-input v-model="form.name" placeholder="例如：测试环境、预发环境" maxlength="100" />
         </el-form-item>
+        <el-form-item label="环境类型">
+          <el-radio-group v-model="form.kind">
+            <el-radio-button v-for="item in envKinds" :key="item.value" :value="item.value">
+              {{ item.label }}
+            </el-radio-button>
+          </el-radio-group>
+          <span class="muted form-hint">生产环境在发起轮次时会额外弹窗确认</span>
+        </el-form-item>
         <el-form-item label="说明">
           <el-input v-model="form.description" placeholder="选填，用途备注" maxlength="500" />
         </el-form-item>
@@ -92,6 +103,10 @@
         </el-form-item>
         <el-form-item label="健康检查路径">
           <el-input v-model="form.app.healthPath" placeholder="例如 /actuator/health，留空则探测根路径" />
+        </el-form-item>
+        <el-form-item label="资源监控地址">
+          <el-input v-model="form.app.metricsUrl" placeholder="选填，例如 http://192.168.1.10:9100/metrics" />
+          <span class="muted form-hint">远程服务器填 node_exporter 的 /metrics 或 JSON 指标接口；本机地址留空即自动采集</span>
         </el-form-item>
 
         <el-divider content-position="left">数据库服务器</el-divider>
@@ -119,6 +134,10 @@
             show-password
             :placeholder="form.id && form.db.hasPassword ? `已加密保存（${form.db.passwordMasked}），留空则不变` : '加密存入本机密钥库'"
           />
+        </el-form-item>
+        <el-form-item label="资源监控地址">
+          <el-input v-model="form.db.metricsUrl" placeholder="选填，例如 http://192.168.1.20:9100/metrics" />
+          <span class="muted form-hint">远程数据库服务器填 node_exporter 的 /metrics 或 JSON 指标接口；本机地址留空即自动采集</span>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -162,13 +181,28 @@ function dbTypeLabel(type: string): string {
   return DB_TYPE_LABELS[type] ?? type
 }
 
+const envKinds = [
+  { value: 'dev', label: '开发' },
+  { value: 'test', label: '测试' },
+  { value: 'staging', label: '预发' },
+  { value: 'prod', label: '生产' },
+]
+
+function kindTagType(kind: string): 'success' | 'warning' | 'danger' | 'info' {
+  if (kind === 'prod') return 'danger'
+  if (kind === 'staging') return 'warning'
+  if (kind === 'dev') return 'info'
+  return 'success'
+}
+
 const emptyForm = () => ({
   id: null as number | null,
   name: '',
   description: '',
+  kind: 'test',
   isDefault: false,
-  app: { baseUrl: '', healthPath: '' },
-  db: { type: 'mysql', host: '', port: null as number | null, name: '', username: '', password: '', hasPassword: false, passwordMasked: '' },
+  app: { baseUrl: '', healthPath: '', metricsUrl: '' },
+  db: { type: 'mysql', host: '', port: null as number | null, name: '', username: '', password: '', hasPassword: false, passwordMasked: '', metricsUrl: '' },
 })
 
 const form = reactive(emptyForm())
@@ -199,9 +233,11 @@ function openEdit(row: TestEnv): void {
   form.id = row.id
   form.name = row.name
   form.description = row.description
+  form.kind = row.kind || 'test'
   form.isDefault = row.isDefault
   form.app.baseUrl = row.app.baseUrl
   form.app.healthPath = row.app.healthPath
+  form.app.metricsUrl = row.app.metricsUrl ?? ''
   form.db.type = row.db.type
   form.db.host = row.db.host
   form.db.port = row.db.port
@@ -209,6 +245,7 @@ function openEdit(row: TestEnv): void {
   form.db.username = row.db.username
   form.db.hasPassword = row.db.hasPassword
   form.db.passwordMasked = row.db.passwordMasked
+  form.db.metricsUrl = row.db.metricsUrl ?? ''
   probeResult.value = null
   dialogVisible.value = true
 }
@@ -223,8 +260,9 @@ function payload(): Record<string, unknown> {
   return {
     name: form.name,
     description: form.description,
+    kind: form.kind,
     isDefault: form.isDefault,
-    app: { baseUrl: form.app.baseUrl, healthPath: form.app.healthPath },
+    app: { baseUrl: form.app.baseUrl, healthPath: form.app.healthPath, metricsUrl: form.app.metricsUrl },
     db: {
       type: form.db.type,
       host: form.db.host,
@@ -232,6 +270,7 @@ function payload(): Record<string, unknown> {
       name: form.db.name,
       username: form.db.username,
       password: form.db.password,
+      metricsUrl: form.db.metricsUrl,
     },
   }
 }
@@ -316,11 +355,16 @@ async function remove(row: TestEnv): Promise<void> {
   }
 }
 
+let activatedOnce = false
 onMounted(() => {
   void load()
 })
 onActivated(() => {
-  void load()
+  // keep-alive 首次挂载时 onActivated 也会触发，跳过以免重复请求
+  if (activatedOnce) {
+    void load()
+  }
+  activatedOnce = true
 })
 </script>
 

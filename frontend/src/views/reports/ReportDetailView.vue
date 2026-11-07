@@ -5,7 +5,31 @@
       <div class="toolbar" style="margin: 0">
         <el-button :icon="Back" @click="router.push('/reports')">返回列表</el-button>
         <el-button :icon="Edit" @click="openEdit">编辑</el-button>
-        <el-button :icon="Refresh" :loading="statsLoading" @click="loadStats">刷新数据</el-button>
+        <el-button
+          v-if="report && report.status !== 'published'"
+          type="success"
+          :icon="Promotion"
+          :loading="changingStatus"
+          @click="changeStatus('published')"
+        >
+          发布
+        </el-button>
+        <el-button
+          v-if="report && report.status !== 'archived'"
+          :icon="Box"
+          :loading="changingStatus"
+          @click="changeStatus('archived')"
+        >
+          归档
+        </el-button>
+        <el-button
+          v-if="report?.status === 'archived'"
+          :loading="changingStatus"
+          @click="changeStatus('draft')"
+        >
+          退回草稿
+        </el-button>
+        <el-button :icon="Refresh" :loading="statsLoading" @click="refreshAll">刷新数据</el-button>
       </div>
     </div>
 
@@ -44,12 +68,21 @@
       <ReportCharts :stats="stats" />
     </div>
 
+    <div v-if="report" class="panel panel-pad">
+      <ReportTrendPanel
+        ref="trendPanel"
+        :project-id="report.projectId"
+        :report-id="report.id"
+        @inserted="onTrendInserted"
+      />
+    </div>
+
     <div v-loading="loading" class="report-layout">
       <div class="panel panel-pad report-main">
         <el-descriptions v-if="report" :column="3" border size="small">
           <el-descriptions-item label="编号">{{ report.reportNo ?? '-' }}</el-descriptions-item>
-          <el-descriptions-item label="类型">{{ report.reportType ?? '-' }}</el-descriptions-item>
-          <el-descriptions-item label="状态">{{ report.status ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="类型">{{ reportTypeLabel(report.reportType) }}</el-descriptions-item>
+          <el-descriptions-item label="状态">{{ statusLabel(report.status) }}</el-descriptions-item>
           <el-descriptions-item label="统计开始">{{ report.periodStart || '-' }}</el-descriptions-item>
           <el-descriptions-item label="统计结束">{{ report.periodEnd || '-' }}</el-descriptions-item>
           <el-descriptions-item label="更新时间">{{ dateTimeText(report.updatedAt) }}</el-descriptions-item>
@@ -91,7 +124,7 @@
         <div class="report-exports">
           <el-button size="small" @click="openExport('md')">Markdown</el-button>
           <el-button size="small" @click="openExport('html')">HTML</el-button>
-          <el-button size="small" @click="openExport('pdf')">PDF</el-button>
+          <el-button size="small" :loading="exportingPdf" @click="openExport('pdf')">PDF</el-button>
           <el-button size="small" @click="openExport('print')">打印视图</el-button>
         </div>
       </div>
@@ -123,11 +156,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { Back, Edit, Refresh } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Back, Box, Edit, Promotion, Refresh } from '@element-plus/icons-vue'
 import MarkdownView from '@/components/MarkdownView.vue'
 import MetricCard from '@/components/MetricCard.vue'
 import ReportCharts from '@/components/ReportCharts.vue'
+import ReportTrendPanel from '@/components/ReportTrendPanel.vue'
 import { reportApi } from '@/api'
 import { dateTimeText } from '@/utils/format'
 import type { Report, ReportItem, ReportStats } from '@/api/types'
@@ -139,7 +173,9 @@ const loading = ref(false)
 const saving = ref(false)
 const savingItems = ref(false)
 const statsLoading = ref(false)
+const exportingPdf = ref(false)
 const report = ref<Report | null>(null)
+const trendPanel = ref<InstanceType<typeof ReportTrendPanel> | null>(null)
 const items = ref<ReportItem[]>([])
 const stats = ref<ReportStats | null>(null)
 
@@ -159,6 +195,56 @@ const metrics = computed(
 
 const editVisible = ref(false)
 const editForm = reactive({ title: '', periodStart: '', periodEnd: '', content: '' })
+const changingStatus = ref(false)
+
+const TYPE_LABELS: Record<string, string> = {
+  summary: '测试总结',
+  iteration: '迭代报告',
+  regression: '回归报告',
+  acceptance: '验收报告',
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  draft: '草稿',
+  published: '已发布',
+  archived: '已归档',
+}
+
+function reportTypeLabel(value: string | undefined): string {
+  return value ? TYPE_LABELS[value] ?? value : '-'
+}
+
+function statusLabel(value: string | undefined): string {
+  return value ? STATUS_LABELS[value] ?? value : '-'
+}
+
+async function changeStatus(next: 'draft' | 'published' | 'archived'): Promise<void> {
+  if (!report.value) {
+    return
+  }
+  if (next !== 'draft') {
+    const tips: Record<string, string> = {
+      published: '发布后代表本轮报告已定稿，是否继续？',
+      archived: '归档后报告会从默认视图淡出，可在状态筛选「已归档」中找回，是否继续？',
+    }
+    try {
+      await ElMessageBox.confirm(tips[next], next === 'published' ? '发布确认' : '归档确认', {
+        type: 'warning',
+      })
+    } catch {
+      return
+    }
+  }
+  changingStatus.value = true
+  try {
+    report.value = await reportApi.update(report.value.id, { status: next })
+    ElMessage.success(`已${next === 'draft' ? '退回草稿' : next === 'published' ? '发布' : '归档'}`)
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '状态更新失败')
+  } finally {
+    changingStatus.value = false
+  }
+}
 
 interface SectionOption {
   value: string
@@ -171,6 +257,8 @@ const sectionOptions: Array<{ value: string; label: string }> = [
   { value: 'progress', label: '进展' },
   { value: 'case', label: '用例情况' },
   { value: 'bug', label: '缺陷情况' },
+  { value: 'coverage', label: '覆盖情况' },
+  { value: 'trend', label: '趋势' },
   { value: 'risk', label: '风险' },
   { value: 'conclusion', label: '结论与建议' },
 ]
@@ -207,6 +295,18 @@ async function loadStats(): Promise<void> {
   }
 }
 
+async function refreshAll(): Promise<void> {
+  await Promise.all([loadStats(), trendPanel.value?.refresh()])
+}
+
+function onTrendInserted(next: ReportItem[] | unknown[]): void {
+  items.value = next as ReportItem[]
+  reportSections.value = sectionOptions.map((item) => ({
+    ...item,
+    enabled: items.value.some((entry) => entry.section === item.value),
+  }))
+}
+
 function openEdit(): void {
   if (!report.value) {
     return
@@ -241,6 +341,20 @@ async function saveItems(): Promise<void> {
   if (!report.value) {
     return
   }
+  const removedWithContent = items.value.filter(
+    (item) => item.content && !enabledSections.value.includes(item.section),
+  )
+  if (removedWithContent.length) {
+    try {
+      await ElMessageBox.confirm(
+        `取消勾选的 ${removedWithContent.length} 个章节已有正文，保存后会从报告中删除，是否继续？`,
+        '删除章节确认',
+        { type: 'warning' },
+      )
+    } catch {
+      return
+    }
+  }
   savingItems.value = true
   try {
     const payload = enabledSections.value.map((section, index) => {
@@ -263,11 +377,38 @@ async function saveItems(): Promise<void> {
   }
 }
 
-function openExport(format: 'md' | 'html' | 'pdf' | 'print'): void {
+/** 本机没有可用中文字体时的降级说明：Windows/macOS 自带，Linux 需装 fonts-noto-cjk。 */
+const PDF_FONT_WARNING =
+  '本机没找到可用中文字体，PDF 已按英文字体导出，中文可能显示为方块。' +
+  'Windows 与 macOS 一般自带（黑体 / 微软雅黑 / 苹方），Linux 请安装中文字体，' +
+  '如 sudo apt install fonts-noto-cjk 或 sudo dnf install google-noto-sans-cjk-fonts，装好无需重启，重新导出即可。'
+
+async function openExport(format: 'md' | 'html' | 'pdf' | 'print'): Promise<void> {
   if (!report.value) {
     return
   }
-  window.open(reportApi.exportUrl(report.value.id, format), '_blank')
+  if (format !== 'pdf') {
+    window.open(reportApi.exportUrl(report.value.id, format), '_blank')
+    return
+  }
+  // PDF 必须走 fetch：window.open 读不到响应头，字体降级就无从提示
+  exportingPdf.value = true
+  try {
+    const result = await reportApi.exportBlob(report.value.id, 'pdf')
+    const objectUrl = URL.createObjectURL(result.blob)
+    const link = document.createElement('a')
+    link.href = objectUrl
+    link.download = result.filename || `${report.value.title || '测试报告'}.pdf`
+    link.click()
+    URL.revokeObjectURL(objectUrl)
+    if (result.fontWarning) {
+      ElMessage.warning(PDF_FONT_WARNING)
+    }
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : 'PDF 导出失败')
+  } finally {
+    exportingPdf.value = false
+  }
 }
 
 onMounted(() => {

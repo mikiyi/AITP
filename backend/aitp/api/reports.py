@@ -17,9 +17,10 @@ from ..repositories.knowledge_ref_repo import KnowledgeRefRepository
 from ..repositories.project_repo import ProjectRepository
 from ..repositories.report_repo import ReportRepository
 from ..services import nav_badge_service
-from ..services import audit_service, report_exporter
-from .helpers import (attach_version_codes, audit, body, commit, db, keyword_of, page_args, page_payload,
-                     path_int, query_filters)
+from ..services import audit_service, report_exporter, report_trends
+from .helpers import (attach_version_codes, audit, body, check_ref_project, commit, db,
+                     guard_project_scope, keyword_of, page_args, page_payload, path_int, query_filters,
+                     reject_project_move, require_project, scope_arg)
 
 bp = Blueprint("reports", __name__)
 
@@ -231,6 +232,7 @@ def get_report(pk: str) -> Response:
     row = repo.get_detail(path_int(pk))
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "报告不存在")
+    guard_project_scope(row, scope_arg(), "报告")
     payload = _to_public(row)
     payload["items"] = repo.list_items(path_int(pk))
     payload["knowledgeRefs"] = _knowledge_refs(conn, path_int(pk))
@@ -243,6 +245,10 @@ def create_report() -> Response:
     data = body()
     project_id = require_int(data.get("projectId"), "projectId")
     title = require_str(data.get("title"), "title", 500)
+    require_project(conn, project_id)
+    version_id = check_ref_project(
+        conn, "biz_project_version", data.get("versionId"), project_id, "项目版本", "versionId"
+    )
     report_type = check_choice(data.get("reportType"), REPORT_TYPE, "reportType", "summary") or "summary"
     repo = ReportRepository(conn)
     new_id = repo.insert({
@@ -256,7 +262,7 @@ def create_report() -> Response:
         "content": optional_str(data.get("content"), "content", 500000),
         "status": "draft",
         "creator": optional_str(data.get("creator"), "creator", 64),
-        "version_id": optional_int(data.get("versionId"), "versionId"),
+        "version_id": version_id,
     })
     _sync_knowledge_refs(conn, new_id, _ref_ids(data))
     commit(conn)
@@ -276,6 +282,7 @@ def update_report(pk: str) -> Response:
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "报告不存在")
     data = body()
+    reject_project_move(data, row.get("project_id"), "报告")
     payload: dict[str, Any] = {}
     for field, column in (("title", "title"), ("summary", "summary"), ("content", "content"),
                           ("periodStart", "period_start"), ("periodEnd", "period_end")):
@@ -286,7 +293,10 @@ def update_report(pk: str) -> Response:
     if "status" in data:
         payload["status"] = check_choice(data["status"], REPORT_STATUS, "status", row["status"])
     if "versionId" in data:
-        payload["version_id"] = optional_int(data["versionId"], "versionId")
+        payload["version_id"] = check_ref_project(
+            conn, "biz_project_version", data["versionId"],
+            row.get("project_id"), "项目版本", "versionId",
+        )
     repo.update(target, payload)
     if "knowledgeRefs" in data:
         _sync_knowledge_refs(conn, target, _ref_ids(data))
@@ -415,6 +425,78 @@ def export_report(pk: str) -> Response:
     return response
 
 
+@bp.get("/trends")
+def report_trends_api() -> Response:
+    """项目指标趋势：按天/周统计执行、通过率与缺陷进出。"""
+    conn = db()
+    project_id = require_int(request.args.get("projectId"), "projectId")
+    granularity = check_choice(
+        request.args.get("granularity"), report_trends.GRANULARITIES, "granularity", "day"
+    ) or "day"
+    periods = optional_int(request.args.get("periods"), "periods")
+    return ok(report_trends.trend(
+        conn, project_id, granularity, periods, scope_arg(field="versionId")
+    ))
+
+
+@bp.get("/version-compare")
+def report_version_compare_api() -> Response:
+    """同项目两个版本的用例、执行、缺陷与准入并排对比。"""
+    conn = db()
+    project_id = require_int(request.args.get("projectId"), "projectId")
+    base_version_id = require_int(request.args.get("baseVersionId"), "baseVersionId")
+    target_version_id = require_int(request.args.get("targetVersionId"), "targetVersionId")
+    payload = report_trends.compare_versions(
+        conn, project_id, base_version_id, target_version_id
+    )
+    return ok(payload)
+
+
+@bp.post("/<pk>/trend-item")
+def insert_trend_item(pk: str) -> Response:
+    """把当前趋势表插入报告章节；重复插入会覆盖已有趋势章节。"""
+    conn = db()
+    repo = ReportRepository(conn)
+    target = path_int(pk)
+    row = repo.get(target)
+    if not row:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "报告不存在")
+    data = body()
+    granularity = check_choice(
+        data.get("granularity"), report_trends.GRANULARITIES, "granularity", "day"
+    ) or "day"
+    periods = optional_int(data.get("periods"), "periods")
+    project_id = int(row.get("project_id") or 0)
+    payload = report_trends.trend(conn, project_id, granularity, periods)
+    content = report_trends.trend_markdown(payload)
+    title = f"指标趋势（{payload['granularityLabel']}）"
+
+    kept: list[dict[str, Any]] = []
+    replaced = False
+    for item in repo.list_items(target):
+        if str(item.get("section") or "") == "trend":
+            if not replaced:
+                kept.append({"section": "trend", "title": title, "content": content,
+                             "metric": payload["totals"]})
+                replaced = True
+            continue
+        kept.append({
+            "section": item.get("section"),
+            "title": item.get("title"),
+            "content": item.get("content"),
+            "metric": item.get("metric"),
+        })
+    if not replaced:
+        kept.append({"section": "trend", "title": title, "content": content,
+                     "metric": payload["totals"]})
+    repo.replace_items(target, kept)
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_REPORT, target,
+          str(row.get("title") or ""),
+          {"trend": True, "granularity": granularity, "periods": periods})
+    return ok({"reportId": target, "items": repo.list_items(target)})
+
+
 @bp.get("/<pk>/stats")
 def report_stats(pk: str) -> Response:
     """报告图表数据：按报告所属项目统计用例与缺陷分布。"""
@@ -482,6 +564,7 @@ def adopt_report() -> Response:
     repo = ReportRepository(conn)
     new_id = repo.insert({
         "project_id": project_id,
+        "version_id": optional_int(data.get("versionId"), "versionId"),
         "report_no": repo.next_report_no(project_id),
         "title": title,
         "report_type": report_type,

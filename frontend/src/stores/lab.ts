@@ -6,7 +6,7 @@ import type { CapabilitySpec, ModuleOption } from '@/api/types'
 /** AI 实验室状态：能力目录、功能点选项、当前会话。 */
 export const useLabStore = defineStore('lab', () => {
   const capabilities = ref<CapabilitySpec[]>([])
-  /** 全部能力（含知识问答），按需加载。 */
+  /** 完整能力目录：记录/会话列表的能力筛选与标签回显用它，不只首页卡片。 */
   const allCapabilities = ref<CapabilitySpec[]>([])
   const moduleOptions = ref<ModuleOption[]>([])
   const currentSessionId = ref<number | null>(null)

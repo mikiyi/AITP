@@ -13,7 +13,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from ..common.pagination import Page, RowDict
+from ..common.pagination import MAX_PAGE_SIZE, Page, RowDict, build_page
 from .base import BaseRepository
 
 #: 四类脚本
@@ -61,6 +61,7 @@ RUN_STATUS_SUCCESS = "success"
 RUN_STATUS_FAILED = "failed"
 RUN_STATUS_TIMEOUT = "timeout"
 RUN_STATUS_ERROR = "error"
+RUN_STATUS_CANCELLED = "cancelled"
 
 RUN_STATUSES = (
     RUN_STATUS_RUNNING,
@@ -68,6 +69,7 @@ RUN_STATUSES = (
     RUN_STATUS_FAILED,
     RUN_STATUS_TIMEOUT,
     RUN_STATUS_ERROR,
+    RUN_STATUS_CANCELLED,
 )
 
 #: 脚本状态
@@ -75,6 +77,32 @@ SCRIPT_STATUS_READY = "ready"
 SCRIPT_STATUS_DISABLED = "disabled"
 
 SCRIPT_STATUSES = (SCRIPT_STATUS_READY, SCRIPT_STATUS_DISABLED)
+
+#: 脚本 → 用例的映射方式
+MATCH_MODE_CASE_NO = "case_no"
+MATCH_MODE_TAG = "tag"
+
+MATCH_MODES = (MATCH_MODE_CASE_NO, MATCH_MODE_TAG)
+
+MATCH_MODE_LABEL = {
+    MATCH_MODE_CASE_NO: "按用例编号",
+    MATCH_MODE_TAG: "按标签",
+}
+
+#: 自动化结果回写状态
+WRITEBACK_PARSED = "parsed"
+WRITEBACK_PARTIAL = "partial"
+WRITEBACK_FALLBACK = "fallback"
+WRITEBACK_SKIPPED = "skipped"
+WRITEBACK_FAILED = "failed"
+
+WRITEBACK_LABEL = {
+    WRITEBACK_PARSED: "已解析回写",
+    WRITEBACK_PARTIAL: "部分回写",
+    WRITEBACK_FALLBACK: "按退出码回写",
+    WRITEBACK_SKIPPED: "未配置覆盖用例",
+    WRITEBACK_FAILED: "回写失败",
+}
 
 
 class AutomationScriptRepository(BaseRepository):
@@ -105,11 +133,14 @@ class AutomationScriptRepository(BaseRepository):
             index += 1
         return f"{prefix}-{index:03d}"
 
-    def count_by_category(self) -> dict[str, int]:
-        rows = self.conn.execute(
-            "SELECT category, COUNT(*) AS c FROM biz_automation_script"
-            " WHERE is_deleted = 0 GROUP BY category"
-        ).fetchall()
+    def count_by_category(self, project_id: int | None = None) -> dict[str, int]:
+        sql = "SELECT category, COUNT(*) AS c FROM biz_automation_script WHERE is_deleted = 0"
+        params: list[Any] = []
+        if project_id:
+            sql += " AND project_id = ?"
+            params.append(int(project_id))
+        sql += " GROUP BY category"
+        rows = self.conn.execute(sql, params).fetchall()
         counts = {category: 0 for category in SCRIPT_CATEGORIES}
         for row in rows:
             key = str(row["category"] or "")
@@ -156,14 +187,59 @@ class AutomationRunRepository(BaseRepository):
         ).fetchone()
         return dict(row) if row else None
 
-    def stats_by_category(self) -> dict[str, dict[str, int]]:
-        """四类脚本各自的执行统计：总数 / 成功 / 失败。"""
+    def list_for_test_run(self, test_run_id: int) -> list[RowDict]:
+        """某个测试轮次里跑过的自动化脚本，按执行时间正序。"""
         rows = self.conn.execute(
+            "SELECT * FROM biz_automation_run WHERE test_run_id = ? AND is_deleted = 0"
+            " ORDER BY id",
+            (test_run_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def page_with_project(
+        self,
+        filters: dict[str, Any] | None,
+        keyword: str | None,
+        project_id: int | None,
+        page_num: int,
+        page_size: int,
+    ) -> Page:
+        """执行留痕表没有 project_id 列，项目维度只能顺着所属脚本收敛。"""
+        where, params = self._build_where(filters, keyword)
+        if project_id is not None:
+            where += (" AND script_id IN (SELECT id FROM biz_automation_script"
+                      " WHERE is_deleted = 0 AND project_id = ?)")
+            params.append(project_id)
+        limit = max(1, min(int(page_size or 20), MAX_PAGE_SIZE))
+        offset = (max(1, int(page_num or 1)) - 1) * limit
+        total = int(self.conn.execute(
+            f"SELECT COUNT(*) FROM {self.table} WHERE {where}", params
+        ).fetchone()[0])
+        rows = self.conn.execute(
+            f"SELECT * FROM {self.table} WHERE {where}"
+            f" ORDER BY {self.default_order} {self.default_order_dir.upper()}"
+            " LIMIT ? OFFSET ?",
+            [*params, limit, offset],
+        ).fetchall()
+        return build_page(rows, total, page_num, limit)
+
+    def stats_by_category(self, project_id: int | None = None) -> dict[str, dict[str, int]]:
+        """四类脚本各自的执行统计：总数 / 成功 / 失败。"""
+        sql = (
             "SELECT category, COUNT(*) AS total,"
             " SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success,"
             " SUM(CASE WHEN status IN ('failed','error','timeout') THEN 1 ELSE 0 END) AS failed"
-            " FROM biz_automation_run WHERE is_deleted = 0 GROUP BY category"
-        ).fetchall()
+            " FROM biz_automation_run WHERE is_deleted = 0"
+        )
+        params: list[Any] = []
+        if project_id:
+            sql += (
+                " AND script_id IN (SELECT id FROM biz_automation_script"
+                " WHERE is_deleted = 0 AND project_id = ?)"
+            )
+            params.append(int(project_id))
+        sql += " GROUP BY category"
+        rows = self.conn.execute(sql, params).fetchall()
         stats = {
             category: {"total": 0, "success": 0, "failed": 0}
             for category in SCRIPT_CATEGORIES
@@ -195,6 +271,7 @@ def script_summary(row: dict[str, Any]) -> dict[str, Any]:
         "appPlatforms": row.get("app_platforms") or "",
         "projectId": row.get("project_id"),
         "moduleId": row.get("module_id"),
+        "envId": row.get("env_id"),
         "description": row.get("description") or "",
         "fileName": row.get("file_name") or "",
         "content": row.get("content") or "",
@@ -202,6 +279,8 @@ def script_summary(row: dict[str, Any]) -> dict[str, Any]:
         "runMode": row.get("run_mode") or RUN_MODE_SCRIPT,
         "entryCommand": row.get("entry_command") or "",
         "timeoutSeconds": row.get("timeout_seconds"),
+        "caseMatchMode": row.get("case_match_mode") or MATCH_MODE_CASE_NO,
+        "caseMatchValue": row.get("case_match_value") or "",
         "status": row.get("status") or SCRIPT_STATUS_READY,
         "lastRunStatus": row.get("last_run_status") or "",
         "lastRunAt": row.get("last_run_at") or "",
@@ -221,6 +300,12 @@ def run_summary(row: dict[str, Any]) -> dict[str, Any]:
         "scriptName": row.get("script_name") or "",
         "category": row.get("category") or "",
         "categoryLabel": CATEGORY_LABEL.get(str(row.get("category") or ""), ""),
+        "envId": row.get("env_id"),
+        "taskId": row.get("task_id"),
+        "testRunId": row.get("test_run_id"),
+        "writebackStatus": row.get("writeback_status") or "",
+        "writebackLabel": WRITEBACK_LABEL.get(str(row.get("writeback_status") or ""), ""),
+        "writebackSummary": row.get("writeback_summary") or "",
         "status": row.get("status") or "",
         "exitCode": row.get("exit_code"),
         "durationMs": row.get("duration_ms"),

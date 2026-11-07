@@ -30,6 +30,17 @@
           <el-switch v-model="autoReindex" />
           <div class="muted form-hint">开启后启动会扫描知识库目录，按文件内容重建索引</div>
         </el-form-item>
+
+        <el-form-item label="问答助手默认模式">
+          <el-radio-group v-model="assistantDefaultMode">
+            <el-radio value="llm">基于大模型回答</el-radio>
+            <el-radio value="kb">基于知识库回答</el-radio>
+            <el-radio value="hybrid">知识库+大模型补强</el-radio>
+          </el-radio-group>
+          <div class="muted form-hint">
+            打开知识库问答助手时预选该模式；助手备注文案右侧的「默认」标识会跟随这里变化。默认为“知识库+大模型补强”模式。
+          </div>
+        </el-form-item>
       </el-form>
 
       <el-descriptions :column="4" border size="small" class="storage-info">
@@ -81,11 +92,15 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check, FolderOpened, Refresh, RefreshRight } from '@element-plus/icons-vue'
 import { knowledgeApi } from '@/api'
 import type { KnowledgeStorage } from '@/api/types'
+import { useKnowledgeAssistantStore } from '@/stores/knowledgeAssistant'
+
+const assistantStore = useKnowledgeAssistantStore()
 
 const storage = ref<KnowledgeStorage>({
   storagePath: '',
   fileMode: 'mirror',
   autoReindex: false,
+  assistantDefaultMode: 'hybrid',
   articleCount: 0,
   fileCount: 0,
   exists: false,
@@ -101,6 +116,7 @@ const migrateTarget = ref('')
 const storagePath = ref('')
 const fileMode = ref('mirror')
 const autoReindex = ref(false)
+const assistantDefaultMode = ref('hybrid')
 
 async function load(): Promise<void> {
   loading.value = true
@@ -110,6 +126,8 @@ async function load(): Promise<void> {
     storagePath.value = info.storagePath
     fileMode.value = info.fileMode || 'mirror'
     autoReindex.value = info.autoReindex
+    assistantDefaultMode.value = info.assistantDefaultMode || 'hybrid'
+    assistantStore.setDefaultMode(assistantDefaultMode.value)
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载失败')
   } finally {
@@ -120,11 +138,13 @@ async function load(): Promise<void> {
 async function save(): Promise<void> {
   saving.value = true
   try {
-    await knowledgeApi.updateStorage({
+    const info = await knowledgeApi.updateStorage({
       storagePath: storagePath.value.trim(),
       fileMode: fileMode.value,
       autoReindex: autoReindex.value,
+      assistantDefaultMode: assistantDefaultMode.value,
     })
+    assistantStore.setDefaultMode(info.assistantDefaultMode)
     ElMessage.success('已保存')
     await load()
   } catch (err) {
@@ -134,13 +154,21 @@ async function save(): Promise<void> {
   }
 }
 
+function revivedText(revived: number): string {
+  return revived > 0 ? `，找回已删除条目 ${revived}` : ''
+}
+
 async function doReindex(): Promise<void> {
   reindexing.value = true
   try {
     const result = await knowledgeApi.reindex()
-    ElMessage.success(
-      `索引已重建：扫描 ${result.scanned} 个文件，新增 ${result.imported}，更新 ${result.updated}，跳过 ${result.skipped}`,
-    )
+    if (result.mode === 'db_only') {
+      ElMessage.info('仅数据库模式不读取目录文件，已按库里内容重建全文索引')
+    } else {
+      ElMessage.success(
+        `索引已重建：扫描 ${result.scanned} 个文件，新增 ${result.imported}，更新 ${result.updated}${revivedText(result.revived)}，跳过 ${result.skipped}`,
+      )
+    }
     await load()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '重建索引失败')
@@ -167,7 +195,7 @@ async function doMigrate(): Promise<void> {
   try {
     const result = await knowledgeApi.migrateStorage({ targetPath: migrateTarget.value.trim() })
     ElMessage.success(
-      `迁移完成：复制 ${result.copied} 个文件，新增 ${result.imported}，更新 ${result.updated}，跳过 ${result.skipped}`,
+      `迁移完成：复制 ${result.copied} 个文件，新增 ${result.imported}，更新 ${result.updated}${revivedText(result.revived)}，跳过 ${result.skipped}`,
     )
     migrateVisible.value = false
     migrateTarget.value = ''
@@ -179,16 +207,22 @@ async function doMigrate(): Promise<void> {
   }
 }
 
+let activatedOnce = false
 onMounted(() => {
   void load()
 })
 onActivated(() => {
-  void load()
+  // keep-alive 首次挂载时 onActivated 也会触发，跳过以免重复请求
+  if (activatedOnce) {
+    void load()
+  }
+  activatedOnce = true
 })
 </script>
 
 <style scoped>
 .form-hint {
+  width: 100%;
   font-size: 12px;
   line-height: 1.5;
   margin-top: 4px;

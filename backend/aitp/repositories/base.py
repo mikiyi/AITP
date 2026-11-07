@@ -14,6 +14,9 @@ ParamList = list[Any]
 # sqlite3.Row 列表
 SqlRowList = list[sqlite3.Row]
 
+#: 筛选值哨兵：表示「该字段未挂值」，用于「未关联功能点」这类空值筛选
+NULL_FILTER = "__null__"
+
 
 class BaseRepository:
     table: str = ""
@@ -151,6 +154,8 @@ class BaseRepository:
             elif isinstance(value, bool):
                 clauses.append(f"{key} = ?")
                 params.append(1 if value else 0)
+            elif value == NULL_FILTER:
+                clauses.append(f"{key} IS NULL")
             else:
                 clauses.append(f"{key} = ?")
                 params.append(value)

@@ -15,7 +15,8 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from ..ai.capability_codes import label_of, spec_of
+from ..ai.capability_codes import CAP_COMPOSITE, label_of, spec_of
+from ..ai.masking import info_from_counts
 from ..common.time_utils import utcnow_iso
 from ..errors import AppError, ErrorCode
 from ..prompts.registry import get_registry
@@ -28,7 +29,7 @@ from . import ai_record_service, lab_service
 #: 父任务类型
 COMPOSITE_TASK = "composite"
 #: 父任务记录的能力标记
-COMPOSITE_CAPABILITY = "composite"
+COMPOSITE_CAPABILITY = CAP_COMPOSITE
 
 #: 单次流水线最多多少步
 MAX_STEPS = 12
@@ -40,6 +41,21 @@ def _summarize(text: str, limit: int = 200) -> str:
         if clean:
             return clean[:limit]
     return (text or "")[:limit]
+
+
+def _merge_masks(masks: list[dict[str, Any]]) -> dict[str, Any]:
+    """整条流水线的脱敏汇总：各步骤类型计数相加。"""
+    counts: dict[str, int] = {}
+    enabled = True
+    applied = False
+    for mask in masks:
+        enabled = enabled and bool(mask.get("enabled", True))
+        applied = applied or bool(mask.get("applied"))
+        for item in mask.get("types") or []:
+            code = str(item.get("code") or "")
+            if code:
+                counts[code] = counts.get(code, 0) + int(item.get("count") or 0)
+    return info_from_counts(counts, enabled=enabled, applied=applied).as_dict()
 
 
 def _input_summary(variables: dict[str, Any]) -> str:
@@ -160,6 +176,7 @@ def run_composite(
     trajectories: list[dict[str, Any]] = []
     records: list[int] = []
     outputs: list[str] = []
+    mask_snapshots: list[dict[str, Any]] = []
     failed = False
     error_message = ""
 
@@ -168,6 +185,12 @@ def run_composite(
         variables = dict(step.get("variables") or {})
         step_module_id = step.get("moduleId") or module_id
         step_name = str(step.get("name") or label_of(capability))
+
+        # 每一步边界重读父任务状态：用户在别的请求里点了取消，
+        # 这里就得停下来，否则剩下的步骤会继续跑、继续计费。
+        if str((task_repo.get(parent_task_id) or {}).get("status")) == "cancelled":
+            error_message = "用户取消"
+            break
 
         child_task_id = task_repo.start(
             capability,
@@ -243,6 +266,7 @@ def run_composite(
             usage=result.usage,
             prompt_code=result.prompt_code,
             latency_ms=result.latency_ms,
+            mask=result.mask,
             steps=[{
                 "order": index,
                 "capability": capability,
@@ -255,6 +279,7 @@ def run_composite(
             }],
         ))
         records.append(record_id)
+        mask_snapshots.append(result.mask)
         outputs.append(f"【{step_name}】\n{result.output}")
         trajectories.append({
             "order": index,
@@ -271,8 +296,15 @@ def run_composite(
         })
         conn.commit()
 
+    # 取消可能发生在最后一步执行期间：收尾前再读一次父任务状态，
+    # 否则会把用户明确叫停的流水线写成 success。
+    if not failed and str((task_repo.get(parent_task_id) or {}).get("status")) == "cancelled":
+        error_message = "用户取消"
+
     skipped = len(steps) - len(trajectories)
+    cancelled = error_message == "用户取消" and not failed
     if skipped > 0:
+        reason = "任务已取消，未执行" if cancelled else "前序步骤失败，已跳过"
         for order in range(len(trajectories) + 1, len(steps) + 1):
             pending = steps[order - 1]
             trajectories.append({
@@ -281,11 +313,15 @@ def run_composite(
                 "label": label_of(str(pending["capability"])),
                 "stepName": str(pending.get("name") or label_of(str(pending["capability"]))),
                 "status": "skipped",
-                "errorMessage": "前序步骤失败，已跳过",
+                "errorMessage": reason,
             })
 
     output_text = "\n\n".join(outputs)
-    parent_status = "failed" if failed else "success"
+    if cancelled:
+        # 取消不是失败：写 success 会把用户明确叫停的流水线记成跑通了
+        parent_status = "cancelled"
+    else:
+        parent_status = "failed" if failed else "success"
     task_repo.finish(
         parent_task_id,
         parent_status,
@@ -312,6 +348,7 @@ def run_composite(
                 session_id=session_id,
                 route=route or [],
                 steps=trajectories,
+                mask=_merge_masks(mask_snapshots),
             ),
         )
     conn.commit()

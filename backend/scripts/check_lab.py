@@ -19,6 +19,7 @@ import os
 import pathlib
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -343,6 +344,51 @@ def check_offline(api: Api) -> None:
                 os.environ[key] = value
 
 
+def check_restart_reconcile(workdir: pathlib.Path) -> None:
+    """服务重启时还挂在 running 的任务要被判中断，不能永远显示「执行中」。"""
+    db_path = workdir / "check_lab.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        task_id = int(conn.execute("SELECT MAX(id) FROM biz_ai_task").fetchone()[0] or 0)
+        if not task_id:
+            check("存在可用于重启校验的任务", False, "biz_ai_task 为空")
+            return
+        conn.execute(
+            "UPDATE biz_ai_task SET status = 'running', finished_at = NULL, error_message = NULL"
+            " WHERE id = ?",
+            (task_id,),
+        )
+        conn.execute(
+            "INSERT INTO biz_ai_step (task_id, capability, step_order, step_name, status,"
+            " created_at, updated_at) VALUES (?, 'requirement_confirm', 1, '重启校验步骤',"
+            " 'running', '2026-11-06T00:00:00Z', '2026-11-06T00:00:00Z')",
+            (task_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    build_app(workdir)
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        task = conn.execute(
+            "SELECT status, error_message FROM biz_ai_task WHERE id = ?", (task_id,)
+        ).fetchone()
+        step = conn.execute(
+            "SELECT status, error_message FROM biz_ai_step WHERE task_id = ?", (task_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    check("重启后 running 任务判为失败", str(task["status"]) == "failed", str(dict(task))[:200])
+    check("重启后任务写明中断原因", "中断" in str(task["error_message"]), str(task["error_message"]))
+    check("重启后步骤一并中断", str(step["status"]) == "failed" and "中断" in str(step["error_message"]),
+          str(dict(step))[:200])
+
+
 def main() -> int:
     workdir = pathlib.Path(tempfile.mkdtemp(prefix="aitp_lab_"))
     port = free_port()
@@ -382,6 +428,7 @@ def main() -> int:
         check_module_binding(api, feature_id)
         check_knowledge_flow(api)
         check_offline(api)
+        check_restart_reconcile(workdir)
     finally:
         mock.terminate()
         try:

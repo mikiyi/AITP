@@ -42,7 +42,7 @@ exit /b 2
 if not exist "logs" mkdir "logs" >nul 2>&1
 
 echo ============================================================
-echo   AITestPilot (AITP) 本地 AI 测试工作台
+echo   AITestPlatform (AITP) 本地 AI 测试工作台
 echo   http://%HOST%:%PORT%
 echo ============================================================
 echo.

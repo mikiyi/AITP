@@ -6,6 +6,7 @@ from typing import Any
 
 from ..common.enums import BUG_OPEN_STATUSES, BUG_TRANSITIONS
 from ..common.pagination import RowDict, RowList
+from ..common.time_utils import utcnow_iso
 from ..errors import AppError, ErrorCode
 from .base import BaseRepository, loads
 from .numbering import next_no
@@ -47,13 +48,14 @@ class BugRepository(BaseRepository):
             )
 
         self.update(pk, {"status": to_status})
+        now = utcnow_iso()
         self.conn.execute(
             """
             INSERT INTO biz_bug_status_log
                 (bug_id, from_status, to_status, operator, comment, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (pk, from_status, to_status, operator, comment),
+            (pk, from_status, to_status, operator, comment, now, now),
         )
         return {"id": pk, "fromStatus": from_status, "toStatus": to_status}
 
@@ -61,7 +63,18 @@ class BugRepository(BaseRepository):
         rows = self.conn.execute(
             "SELECT * FROM biz_bug_status_log WHERE bug_id = ? ORDER BY id ASC", (bug_id,)
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [
+            {
+                "id": int(row["id"]),
+                "bugId": int(row["bug_id"]),
+                "fromStatus": row["from_status"],
+                "toStatus": row["to_status"],
+                "operator": row["operator"],
+                "comment": row["comment"],
+                "createdAt": row["created_at"],
+            }
+            for row in rows
+        ]
 
     def link_cases(self, bug_id: int, case_ids: list[int], relation_type: str = "related") -> int:
         linked = 0

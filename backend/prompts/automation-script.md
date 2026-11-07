@@ -33,11 +33,11 @@ optional: "baseUrl,extraRequirements,appPlatforms"
 生成一份**可直接保存为 .py 并运行**的自动化测试脚本。
 
 ## 硬性要求
-1. 只使用 Python，依赖只允许：`requests`、`pytest`、`selenium`、`playwright`、`appium`、`unittest`、`os`、`sys`、`time`、`json`、`logging`、`assert`。不要引入其他第三方库。
+1. 只使用 Python，依赖只允许：`requests`、`pytest`、`selenium`、`playwright`、`appium`、`hypium`、`uiautomator2`、`unittest`、`os`、`sys`、`time`、`json`、`logging`、`assert`。不要引入其他第三方库。
 2. 框架与目标类型必须与上面选择的一致：
    - 目标类型为 web：使用 `selenium` 或 `playwright`（按所选框架），以浏览器驱动操作页面元素
    - 目标类型为接口：使用 `requests`（或所选框架对应的 HTTP 客户端），覆盖正常、参数边界、鉴权失败三类请求
-   - 目标类型为 app：使用 `appium`（或所选框架对应的移动端客户端），并按上面选择的平台区分平台能力
+   - 目标类型为 app：按平台选框架，**鸿蒙（HOS）只能用 Hypium（`from hypium import ui`）**，iOS 与 Android 用 Appium（`appium-python-client`），只勾了 Android 时也可用 `uiautomator2`；不要把鸿蒙脚本写成 Appium 用例，鸿蒙既没有 XCUITest 也没有 UIAutomator 驱动，capability 与定位方式都不一样
 3. 断言必须落在业务结果上，不能只断言状态码或元素存在；每个用例都要有明确的失败信息。
 4. 关键步骤写 `logging` 日志；失败时截图或保存响应内容到 `artifacts/` 目录。
 5. 不要写 `sleep` 硬等待，改用显式等待条件。

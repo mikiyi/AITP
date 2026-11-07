@@ -15,7 +15,13 @@ const routes: RouteRecordRaw[] = [
     path: '/todos',
     name: 'todos',
     component: () => import('@/views/todos/TodoView.vue'),
-    meta: { title: '任务清单', icon: 'List' },
+    meta: { title: '效能List', icon: 'List' },
+  },
+  {
+    path: '/tasks',
+    name: 'tasks',
+    component: () => import('@/views/tasks/TaskCenterView.vue'),
+    meta: { title: '任务队列', icon: 'Timer' },
   },
   {
     path: '/lab',
@@ -84,12 +90,6 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '测试用例', icon: 'Tickets' },
   },
   {
-    path: '/test-cases/tree',
-    name: 'test-case-tree',
-    component: () => import('@/views/cases/CaseTreeView.vue'),
-    meta: { title: '用例树', icon: 'Share' },
-  },
-  {
     path: '/test-cases/:id',
     name: 'test-case-detail',
     component: () => import('@/views/cases/CaseDetailView.vue'),
@@ -102,22 +102,28 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '回归清单', icon: 'Refresh' },
   },
   {
-    path: '/workbench/entries',
-    name: 'workbench-entries',
-    component: () => import('@/views/workbench/EntryView.vue'),
-    meta: { title: '编排入口', icon: 'Grid' },
+    path: '/test-plans',
+    name: 'test-plans',
+    component: () => import('@/views/execution/TestPlanListView.vue'),
+    meta: { title: '测试计划', icon: 'Calendar' },
+  },
+  {
+    path: '/test-runs/:id',
+    name: 'test-run-detail',
+    component: () => import('@/views/execution/TestRunDetailView.vue'),
+    meta: { title: '测试轮次执行', hidden: true },
+  },
+  {
+    path: '/traceability',
+    name: 'traceability',
+    component: () => import('@/views/execution/TraceabilityView.vue'),
+    meta: { title: '追溯与准入', icon: 'TrendCharts' },
   },
   {
     path: '/workbench/validation',
     name: 'workbench-validation',
     component: () => import('@/views/workbench/ValidationView.vue'),
     meta: { title: '验证沙箱', icon: 'CircleCheck' },
-  },
-  {
-    path: '/workbench/relations',
-    name: 'workbench-relations',
-    component: () => import('@/views/workbench/RelationView.vue'),
-    meta: { title: '实体关联', icon: 'Connection' },
   },
   {
     path: '/bugs',
@@ -186,6 +192,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '操作日志', icon: 'Setting' },
   },
   {
+    path: '/settings/security',
+    name: 'settings-security',
+    component: () => import('@/views/settings/AccessSecurityView.vue'),
+    meta: { title: '访问口令', hidden: true },
+  },
+  {
     path: '/settings/ai',
     name: 'settings-ai',
     component: () => import('@/views/settings/AiSettingsView.vue'),
@@ -240,6 +252,24 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '测试环境配置', hidden: true },
   },
   {
+    path: '/settings/ci',
+    name: 'settings-ci',
+    component: () => import('@/views/settings/CiNotificationView.vue'),
+    meta: { title: 'CI 与通知', hidden: true },
+  },
+  {
+    path: '/settings/home-cards',
+    name: 'settings-home-cards',
+    component: () => import('@/views/settings/HomeCardSettingsView.vue'),
+    meta: { title: '首页卡片定制', hidden: true },
+  },
+  {
+    path: '/help',
+    name: 'help',
+    component: () => import('@/views/settings/ProductHelpView.vue'),
+    meta: { title: '帮助文档' },
+  },
+  {
     path: '/:pathMatch(.*)*',
     name: 'not-found',
     component: () => import('@/views/error/NotFoundView.vue'),
@@ -255,7 +285,7 @@ const router = createRouter({
 
 router.afterEach((to) => {
   const title = (to.meta.title as string | undefined) ?? ''
-  document.title = title ? `${title} · AITestPilot` : 'AITestPilot · AI 测试工作台'
+  document.title = title ? `${title} · AITestPlatform` : 'AITestPlatform · AI 测试工作台'
 })
 
 export default router

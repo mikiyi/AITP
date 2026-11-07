@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 from pathlib import Path
@@ -50,14 +51,19 @@ from ..services import (
     regression_service,
     output_exporter,
     tabular_export,
+    task_control,
 )
 from ..services import preflight_service
-from .helpers import audit, body, commit, db, download_response, page_args, page_payload, path_int
+from .helpers import (
+    audit, body, check_ref_project, commit, db, download_response, page_args, page_payload,
+    path_int, project_of_module, scope_arg,
+)
 from .sse import (
     FRAME_DELTA,
     FRAME_DEGRADE,
     FRAME_DONE,
     FRAME_ERROR,
+    FRAME_MASK,
     FRAME_REASONING,
     FRAME_START,
     FRAME_USAGE,
@@ -66,6 +72,8 @@ from .sse import (
 )
 
 bp = Blueprint("lab", __name__)
+
+logger = logging.getLogger(__name__)
 
 #: XMind 文件 MIME；本质是 zip，部分环境也接受 application/octet-stream
 XMIND_MIME = "application/vnd.xmind"
@@ -119,12 +127,18 @@ def _start_task(
     profile_id: int | None,
     module_id: int | None,
     variables: dict[str, Any],
+    project_id: int | None = None,
 ) -> int:
     payload: dict[str, Any] = {
         "module_id": module_id,
         "capability": capability,
         "request_json": dumps(variables),
     }
+    # 任务归属项目：优先请求里的 projectId，其次由功能点反推；推不出来就留空，
+    # 宁可项目视图少一条，也不要把别的项目的任务算进来。
+    resolved = project_id if project_id is not None else project_of_module(conn, module_id)
+    if resolved is not None:
+        payload["project_id"] = resolved
     if session_id is not None:
         payload["session_id"] = session_id
     if profile_id is not None:
@@ -151,7 +165,7 @@ def _finish_task(
         AITaskRepository(conn).finish(task_id, status, result, error_code, error_message)
         conn.commit()
     except Exception:  # pragma: no cover - 落库失败不应影响已返回的响应
-        pass
+        logger.warning("任务终态落库失败 task_id=%s status=%s", task_id, status, exc_info=True)
     finally:
         conn.close()
 
@@ -176,6 +190,9 @@ def _save_assistant_message(
         tokens_prompt=int(usage.get("promptTokens") or 0),
         tokens_completion=int(usage.get("completionTokens") or 0),
     )
+    # 会话列表的「模型」列取会话上的 model；模型档案会在一次会话里换，按最近一次回答留痕。
+    if model:
+        AISessionRepository(conn).update(session_id, {"model": model})
 
 
 def _write_record(
@@ -193,6 +210,7 @@ def _write_record(
     usage: dict[str, Any] | None = None,
     latency_ms: int | None = None,
     route: list[dict[str, Any]] | None = None,
+    mask: dict[str, Any] | None = None,
 ) -> int:
     """把这次执行的结构化结论落库：证据、缺项、风险点。"""
     record = ai_record_service.build_record(
@@ -210,6 +228,7 @@ def _write_record(
         usage=usage or {},
         prompt_code=prompt_code,
         latency_ms=latency_ms,
+        mask=mask,
     )
     return ai_record_service.create_record(conn, record)
 
@@ -238,10 +257,18 @@ def list_capabilities() -> Response:
 
 @bp.get("/prompts")
 def list_prompts() -> Response:
-    """提示词列表：带每个提示词的使用次数，供提示词库按使用频次排序。"""
-    from ..repositories.ai_record_repo import AIRecordRepository
+    """提示词列表：带每个提示词的使用次数，供提示词库按使用频次排序。
 
-    counts = AIRecordRepository(db()).count_by_prompt_code()
+    两份来源相加：能力类调用看 biz_ai_record，
+    智能路由/问答助手/自动整理这类幕后调用看 sys_prompt_usage。
+    """
+    from ..repositories.ai_record_repo import AIRecordRepository
+    from ..services import prompt_usage
+
+    conn = db()
+    counts = dict(AIRecordRepository(conn).count_by_prompt_code())
+    for code, extra in prompt_usage.counts(conn).items():
+        counts[code] = counts.get(code, 0) + extra
     result = []
     for item in list_templates():
         item = dict(item)
@@ -255,10 +282,66 @@ def get_prompt(code: str) -> Response:
     """单个提示词模板：含正文，供提示词库页面展示。"""
     from ..prompts.registry import get_registry
 
-    try:
-        template = get_registry().get(code)
-    except AppError:
-        raise
+    registry = get_registry()
+    template = registry.get(code)
+    payload = template.as_dict()
+    payload["body"] = template.body
+    payload["defaultBody"] = registry.default_template(code).body
+    return ok(payload)
+
+
+@bp.put("/prompts/<code>")
+def save_prompt(code: str) -> Response:
+    """保存自定义正文：正文存库、覆盖磁盘默认；重置就是删掉这一行。
+
+    只允许用磁盘模板已有的变量：正文里冒出模板没提供的 `{{新变量}}`，
+    真正调用时会因缺变量报 120102，所以在保存这一步就挡掉。
+    """
+    from ..prompts.registry import get_registry, variables_of
+    from ..repositories.prompt_override_repo import MAX_BODY_LENGTH, PromptOverrideRepository
+
+    registry = get_registry()
+    registry.get(code)
+    text = optional_str(body().get("body"), "body", MAX_BODY_LENGTH)
+    if not text:
+        raise AppError(ErrorCode.PARAM_ERROR, "提示词正文不能为空")
+
+    known = set(registry.default_template(code).variables)
+    unknown = [name for name in variables_of(text) if name not in known]
+    if unknown:
+        raise AppError(
+            ErrorCode.PARAM_ERROR,
+            f"正文里出现了模板没有的变量：{'、'.join(unknown)}；请删掉或改成固定文案",
+            {"unknown": unknown},
+        )
+
+    conn = db()
+    PromptOverrideRepository(conn).save(code, text)
+    commit(conn)
+    registry.invalidate(code)
+    template = registry.get(code)
+    audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_AI_PROMPT,
+          None, code, {"customized": True, "length": len(text)})
+    payload = template.as_dict()
+    payload["body"] = template.body
+    return ok(payload)
+
+
+@bp.delete("/prompts/<code>")
+def reset_prompt(code: str) -> Response:
+    """一键重置：删除自定义正文，回到 backend/prompts 里的默认模板。"""
+    from ..prompts.registry import get_registry
+    from ..repositories.prompt_override_repo import PromptOverrideRepository
+
+    registry = get_registry()
+    registry.get(code)
+    conn = db()
+    removed = PromptOverrideRepository(conn).remove(code)
+    commit(conn)
+    registry.invalidate(code)
+    template = registry.get(code)
+    audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_AI_PROMPT,
+          None, code, {"customized": False, "removed": removed})
     payload = template.as_dict()
     payload["body"] = template.body
     return ok(payload)
@@ -409,6 +492,13 @@ def get_attachment(attachment_id: str) -> Response:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "附件内容已丢失")
     response = Response(data, mimetype=str(meta.get("mediaType") or "application/octet-stream"))
     response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    if response.mimetype == "image/svg+xml":
+        # SVG 会被浏览器当文档执行，同源脚本就能读写本地接口；落盘前已剥过脚本，
+        # 这里再给一份只读 CSP 兜住历史遗留的附件。
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; sandbox"
+        )
     return response
 
 
@@ -481,6 +571,11 @@ def adopt_capability_output() -> Response:
     title = optional_str(data.get("title"), "title", 200) or f"{label_of(capability)} 产出"
     module_id = _optional_int(data.get("moduleId"), "moduleId")
     version_id = _optional_int(data.get("versionId"), "versionId")
+    # 采纳落库前先对齐项目：脏的功能点/版本引用会直接污染对方项目的树、覆盖矩阵和 assetCount
+    check_ref_project(conn, "biz_module", module_id, project_id, "功能点", "moduleId")
+    version_id = check_ref_project(
+        conn, "biz_project_version", version_id, project_id, "项目版本", "versionId",
+    )
 
     if target == "requirement":
         req_repo = RequirementRepository(conn)
@@ -528,7 +623,7 @@ def adopt_capability_output() -> Response:
             "project_id": project_id,
             "module_id": module_id,
             "version_id": version_id,
-            "sql_no": sql_repo.next_sql_no(project_id),
+            "sql_no": sql_repo.next_sql_no(),
             "title": title,
             "sql_text": _extract_sql_text(output),
             "analysis": output,
@@ -546,6 +641,7 @@ def adopt_capability_output() -> Response:
             change_scope=label_of(capability),
             affected_modules="",
             version="",
+            version_id=version_id,
             risk_level="low",
             content=output,
             source="ai",
@@ -634,7 +730,8 @@ def run_capability(capability: str) -> Response:
         conn, session_id, require_str(data.get("title"), "title", 200) if data.get("title") else spec.label,
         capability,
     )
-    task_id = _start_task(conn, capability, session_id, profile_id, module_id, variables)
+    task_id = _start_task(conn, capability, session_id, profile_id, module_id, variables,
+                      project_id=_optional_int(data.get("projectId"), "projectId"))
     commit(conn)
 
     try:
@@ -671,6 +768,7 @@ def run_capability(capability: str) -> Response:
         prompt_code=result.prompt_code,
         usage=result.usage,
         latency_ms=result.latency_ms,
+        mask=result.mask,
     )
     commit(conn)
     payload["recordId"] = record_id
@@ -700,10 +798,12 @@ def stream_capability(capability: str) -> Response:
         conn, session_id, require_str(data.get("title"), "title", 200) if data.get("title") else spec.label,
         capability,
     )
-    task_id = _start_task(conn, capability, session_id, profile_id, module_id, variables)
+    task_id = _start_task(conn, capability, session_id, profile_id, module_id, variables,
+                      project_id=_optional_int(data.get("projectId"), "projectId"))
     commit(conn)
 
     db_path = Path(current_app.config["AITP_DB_PATH"])
+    control_key = f"lab:{task_id}"
     prompt_code = plan.binding.prompt_code
     module_path = plan.binding.module_path
     # 数据外发边界：首选模型是第三方时，输入会离开本机，前端据此提示用户注意敏感数据
@@ -712,6 +812,7 @@ def stream_capability(capability: str) -> Response:
     egress_warning = lab_service.EGRESS_WARNING if egress == EGRESS_THIRD_PARTY else ""
 
     def generate() -> Iterator[str]:
+        task_control.register(control_key)
         counter = SeqCounter()
         collected: list[str] = []
         usage: dict[str, Any] = {}
@@ -720,6 +821,13 @@ def stream_capability(capability: str) -> Response:
         status = "success"
         error_code: int | None = None
         error_message: str | None = None
+        # 云端候选真正发出去后由 mask 帧覆盖；本地候选保持「未脱敏」
+        mask_info: dict[str, Any] = {
+            "enabled": plan.mask_enabled,
+            "applied": False,
+            "types": [],
+            "count": 0,
+        }
 
         try:
             yield counter.frame(
@@ -733,9 +841,19 @@ def stream_capability(capability: str) -> Response:
                 egress=egress,
                 egressWarning=egress_warning,
                 refs=plan.refs,
+                mask=mask_info,
             )
             for event in events:
-                if event.type == FRAME_DELTA:
+                if task_control.is_cancelled(control_key):
+                    # 取消要真的停下来：模型那边继续吐字就是继续耗时和计费
+                    status = "cancelled"
+                    error_message = "用户取消"
+                    yield counter.frame(FRAME_ERROR, errorCode=None, errorMessage=error_message)
+                    break
+                if event.type == FRAME_MASK:
+                    mask_info = dict(event.extra)
+                    yield counter.frame(FRAME_MASK, **mask_info)
+                elif event.type == FRAME_DELTA:
                     if event.content:
                         collected.append(event.content)
                     yield counter.frame(FRAME_DELTA, content=event.content)
@@ -795,6 +913,7 @@ def stream_capability(capability: str) -> Response:
                     session_id=session_id,
                     prompt_code=prompt_code,
                     usage=usage,
+                    mask=mask_info,
                 )
                 yield counter.frame(
                     FRAME_DONE,
@@ -803,8 +922,10 @@ def stream_capability(capability: str) -> Response:
                     model=model,
                     refs=plan.refs,
                     reviewRequired=review_required,
+                    mask=mask_info,
                 )
         finally:
+            task_control.release(control_key)
             if not output:
                 output = "".join(collected)
             _finish_task(
@@ -844,7 +965,9 @@ def _record_message(
         )
         conn.commit()
     except Exception:  # pragma: no cover
-        pass
+        logger.warning(
+            "助手消息落库失败 session_id=%s prompt=%s", session_id, prompt_code, exc_info=True
+        )
     finally:
         conn.close()
 
@@ -1020,6 +1143,31 @@ def composite_run() -> Response:
     return ok(result)
 
 
+@bp.post("/composite/cancel")
+def cancel_composite() -> Response:
+    """停止本机正在跑的顺序执行：当前步骤跑完即停，未开始步骤记为跳过。"""
+    conn = db()
+    data = body()
+    session_id = _optional_int(data.get("sessionId"), "sessionId")
+    sql = (
+        "SELECT id FROM biz_ai_task WHERE task_type = 'composite'"
+        " AND status = 'running' AND is_deleted = 0"
+    )
+    params: list[Any] = []
+    if session_id:
+        sql += " AND session_id = ?"
+        params.append(session_id)
+    rows = conn.execute(sql, params).fetchall()
+    repo = AITaskRepository(conn)
+    for row in rows:
+        repo.finish(int(row["id"]), "cancelled", None, None, "用户取消")
+    if rows:
+        commit(conn)
+        audit(conn, audit_service.AUDIT_ACTION_CANCEL, audit_service.RESOURCE_AI_TASK, None,
+              "取消顺序执行", {"sessionId": session_id, "cancelled": len(rows)})
+    return ok({"cancelled": len(rows)})
+
+
 # ---------------- 会话与任务 ----------------
 
 @bp.get("/sessions")
@@ -1031,7 +1179,7 @@ def list_sessions() -> Response:
     module = request.args.get("module")
     if module:
         filters["module"] = module
-    page = repo.list(filters, None, page_num=page_num, page_size=page_size)
+    page = repo.page_scoped(filters, scope_arg(), page_num, page_size)
     payload = page_payload(page)
     payload["list"] = [
         {
@@ -1094,7 +1242,8 @@ def list_tasks() -> Response:
     page_num, page_size = page_args()
     repo = AITaskRepository(conn)
     filters: dict[str, Any] = {}
-    for key, column in (("taskType", "task_type"), ("status", "status"), ("capability", "capability")):
+    for key, column in (("taskType", "task_type"), ("status", "status"),
+                        ("capability", "capability"), ("projectId", "project_id")):
         value = request.args.get(key)
         if value:
             filters[column] = value
@@ -1107,6 +1256,7 @@ def list_tasks() -> Response:
             "capability": row.get("capability"),
             "status": row.get("status"),
             "sessionId": row.get("session_id"),
+            "projectId": row.get("project_id"),
             "moduleId": row.get("module_id"),
             "parentId": row.get("parent_id"),
             "errorCode": row.get("error_code"),
@@ -1132,4 +1282,7 @@ def cancel_task(pk: str) -> Response:
         raise AppError(ErrorCode.ILLEGAL_OPERATION, "该任务已结束，无法取消")
     repo.finish(target, "cancelled", None, None, "用户取消")
     commit(conn)
-    return ok({"id": target, "status": "cancelled"})
+    # 库里的状态只是结果：正在流式吐字的调用要靠进程内信号真的叫停，
+    # 顺序编排则在每一步边界重读库状态（见 composite_service）
+    interrupted = task_control.cancel(f"lab:{target}")
+    return ok({"id": target, "status": "cancelled", "interrupted": interrupted})

@@ -38,6 +38,7 @@ export function sectionOfPath(path: string): string {
 export const useBadgeStore = defineStore('badges', () => {
   const items = ref<Record<string, number>>({})
   let loading: Promise<void> | null = null
+  let seq = 0
 
   const total = () => Object.values(items.value).reduce((sum, value) => sum + value, 0)
 
@@ -45,10 +46,14 @@ export const useBadgeStore = defineStore('badges', () => {
     if (loading) {
       return loading
     }
+    const my = ++seq
     loading = badgeApi
       .list()
       .then((result) => {
-        items.value = result.items
+        // 加载途中已清零的分区不能被旧响应重新点亮
+        if (my === seq) {
+          items.value = result.items
+        }
       })
       .catch(() => {
         // 角标失败不影响主流程
@@ -67,11 +72,19 @@ export const useBadgeStore = defineStore('badges', () => {
   /** 进入某分区页面时清零；持久分区（实时状态）与无未读的跳过。 */
   async function clearForPath(path: string): Promise<void> {
     const section = sectionOfPath(path)
-    if (!section || PERSISTENT_SECTIONS.has(section) || !(items.value[section] ?? 0)) {
+    if (!section || PERSISTENT_SECTIONS.has(section)) {
+      return
+    }
+    // 首次进入时角标可能还在加载，先等它落地再判断，否则会漏清
+    if (loading) {
+      await loading
+    }
+    if (!(items.value[section] ?? 0)) {
       return
     }
     try {
       await badgeApi.clear(section)
+      seq += 1
       items.value = { ...items.value, [section]: 0 }
     } catch {
       await load()

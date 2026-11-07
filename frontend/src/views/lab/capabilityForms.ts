@@ -44,14 +44,35 @@ const TARGET_TYPES: CapabilityOption[] = [
   { label: 'App 移动端', value: 'app', promptText: 'app（移动端）' },
 ]
 
-/** 主流自动化框架，随目标类型联动。 */
+/**
+ * 主流自动化框架，随目标类型与 APP 平台联动。
+ * 框架清单与平台的绑定关系以 `backend/aitp/common/automation_frameworks.py` 为准：
+ * 鸿蒙（HOS）用 Hypium，iOS / Android 用 Appium。
+ */
 const AUTOMATION_FRAMEWORKS: CapabilityOption[] = [
   { label: 'Selenium', value: 'selenium', promptText: 'selenium', showFor: { targetType: ['web'] } },
   { label: 'Playwright', value: 'playwright', promptText: 'playwright', showFor: { targetType: ['web'] } },
   { label: 'Requests', value: 'requests', promptText: 'requests（HTTP 接口）', showFor: { targetType: ['api'] } },
-  { label: 'Pytest', value: 'pytest', promptText: 'pytest', showFor: { targetType: ['api'] } },
   { label: 'Unittest', value: 'unittest', promptText: 'unittest', showFor: { targetType: ['api'] } },
-  { label: 'Appium', value: 'appium', promptText: 'appium', showFor: { targetType: ['app'] } },
+  {
+    label: 'Appium（iOS / Android）',
+    value: 'appium',
+    promptText: 'appium（iOS / Android，需 Appium Server 与 Appium-Python-Client）',
+    showFor: { targetType: ['app'], appPlatforms: ['ios', 'android'] },
+  },
+  {
+    label: 'Hypium（鸿蒙 HOS）',
+    value: 'hypium',
+    promptText: 'hypium（HarmonyOS 鸿蒙，需 hdc 与 hypium 包）',
+    showFor: { targetType: ['app'], appPlatforms: ['hos'] },
+  },
+  {
+    label: 'UiAutomator2（Android）',
+    value: 'uiautomator2',
+    promptText: 'uiautomator2（仅 Android）',
+    showFor: { targetType: ['app'], appPlatforms: ['android'] },
+  },
+  { label: 'Pytest', value: 'pytest', promptText: 'pytest', showFor: { targetType: ['web', 'app', 'api'] } },
 ]
 
 /** App 目标平台。 */
@@ -136,9 +157,6 @@ export const CAPABILITY_FORMS: Record<string, CapabilityField[]> = {
     { name: 'progressData', label: '进度数据', type: 'textarea', rows: 8, primary: true },
     { name: 'period', label: '统计周期', type: 'text', placeholder: '例如：2026 第 45 周' },
     { name: 'milestones', label: '里程碑', type: 'textarea', rows: 5 },
-  ],
-  knowledge_qa: [
-    { name: 'question', label: '问题', type: 'textarea', rows: 6, primary: true, placeholder: '想从知识库里查什么？' },
   ],
   api_test_design: [
     { name: 'projectName', label: '项目名称', type: 'text' },
@@ -238,19 +256,27 @@ export function visibleFields(
   })
 }
 
-/** 当前取值下可选的候选项：候选项的 showFor 决定它在哪几种取值下出现。 */
+/**
+ * 当前取值下可选的候选项：候选项的 showFor 决定它在哪几种取值下出现。
+ * 多选字段传的是数组，数组为空表示还没选，不按平台收窄候选项；
+ * 非空时只要命中 allowed 里任一项就保留（例如勾了 iOS 就还看得到 Appium）。
+ */
 export function visibleOptions(
   field: CapabilityField,
-  values: Record<string, string>,
+  values: Record<string, string | string[]>,
 ): CapabilityOption[] {
   const options = field.options ?? []
   return options.filter((option) => {
     if (!option.showFor) {
       return true
     }
-    return Object.entries(option.showFor).every(
-      ([name, allowed]) => allowed.includes(values[name] ?? ''),
-    )
+    return Object.entries(option.showFor).every(([name, allowed]) => {
+      const current = values[name]
+      if (Array.isArray(current)) {
+        return current.length === 0 || current.some((item) => allowed.includes(item))
+      }
+      return allowed.includes(String(current ?? ''))
+    })
   })
 }
 

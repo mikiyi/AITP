@@ -12,8 +12,9 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from flask import Blueprint, Response, current_app
+from flask import Blueprint, Response, current_app, request, send_file
 
+from ..common.automation_frameworks import framework_codes
 from ..common.validators import check_choice, optional_str, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
@@ -24,6 +25,8 @@ from ..repositories.automation_repo import (
     CATEGORY_PERFORMANCE,
     CATEGORY_SUFFIX,
     CATEGORY_WEB,
+    MATCH_MODE_CASE_NO,
+    MATCH_MODES,
     RUN_MODES,
     RUN_MODE_JMETER,
     SCRIPT_CATEGORIES,
@@ -35,17 +38,29 @@ from ..repositories.automation_repo import (
     script_summary,
 )
 from ..services import nav_badge_service
-from ..services import audit_service, automation_service
+from ..services import (
+    audit_service,
+    automation_jobs,
+    automation_service,
+    automation_writeback,
+    job_queue,
+    notification_service,
+)  # noqa: F401 - 导入即注册队列处理器
 from .helpers import (
     audit,
     body,
+    check_ref_project,
     commit,
     db,
+    guard_project_scope,
     keyword_of,
     page_args,
     page_payload,
     path_int,
     query_filters,
+    reject_project_move,
+    require_project,
+    scope_arg,
 )
 
 bp = Blueprint("automation", __name__)
@@ -64,7 +79,7 @@ FILTERS = {
 #: 创建 / 更新时可写字段
 WRITE_FIELDS = {
     "name", "category", "targetType", "framework", "language", "appPlatforms",
-    "projectId", "moduleId", "description", "content", "source",
+    "projectId", "moduleId", "envId", "description", "content", "source",
     "runMode", "entryCommand", "timeoutSeconds", "status", "remark", "versionId",
 }
 
@@ -144,6 +159,8 @@ def _write_payload(data: dict[str, Any]) -> dict[str, Any]:
         payload["project_id"] = _optional_int(data.get("projectId"))
     if "moduleId" in data:
         payload["module_id"] = _optional_int(data.get("moduleId"))
+    if "envId" in data:
+        payload["env_id"] = _optional_int(data.get("envId"))
     if "versionId" in data:
         payload["version_id"] = _optional_int(data.get("versionId"))
     if "timeoutSeconds" in data:
@@ -152,10 +169,30 @@ def _write_payload(data: dict[str, Any]) -> dict[str, Any]:
     if "status" in data:
         status = check_choice(str(data.get("status") or ""), SCRIPT_STATUSES, "status")
         payload["status"] = status or "ready"
+    if "caseMatchMode" in data:
+        mode = str(data.get("caseMatchMode") or "").strip() or MATCH_MODE_CASE_NO
+        payload["case_match_mode"] = check_choice(mode, MATCH_MODES, "caseMatchMode")
+    if "caseMatchValue" in data:
+        payload["case_match_value"] = optional_str(
+            data.get("caseMatchValue"), "caseMatchValue", 500
+        ) or ""
     if "content" in data:
         content = data.get("content")
         payload["content"] = "" if content is None else str(content)
     return payload
+
+
+def _check_framework(category: str, payload: dict[str, Any]) -> None:
+    """框架要归该类脚本管：鸿蒙的 Hypium 不能记到 Web 脚本上，反之也一样。"""
+    code = str(payload.get("framework") or "").strip()
+    if not code:
+        return
+    allowed = framework_codes(category)
+    if code not in allowed:
+        raise AppError(
+            ErrorCode.PARAM_ERROR,
+            f"{CATEGORY_LABEL.get(category, category)}不支持框架「{code}」，可选：{'、'.join(allowed)}",
+        )
 
 
 def _optional_int(value: Any) -> int | None:
@@ -165,6 +202,52 @@ def _optional_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         raise AppError(ErrorCode.PARAM_ERROR, "参数必须是整数") from None
+
+
+def _guard_run_scope(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
+    """执行记录按脚本归属判项目：带 projectId 读别人的轮次一律按不存在处理。"""
+    project_id = scope_arg()
+    if project_id is None:
+        return
+    script = AutomationScriptRepository(conn).get(int(row.get("script_id") or 0))
+    if script is None or int(script.get("project_id") or -1) != int(project_id):
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "执行记录不属于该项目")
+
+
+def _check_refs(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
+    """脚本上的功能点/版本必须与脚本同项目，否则项目视图的脚本统计会吃到别的项目。"""
+    project_id = payload.get("project_id")
+    for key, table, label, field in (
+        ("module_id", "biz_module", "功能点", "moduleId"),
+        ("version_id", "biz_project_version", "项目版本", "versionId"),
+    ):
+        if key not in payload:
+            continue
+        payload[key] = check_ref_project(conn, table, payload.get(key), project_id, label, field)
+
+
+def _check_env(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
+    """envId 必须指向一套仍在用的环境，否则执行留痕里的环境就是脏数据。"""
+    env_id = payload.get("env_id")
+    if not env_id:
+        return
+    from ..repositories.test_env_repo import TestEnvRepository
+
+    if TestEnvRepository(conn).get_by_id(int(env_id)) is None:
+        raise AppError(ErrorCode.PARAM_ERROR, "绑定的测试环境不存在或已删除")
+
+
+def _check_test_run(conn: sqlite3.Connection, value: Any) -> int | None:
+    """脚本可以挂到某个测试轮次上执行，结果直接回写这一轮。"""
+    test_run_id = _optional_int(value)
+    if test_run_id is None:
+        return None
+    row = conn.execute(
+        "SELECT id FROM biz_test_run WHERE id = ? AND is_deleted = 0", (test_run_id,)
+    ).fetchone()
+    if row is None:
+        raise AppError(ErrorCode.PARAM_ERROR, "指定的测试轮次不存在或已删除")
+    return test_run_id
 
 
 # ---------------- 目录 ----------------
@@ -189,9 +272,43 @@ def list_categories() -> Response:
 
 @bp.get("/runtime")
 def get_runtime() -> Response:
-    """运行时体检：解释器与 JMeter 是否可用。"""
+    """运行时体检：解释器、JMeter 与各类框架（Appium / Hypium 等）是否可用。
+
+    category 与 platforms 用来收窄框架清单，例如 app + hos 只回鸿蒙能用的框架。
+    """
     conn = db()
-    return ok(automation_service.check_runtime(conn))
+    status = automation_service.check_runtime(conn)
+    status["frameworks"] = automation_service.framework_runtimes(
+        conn,
+        str(request.args.get("category") or "").strip() or None,
+        str(request.args.get("platforms") or "").strip() or None,
+    )
+    return ok(status)
+
+
+@bp.get("/interpreters")
+def list_interpreters() -> Response:
+    """本机解释器体检：列出候选 Python 各自装了哪些框架依赖。"""
+    conn = db()
+    target = str(request.args.get("category") or "").strip() or None
+    return ok({
+        "current": automation_service.python_interpreter(conn),
+        "candidates": automation_service.interpreter_candidates(conn, target),
+    })
+
+
+@bp.post("/interpreters/select")
+def select_interpreter() -> Response:
+    """切到另一个已装好依赖的解释器，省得用户自己猜 pip 装到了哪个 Python。"""
+    conn = db()
+    data = body()
+    path = automation_service.set_python_interpreter(conn, str(data.get("path") or ""))
+    audit(conn, audit_service.AUDIT_ACTION_CONFIG, audit_service.RESOURCE_SYSTEM_CONFIG,
+          0, "自动化 Python 解释器", {"pythonInterpreter": path})
+    commit(conn)
+    status = automation_service.check_runtime(conn)
+    status["frameworks"] = automation_service.framework_runtimes(conn)
+    return ok(status)
 
 
 # ---------------- 脚本 CRUD ----------------
@@ -205,7 +322,8 @@ def list_scripts() -> Response:
     page = repo.list(filters, keyword_of() or None, page_num=page_num, page_size=page_size)
     payload = page_payload(page)
     payload["list"] = [script_summary(row) for row in payload["list"]]
-    payload["categoryCounts"] = repo.count_by_category()
+    # 四个分类的计数要跟列表同一口径，否则切到 A 项目仍显示全库脚本数
+    payload["categoryCounts"] = repo.count_by_category(filters.get("project_id"))
     return ok(payload)
 
 
@@ -216,6 +334,7 @@ def get_script(pk: str) -> Response:
     row = AutomationScriptRepository(conn).get(target)
     if row is None:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "脚本不存在")
+    guard_project_scope(row, scope_arg(), "自动化脚本")
     payload = script_summary(row)
     runs = AutomationRunRepository(conn).list_for_script(target, 1, 20)
     payload["runs"] = [run_summary(item) for item in runs.list]
@@ -229,6 +348,11 @@ def create_script() -> Response:
     category = _category_of(data)
     name = require_str(data.get("name"), "name", 200)
     payload = _write_payload(data)
+    if payload.get("project_id"):
+        require_project(conn, int(payload["project_id"]))
+    _check_framework(category, payload)
+    _check_refs(conn, payload)
+    _check_env(conn, payload)
     payload["name"] = name
     payload["category"] = category
     if category == CATEGORY_PERFORMANCE and payload.get("run_mode") != "jmeter":
@@ -257,8 +381,13 @@ def update_script(pk: str) -> Response:
     if row is None:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "脚本不存在")
     data = body()
+    reject_project_move(data, row.get("project_id"), "自动化脚本")
     category = _category_of(data, str(row.get("category") or "web"))
     payload = _write_payload(data)
+    payload.pop("project_id", None)
+    _check_framework(category, payload)
+    _check_refs(conn, {**payload, "project_id": row.get("project_id")})
+    _check_env(conn, payload)
     if "name" in payload:
         payload["file_name"] = _file_name_of(category, payload["name"])
     repo.update(target, payload)
@@ -297,23 +426,100 @@ def run_script(pk: str) -> Response:
         raise AppError(ErrorCode.ILLEGAL_OPERATION, "脚本已停用，先启用再执行")
 
     category = str(row.get("category") or "web")
-    automation_service.require_executable(conn, category)
+    automation_service.require_executable(conn, category, str(row.get("framework") or ""))
 
     data = body()
     timeout = _optional_int(data.get("timeoutSeconds"))
     if timeout is not None and timeout <= 0:
         timeout = None
-    result = automation_service.execute_script(conn, row, _db_path(), timeout)
+    test_run_id = _check_test_run(conn, data.get("testRunId"))
+    if data.get("async"):
+        # 后台执行：入队后立即返回任务，前端到「任务队列」看进度与结果
+        from ..services import job_queue
+
+        task = job_queue.submit(
+            conn,
+            kind="automation.run",
+            title=f"执行脚本 {row.get('name') or ''}".strip(),
+            payload={"scriptId": target, "timeoutSeconds": timeout, "testRunId": test_run_id},
+        )
+        audit(conn, audit_service.AUDIT_ACTION_EXECUTE, audit_service.RESOURCE_AUTOMATION_RUN,
+              int(task["id"]), str(row.get("name") or ""), {
+                  "scriptNo": row.get("script_no"),
+                  "category": category,
+                  "testRunId": test_run_id,
+                  "async": True,
+              })
+        return ok({"queued": True, "task": task})
+    result = automation_service.execute_script(
+        conn, row, _db_path(), timeout, test_run_id
+    )
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_EXECUTE, audit_service.RESOURCE_AUTOMATION_RUN,
           int(result.get("id") or 0), str(row.get("name") or ""), {
               "scriptNo": row.get("script_no"),
               "category": category,
+              "testRunId": test_run_id,
               "status": result.get("status"),
               "exitCode": result.get("exit_code"),
               "durationMs": result.get("duration_ms"),
+              "writebackStatus": result.get("writeback_status"),
           }, result="success" if result.get("status") == "success" else "failed")
-    return ok(run_summary(result))
+    notification_service.notify_automation_failed(conn, row, result)
+    commit(conn)
+    payload = run_summary(result)
+    payload["caseResults"] = automation_writeback.case_results(conn, int(result.get("id") or 0))
+    return ok(payload)
+
+
+@bp.post("/scripts/batch-run")
+def batch_run_scripts() -> Response:
+    """从脚本列表批量投递执行；默认走任务队列，逐个留执行记录。"""
+    conn = db()
+    data = body()
+    raw_ids = data.get("scriptIds")
+    if not isinstance(raw_ids, list) or not raw_ids:
+        raise AppError(ErrorCode.PARAM_ERROR, "请至少选择一个自动化脚本")
+    test_run_id = _check_test_run(conn, data.get("testRunId"))
+    timeout = _optional_int(data.get("timeoutSeconds"))
+    if timeout is not None and timeout <= 0:
+        timeout = None
+
+    repo = AutomationScriptRepository(conn)
+    scripts: list[dict[str, Any]] = []
+    for raw in raw_ids[:20]:
+        script_id = _optional_int(raw)
+        row = repo.get(script_id) if script_id else None
+        if row is None:
+            raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "自动化脚本不存在或已删除")
+        if str(row.get("status") or "") == SCRIPT_STATUS_DISABLED:
+            raise AppError(ErrorCode.ILLEGAL_OPERATION, f"脚本「{row.get('name')}」已停用")
+        automation_service.require_executable(
+            conn, str(row.get("category") or "web"), str(row.get("framework") or "")
+        )
+        scripts.append(dict(row))
+
+    tasks = [
+        job_queue.submit(
+            conn,
+            kind="automation.run",
+            title=f"执行脚本 · {script.get('name') or script.get('script_no')}",
+            payload={
+                "scriptId": int(script["id"]),
+                "timeoutSeconds": timeout,
+                "testRunId": test_run_id,
+            },
+            priority=70,
+        )
+        for script in scripts
+    ]
+    audit(conn, audit_service.AUDIT_ACTION_EXECUTE, audit_service.RESOURCE_AUTOMATION_RUN,
+          int(tasks[0]["id"]), "批量执行自动化脚本",
+          {"scripts": [script.get("script_no") for script in scripts],
+           "taskIds": [task.get("id") for task in tasks],
+           "testRunId": test_run_id})
+    commit(conn)
+    return ok({"queued": True, "tasks": tasks, "total": len(tasks)})
 
 
 # ---------------- 执行历史 ----------------
@@ -328,10 +534,13 @@ def list_runs() -> Response:
         "status": "status",
     })
     repo = AutomationRunRepository(conn)
-    page = repo.list(filters, keyword_of() or None, page_num=page_num, page_size=page_size)
+    # 执行留痕没有 project_id 列，项目维度顺着脚本关联收敛
+    project_id = scope_arg()
+    page = repo.page_with_project(filters, keyword_of() or None, project_id,
+                                  page_num, page_size)
     payload = page_payload(page)
     payload["list"] = [run_summary(row) for row in payload["list"]]
-    payload["categoryStats"] = repo.stats_by_category()
+    payload["categoryStats"] = repo.stats_by_category(project_id)
     return ok(payload)
 
 
@@ -342,7 +551,32 @@ def get_run(pk: str) -> Response:
     row = AutomationRunRepository(conn).get(target)
     if row is None:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "执行记录不存在")
-    return ok(run_summary(row))
+    _guard_run_scope(conn, row)
+    payload = run_summary(row)
+    payload["caseResults"] = automation_writeback.case_results(conn, target)
+    payload["artifacts"] = automation_service.list_run_artifacts(
+        _db_path(), str(row.get("run_no") or "")
+    )
+    return ok(payload)
+
+
+@bp.get("/runs/<pk>/artifacts/download")
+def download_run_artifact(pk: str) -> Response:
+    """下载执行产物；路径只允许落在本次执行目录内。"""
+    conn = db()
+    target = path_int(pk)
+    row = AutomationRunRepository(conn).get(target)
+    if row is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "执行记录不存在")
+    relative = str(request.args.get("path") or "").strip()
+    if not relative:
+        raise AppError(ErrorCode.PARAM_ERROR, "缺少产物路径")
+    path = automation_service.artifact_file(
+        _db_path(), str(row.get("run_no") or ""), relative
+    )
+    if path is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "产物不存在或路径不合法")
+    return send_file(path, as_attachment=True, download_name=path.name)
 
 
 # ---------------- 从 AI 产出一键入库 ----------------
@@ -363,6 +597,11 @@ def create_from_output() -> Response:
         raise AppError(ErrorCode.PARAM_ERROR, "产出里没有可入库的代码内容")
 
     payload = _write_payload(data)
+    if payload.get("project_id"):
+        require_project(conn, int(payload["project_id"]))
+    _check_framework(category, payload)
+    _check_refs(conn, payload)
+    _check_env(conn, payload)
     payload["name"] = name
     payload["category"] = category
     payload["content"] = content

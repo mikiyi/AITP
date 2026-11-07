@@ -1,14 +1,13 @@
-"""AI 工具 API：提示词优化、引用式知识问答。
+"""AI 工具 API：提示词优化、外发脱敏预览、模板预览。
 
 提示词优化只回填文本给用户确认，不直接执行，避免用户措辞被静默改写。
-知识问答的答案里带 [K1] 引用标记，可映射回知识条目。
 """
 
 from __future__ import annotations
 
 from flask import Blueprint, Response
 
-from ..ai.capability_codes import CAP_KNOWLEDGE_QA
+from ..ai.masking import cloud_mask_enabled, preview_mask
 from ..common.validators import require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
@@ -24,40 +23,18 @@ def optimize_prompt() -> Response:
     data = body()
     capability = require_str(data.get("capability"), "capability", 64)
     raw_text = require_str(data.get("rawText"), "rawText", 20000)
-    result = lab_service.optimize_prompt(capability, raw_text)
+    result = lab_service.optimize_prompt(capability, raw_text, conn=db())
     return ok(result)
 
 
-@bp.post("/ask")
-def ask_knowledge() -> Response:
-    """基于正式知识库回答问题，答案带 [K1] 引用。"""
+@bp.post("/mask/preview")
+def mask_preview() -> Response:
+    """外发前的站内检查：识别待发送文本里的敏感信息，只回类型与数量。"""
     conn = db()
     data = body()
-    question = require_str(data.get("question"), "question", 2000)
-
-    context, refs = lab_service.retrieve_knowledge_context(conn, question)
-    if not context:
-        return ok({
-            "answer": "知识库中未检索到相关内容，请先补充知识条目或调整提问方式。",
-            "refs": [],
-            "contextFound": False,
-        })
-
-    result = lab_service.run_capability(
-        conn,
-        CAP_KNOWLEDGE_QA,
-        {"question": question, "context": context},
-    )
-    return ok({
-        "answer": result.output,
-        "refs": refs,
-        "model": result.model,
-        "usage": result.usage,
-        "degrade": result.degrade,
-        "egress": result.egress,
-        "egressWarning": result.egress_warning,
-        "contextFound": True,
-    })
+    text = require_str(data.get("text"), "text", 200000)
+    info = preview_mask(text, enabled=cloud_mask_enabled(conn))
+    return ok(info.as_dict())
 
 
 @bp.get("/prompts")

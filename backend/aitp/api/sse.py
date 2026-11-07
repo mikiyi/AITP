@@ -1,6 +1,6 @@
 """SSE 帧封装。
 
-帧类型：start / delta / reasoning / usage / degrade / done / error，
+帧类型：start / mask / delta / reasoning / usage / degrade / done / error，
 每帧带单调递增的 seq，前端据此保证顺序与去重。
 """
 
@@ -12,6 +12,7 @@ from typing import Any
 SSE_MIME = "text/event-stream; charset=utf-8"
 
 FRAME_START = "start"
+FRAME_MASK = "mask"
 FRAME_DELTA = "delta"
 FRAME_REASONING = "reasoning"
 FRAME_USAGE = "usage"

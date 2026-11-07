@@ -7,31 +7,37 @@ from typing import Any
 from flask import Blueprint, Response, request
 
 from ..common.enums import CASE_PRIORITY, CASE_STATUS, CASE_TYPE
-from ..common.validators import check_choice, optional_str, require_int, require_str
+from ..common.validators import check_choice, optional_int, optional_str, require_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
-from ..repositories.base import dumps, loads
+from ..repositories.base import NULL_FILTER, dumps, loads
 from ..repositories.case_execution_repo import CaseExecutionRepository
 from ..repositories.module_repo import ModuleRepository
 from ..repositories.project_repo import ProjectRepository
 from ..repositories.requirement_repo import RequirementRepository
 from ..repositories.test_case_repo import TestCaseRepository
-from ..services import audit_service, nav_badge_service
+from ..repositories.test_env_repo import TestEnvRepository
+from ..services import audit_service, interface_runner, nav_badge_service
 from ..services import tabular_export, xlsx_exporter, xlsx_importer
 from .helpers import (
     attach_version_codes,
     audit,
     batch_soft_delete,
     body,
+    check_ref_project,
     commit,
     db,
     download_response,
+    guard_project_scope,
     ids_of,
     keyword_of,
     page_args,
     page_payload,
     path_int,
     query_filters,
+    reject_project_move,
+    require_project,
+    scope_arg,
 )
 
 bp = Blueprint("test_cases", __name__)
@@ -51,6 +57,38 @@ WRITE_FIELDS = {
     "status", "preconditions", "expected_result", "actual_result", "tags", "source", "creator",
     "version_id",
 }
+
+
+def _expand_module_scope(filters: dict[str, Any]) -> None:
+    """功能点筛选的两种扩展写法。
+
+    `moduleId=none` 只看未挂功能点的用例；`moduleId=1,2,3` 看多个节点，
+    前端把「含下级」展开成 id 列表传进来，后端不猜层级。
+    """
+    raw = filters.get("module_id")
+    if raw is None:
+        return
+    text = str(raw).strip()
+    if text.lower() == "none":
+        filters["module_id"] = NULL_FILTER
+        return
+    if "," in text:
+        filters["module_id"] = [int(part) for part in text.split(",") if part.strip().isdigit()]
+
+
+def _check_case_refs(
+    conn: Any,
+    project_id: Any,
+    requirement_id: Any = None,
+    module_id: Any = None,
+    version_id: Any = None,
+) -> tuple[int | None, int | None, int | None]:
+    """用例上的三个引用必须落在同一个项目里，否则覆盖矩阵和版本统计会串项目。"""
+    return (
+        check_ref_project(conn, "biz_requirement", requirement_id, project_id, "需求", "requirementId"),
+        check_ref_project(conn, "biz_module", module_id, project_id, "功能点", "moduleId"),
+        check_ref_project(conn, "biz_project_version", version_id, project_id, "项目版本", "versionId"),
+    )
 
 
 def _to_public(row: dict[str, Any]) -> dict[str, Any]:
@@ -136,6 +174,7 @@ def list_cases() -> Response:
     page_num, page_size = page_args()
     repo = TestCaseRepository(conn)
     filters = query_filters(FILTERS)
+    _expand_module_scope(filters)
     page = repo.list_detail(filters, keyword_of() or None, page_num=page_num, page_size=page_size)
     payload = page_payload(page)
     payload["list"] = attach_version_codes(conn, [_to_public(row) for row in payload["list"]])
@@ -147,10 +186,14 @@ def case_tree() -> Response:
     """用例树：功能点树上挂各自的用例，没挂功能点的用例单独列出。"""
     conn = db()
     project_id = require_int(request.args.get("projectId"), "projectId")
+    version_id = scope_arg(field="versionId")
     module_repo = ModuleRepository(conn)
     tree = module_repo.tree(project_id)
 
-    rows = TestCaseRepository(conn).list_all({"project_id": project_id}, None, limit=20000)
+    case_filters: dict[str, Any] = {"project_id": project_id}
+    if version_id:
+        case_filters["version_id"] = version_id
+    rows = TestCaseRepository(conn).list_all(case_filters, None, limit=20000)
     by_module: dict[int, list[dict[str, Any]]] = {}
     orphans: list[dict[str, Any]] = []
     for row in rows:
@@ -182,7 +225,7 @@ def case_tree() -> Response:
 def coverage_matrix() -> Response:
     conn = db()
     project_id = require_int(request.args.get("projectId"), "projectId")
-    return ok(TestCaseRepository(conn).coverage_matrix(project_id))
+    return ok(TestCaseRepository(conn).coverage_matrix(project_id, scope_arg(field="versionId")))
 
 
 @bp.get("/coverage/modules")
@@ -190,12 +233,14 @@ def module_coverage_matrix() -> Response:
     """按功能点统计的覆盖矩阵。"""
     conn = db()
     project_id = require_int(request.args.get("projectId"), "projectId")
-    return ok(TestCaseRepository(conn).module_coverage_matrix(project_id))
+    return ok(TestCaseRepository(conn).module_coverage_matrix(
+        project_id, scope_arg(field="versionId")
+    ))
 
 
 @bp.get("/export")
 def export_cases() -> Response:
-    """导出用例：xlsx 走 7 张表（格式对齐 testSKill\\generate_test_cases.py），csv/json 走单表摊平。"""
+    """导出用例：xlsx 走 7 张表（格式对齐参考实现 generate_test_cases.py），csv/json 走单表摊平。"""
     conn = db()
     project_id = require_int(request.args.get("projectId"), "projectId")
     fmt = str(request.args.get("format") or "xlsx").strip().lower()
@@ -208,11 +253,13 @@ def export_cases() -> Response:
         "priority": "priority",
         "moduleId": "module_id",
         "requirementId": "requirement_id",
+        "versionId": "version_id",
     }
     for key, column in column_map.items():
         value = request.args.get(key)
         if value:
             filters[column] = value
+    _expand_module_scope(filters)
 
     repo = TestCaseRepository(conn)
     raw_rows = repo.list_all(filters, keyword_of() or None, limit=10000)
@@ -338,6 +385,7 @@ def import_cases() -> Response:
 
     created = 0
     skipped = 0
+    renumbered = 0
     for item in parsed:
         title = str(item.get("title") or "").strip()
         if not title:
@@ -361,7 +409,9 @@ def import_cases() -> Response:
 
         case_no = str(item.get("caseNo") or "").strip()
         if not case_no or case_no in used_numbers:
+            # 编号冲突不丢数据，改成自动编号，但要告知用户改了哪些
             case_no = repo.next_case_no(project_id_int, case_type)
+            renumbered += 1
         used_numbers.add(case_no)
 
         repo.insert({
@@ -386,8 +436,18 @@ def import_cases() -> Response:
 
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_CREATE, audit_service.RESOURCE_TEST_CASE, None,
-          uploaded.filename, {"created": created, "skipped": skipped, "projectId": project_id_int})
-    return ok({"created": created, "skipped": skipped, "total": len(parsed)})
+          uploaded.filename, {
+              "created": created,
+              "skipped": skipped,
+              "renumbered": renumbered,
+              "projectId": project_id_int,
+          })
+    return ok({
+        "created": created,
+        "skipped": skipped,
+        "renumbered": renumbered,
+        "total": len(parsed),
+    })
 
 
 @bp.get("/<pk>")
@@ -396,6 +456,7 @@ def get_case(pk: str) -> Response:
     row = TestCaseRepository(conn).get_detail(path_int(pk))
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "测试用例不存在")
+    guard_project_scope(row, scope_arg(), "测试用例")
     return ok(_to_public(row))
 
 
@@ -405,6 +466,10 @@ def create_case() -> Response:
     data = body()
     project_id = require_int(data.get("projectId"), "projectId")
     title = require_str(data.get("title"), "title", 500)
+    require_project(conn, project_id)
+    requirement_id, module_id, version_id = _check_case_refs(
+        conn, project_id, data.get("requirementId"), data.get("moduleId"), data.get("versionId")
+    )
     case_type = check_choice(data.get("caseType"), CASE_TYPE, "caseType", "functional") or "functional"
     priority = check_choice(data.get("priority"), CASE_PRIORITY, "priority", "P2") or "P2"
     status = check_choice(data.get("status"), CASE_STATUS, "status", "not_executed") or "not_executed"
@@ -412,9 +477,10 @@ def create_case() -> Response:
     steps = data.get("steps")
     new_id = repo.insert({
         "project_id": project_id,
-        "requirement_id": data.get("requirementId"),
-        "module_id": data.get("moduleId"),
+        "requirement_id": requirement_id,
+        "module_id": module_id,
         "case_no": repo.next_case_no(project_id, case_type),
+        "version_id": version_id,
         "title": title,
         "case_type": case_type,
         "priority": priority,
@@ -444,14 +510,18 @@ def update_case(pk: str) -> Response:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "测试用例不存在")
     data = body()
     payload = {k: v for k, v in data.items() if k in WRITE_FIELDS}
-    if "versionId" in data:
-        payload["version_id"] = data["versionId"]
-    if "moduleId" in data:
-        payload["module_id"] = data["moduleId"]
+    reject_project_move(data, row.get("project_id"), "用例")
+    payload.pop("project_id", None)
+    requirement_id, module_id, version_id = _check_case_refs(
+        conn, row.get("project_id"), data.get("requirementId"), data.get("moduleId"),
+        data.get("versionId"),
+    )
     if "requirementId" in data:
-        payload["requirement_id"] = data["requirementId"]
-    if "projectId" in data:
-        payload["project_id"] = data["projectId"]
+        payload["requirement_id"] = requirement_id
+    if "moduleId" in data:
+        payload["module_id"] = module_id
+    if "versionId" in data:
+        payload["version_id"] = version_id
     if "caseType" in data:
         payload["case_type"] = data["caseType"]
     if "expectedResult" in data:
@@ -504,6 +574,10 @@ def adopt_cases() -> Response:
     conn = db()
     data = body()
     project_id = require_int(data.get("projectId"), "projectId")
+    require_project(conn, project_id)
+    default_requirement, default_module, version_id = _check_case_refs(
+        conn, project_id, data.get("requirementId"), data.get("moduleId"), data.get("versionId")
+    )
     items = data.get("cases")
     if not isinstance(items, list) or not items:
         raise AppError(ErrorCode.PARAM_ERROR, "cases 不能为空")
@@ -526,10 +600,14 @@ def adopt_cases() -> Response:
         if not isinstance(steps, list):
             steps = []
         case_no = repo.next_case_no(project_id, case_type)
+        item_requirement, item_module, _ = _check_case_refs(
+            conn, project_id, item.get("requirementId"), item.get("moduleId")
+        )
         new_id = repo.insert({
             "project_id": project_id,
-            "requirement_id": item.get("requirementId") or data.get("requirementId"),
-            "module_id": item.get("moduleId") or data.get("moduleId"),
+            "requirement_id": item_requirement or default_requirement,
+            "module_id": item_module or default_module,
+            "version_id": version_id,
             "case_no": case_no,
             "title": title,
             "case_type": case_type,
@@ -577,3 +655,32 @@ def execute_case(pk: str) -> Response:
     audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_TEST_CASE, target,
           row.get("title", ""), {"result": result})
     return ok({"id": target, "status": result, "executionId": exec_id})
+
+
+@bp.post("/<pk>/interface-run")
+def run_interface_case(pk: str) -> Response:
+    """按接口用例的扩展字段发一次真实 HTTP 请求，并回写执行结果。"""
+    conn = db()
+    target = path_int(pk)
+    row = TestCaseRepository(conn).get(target)
+    if not row:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "测试用例不存在")
+    data = body()
+    env_id = optional_int(data.get("envId"), "envId")
+    if env_id is None:
+        default_env = TestEnvRepository(conn).get_default()
+        env_id = int(default_env["id"]) if default_env else None
+    payload = interface_runner.run_case(
+        conn,
+        target,
+        env_id,
+        timeout=optional_int(data.get("timeoutSeconds"), "timeoutSeconds")
+        or interface_runner.DEFAULT_TIMEOUT,
+        executed_by=optional_str(data.get("executedBy"), "executedBy", 64) or "local",
+    )
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_EXECUTE, audit_service.RESOURCE_TEST_CASE, target,
+          str(row.get("title") or ""),
+          {"envId": payload.get("envId"), "statusCode": payload.get("statusCode"),
+           "result": payload.get("result")})
+    return ok(payload)

@@ -82,6 +82,8 @@ def decorate(row: RowDict) -> dict[str, Any]:
         "fileName": row.get("file_name") or "",
         "fileType": row.get("file_type") or "",
         "fileSize": int(row.get("file_size") or 0),
+        #: 原文件落盘名，空串表示这条模板没有可下载的文件
+        "storedName": row.get("stored_name") or "",
         "isDefault": bool(row.get("is_default")),
         "createdAt": row.get("created_at"),
         "updatedAt": row.get("updated_at"),
@@ -94,6 +96,11 @@ class DocTemplateRepository(BaseRepository):
     default_order_dir = "asc"
     order_whitelist = {"id", "name", "kind", "is_default", "created_at", "updated_at"}
     searchable = ["name", "description", "content"]
+
+    def stored_names(self) -> set[str]:
+        """所有模板引用着的落盘文件名，用于判断哪些上传原件已无人使用。"""
+        rows = self.raw("SELECT stored_name FROM sys_doc_template WHERE stored_name <> ''")
+        return {str(row["stored_name"]) for row in rows if row["stored_name"]}
 
 
 def dump_columns(columns: list[str]) -> str:

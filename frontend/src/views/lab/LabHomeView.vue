@@ -3,6 +3,7 @@
     <div class="page-header">
       <h2 class="page-title">AI 实验室</h2>
       <div class="toolbar" style="margin: 0">
+        <ProjectSwitcher />
         <el-button :icon="Notebook" @click="router.push('/lab/prompts')">提示词库</el-button>
         <el-button :icon="ChatDotRound" @click="router.push('/lab/sessions')">会话记录</el-button>
       </div>
@@ -120,6 +121,7 @@ import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ChatDotRound, Notebook } from '@element-plus/icons-vue'
 import SmartEntry from '@/components/SmartEntry.vue'
+import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import { useLabStore } from '@/stores/lab'
 import type { CapabilitySpec } from '@/api/types'
 import { variableLabel } from './capabilityForms'

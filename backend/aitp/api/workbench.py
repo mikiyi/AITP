@@ -7,8 +7,8 @@ from typing import Any
 
 from flask import Blueprint, Response, request
 
-from ..ai.capability_codes import CAPABILITIES
-from ..common.enums import BUG_STATUS, CASE_STATUS
+from ..ai.capability_codes import CAPABILITIES, label_of
+from ..common.enums import BUG_SEVERITY, BUG_STATUS, CASE_STATUS, REQUIREMENT_STATUS
 from ..common.time_utils import utcnow_iso
 from ..common.validators import optional_int, require_str
 from ..envelope import ok
@@ -120,11 +120,20 @@ def overview() -> Response:
         conn, f"SELECT COUNT(*) FROM biz_requirement WHERE is_deleted = 0{scope_sql}", scope_args
     )
     report_total = _count(conn, f"SELECT COUNT(*) FROM biz_report WHERE is_deleted = 0{scope_sql}", scope_args)
-    task_total = _count(conn, "SELECT COUNT(*) FROM biz_ai_task WHERE is_deleted = 0")
-    task_success = _count(
-        conn, "SELECT COUNT(*) FROM biz_ai_task WHERE is_deleted = 0 AND status = 'success'"
+    # AI 任务、功能点没有版本维度，只按项目收敛；不给 projectId 时才是全库口径
+    plain_args: tuple[Any, ...] = (project_id,) if project_id else ()
+    plain_sql = " AND project_id = ?" if project_id else ""
+    task_total = _count(
+        conn, f"SELECT COUNT(*) FROM biz_ai_task WHERE is_deleted = 0{plain_sql}", plain_args
     )
-    module_total = _count(conn, "SELECT COUNT(*) FROM biz_module WHERE is_deleted = 0")
+    task_success = _count(
+        conn,
+        f"SELECT COUNT(*) FROM biz_ai_task WHERE is_deleted = 0 AND status = 'success'{plain_sql}",
+        plain_args,
+    )
+    module_total = _count(
+        conn, f"SELECT COUNT(*) FROM biz_module WHERE is_deleted = 0{plain_sql}", plain_args
+    )
 
     knowledge_repo = KnowledgeRepository(conn)
     draft_repo = KnowledgeDraftRepository(conn)
@@ -139,7 +148,56 @@ def overview() -> Response:
     bug_counts = BugRepository(conn).status_counts(int(project_id) if project_id else None, version_id)
     bug_status = {status: bug_counts.get(status, 0) for status in BUG_STATUS}
 
-    task_rows = AITaskRepository(conn).list_all(None, None, limit=5)
+    # 首页候选卡片：需求状态、缺陷级别、能力使用量、最新报告
+    requirement_status = {status: 0 for status in REQUIREMENT_STATUS}
+    for row in conn.execute(
+        f"SELECT status, COUNT(*) AS c FROM biz_requirement WHERE is_deleted = 0{scope_sql} GROUP BY status",
+        scope_args,
+    ).fetchall():
+        requirement_status[row["status"]] = int(row["c"])
+
+    bug_severity = {severity: 0 for severity in BUG_SEVERITY}
+    for row in conn.execute(
+        f"SELECT severity, COUNT(*) AS c FROM biz_bug WHERE is_deleted = 0{scope_sql} GROUP BY severity",
+        scope_args,
+    ).fetchall():
+        bug_severity[str(row["severity"])] = int(row["c"])
+
+    ai_usage = [
+        {
+            "capability": str(row["capability"] or row["task_type"]),
+            "label": label_of(str(row["capability"] or row["task_type"])),
+            "count": int(row["c"]),
+        }
+        for row in conn.execute(
+            f"""
+            SELECT capability, task_type, COUNT(*) AS c FROM biz_ai_task
+            WHERE is_deleted = 0{plain_sql}
+            GROUP BY capability, task_type
+            ORDER BY c DESC LIMIT 8
+            """,
+            plain_args,
+        ).fetchall()
+    ]
+
+    recent_reports = [
+        {
+            "id": row["id"],
+            "title": row["title"],
+            "reportType": row["report_type"],
+            "status": row["status"],
+            "createdAt": row["created_at"],
+        }
+        for row in conn.execute(
+            f"""
+            SELECT id, title, report_type, status, created_at FROM biz_report
+            WHERE is_deleted = 0{scope_sql} ORDER BY id DESC LIMIT 5
+            """,
+            scope_args,
+        ).fetchall()
+    ]
+
+    task_rows = AITaskRepository(conn).recent(5, project_id)
     # 「能力」列显示会话标题（与会话记录页的「会话」列一致），没有会话时回落到能力编号
     session_ids = {int(r["session_id"]) for r in task_rows if r.get("session_id")}
     session_titles: dict[int, str] = {}
@@ -166,6 +224,8 @@ def overview() -> Response:
         for row in task_rows
     ]
 
+    knowledge_total = knowledge_repo.published_count(project_id)
+
     return ok({
         "metrics": {
             "caseTotal": case_total,
@@ -173,26 +233,31 @@ def overview() -> Response:
             "bugTotal": bug_total,
             "bugOpen": bug_open,
             "requirementTotal": requirement_total,
-            "knowledgeTotal": knowledge_repo.published_count(),
+            "knowledgeTotal": knowledge_total,
             "reportTotal": report_total,
             "moduleTotal": module_total,
             "aiTaskTotal": task_total,
             "aiTaskSuccessRate": round(task_success / task_total, 4) if task_total else 0.0,
         },
         "assets": {
-            "project": ProjectRepository(conn).count(),
+            # 项目视图里「项目数」不是本项目的资产，选了就不再摆，避免被读成项目内数量
+            **({} if project_id else {"project": ProjectRepository(conn).count()}),
             "requirement": requirement_total,
             "case": case_total,
             "bug": bug_total,
-            "knowledge": knowledge_repo.published_count(),
+            "knowledge": knowledge_total,
             "report": report_total,
             "task": task_total,
         },
-        "pendingKnowledge": draft_repo.pending_count(),
+        "pendingKnowledge": draft_repo.pending_count(project_id),
         "recentTasks": recent_tasks,
         "shortcuts": _shortcuts(conn),
         "caseStatus": case_status,
         "bugStatus": bug_status,
+        "requirementStatus": requirement_status,
+        "bugSeverity": bug_severity,
+        "aiUsage": ai_usage,
+        "recentReports": recent_reports,
     })
 
 
@@ -202,14 +267,18 @@ def coverage() -> Response:
     project_id = request.args.get("projectId")
     if not project_id:
         return ok({"list": []})
-    return ok(TestCaseRepository(conn).coverage_matrix(int(project_id)))
+    return ok(TestCaseRepository(conn).coverage_matrix(
+        int(project_id), optional_int(request.args.get("versionId"), "versionId")
+    ))
 
 
 @bp.get("/executions")
 def execution_summary() -> Response:
     conn = db()
     pid = optional_int(request.args.get("projectId"), "projectId")
-    return ok(CaseExecutionRepository(conn).result_counts(pid))
+    return ok(CaseExecutionRepository(conn).result_counts(
+        pid, optional_int(request.args.get("versionId"), "versionId")
+    ))
 
 
 # ---------------- 编排入口 ----------------

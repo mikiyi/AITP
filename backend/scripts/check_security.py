@@ -3,16 +3,22 @@
     python backend/scripts/check_security.py
 
 覆盖：静态目录穿越、无 CORS 头、明文密钥不落库不外传、SQL 参数化、
-排序字段白名单、分页上限、原子写不残留临时文件。
+排序字段白名单、分页上限、原子写不残留临时文件、本地访问口令。
+所有写操作都落在临时库与临时目录，正式库与正式密钥目录只读不写。
 """
 
 from __future__ import annotations
 
+import logging
 import pathlib
 import re
+import shutil
 import sqlite3
 import sys
+import tempfile
 from typing import Any, cast
+
+from flask import Flask
 
 # TextIO 协议没有 reconfigure，只有具体 TextIOWrapper 才有
 cast(Any, sys.stdout).reconfigure(encoding="utf-8", errors="replace")
@@ -22,6 +28,8 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from aitp.common.path_safety import is_blocked_name, normalize_relative_path, safe_join  # noqa: E402
 from aitp.common.pii import detect_sensitive, mask_sensitive  # noqa: E402
+from aitp.config import AppConfig  # noqa: E402
+from aitp.db.migrator import init_db  # noqa: E402
 
 _passed = 0
 _failed = 0
@@ -37,6 +45,26 @@ def check(name: str, condition: bool, detail: str = "") -> None:
     else:
         _failed += 1
         print(f"[FAIL] {name}  {detail}")
+
+
+def build_app(workdir: pathlib.Path) -> Flask:
+    """门禁用的应用实例：库、日志、密钥文件全指向临时目录。"""
+    from aitp.app import create_app
+
+    db_path = workdir / "check_security.db"
+    init_db(db_path)
+    cfg = AppConfig(
+        host="127.0.0.1",
+        port=8760,
+        debug=False,
+        db_path=db_path,
+        log_path=workdir / "check_security.log",
+        deploy_log_path=workdir / "deploy.log",
+        secret_key_path=workdir / ".secret_key",
+        prompts_dir=ROOT / "backend" / "prompts",
+        static_dir=ROOT / "backend" / "aitp" / "static",
+    )
+    return create_app(cfg)
 
 
 # ---------------------------------------------------------------------
@@ -59,10 +87,7 @@ def check_path_safety() -> None:
     check("正常资源名不被误伤", not is_blocked_name("assets/index-abc123.js"))
 
 
-def check_no_cors_and_static() -> None:
-    from aitp.app import create_app
-
-    app = create_app()
+def check_no_cors_and_static(app: Flask) -> None:
     client = app.test_client()
 
     resp = client.get("/api/v1/health")
@@ -79,10 +104,10 @@ def check_no_cors_and_static() -> None:
     check("带 Origin 头也不返回 CORS 头", not cors, str(cors))
 
 
-def check_secret_storage() -> None:
+def check_secret_storage(workdir: pathlib.Path) -> None:
     from aitp.common.secret_store import SecretStore, atomic_write_bytes
 
-    store = SecretStore(ROOT / "data")
+    store = SecretStore(workdir)
     check("密钥存储后端可用", store.backend in ("dpapi", "keychain", "file"), store.backend)
 
     ref = "security_check:probe"
@@ -91,18 +116,18 @@ def check_secret_storage() -> None:
     store.delete(ref)
     check("密钥删除后读不到", store.get(ref) == "")
 
-    target = ROOT / "data" / "_atomic_probe.bin"
+    target = workdir / "_atomic_probe.bin"
     atomic_write_bytes(target, b"x" * 32)
-    leftovers = list((ROOT / "data").glob("_atomic_probe.bin.tmp-*"))
+    leftovers = list(workdir.glob("_atomic_probe.bin.tmp-*"))
     check("原子写不留临时文件", not leftovers, str(leftovers))
     target.unlink(missing_ok=True)
 
 
-def check_key_not_in_db() -> None:
+def check_key_not_in_db(app: Flask) -> None:
     from aitp.db.connection import get_standalone_conn
     from aitp.repositories.ai_profile_repo import AIProfileRepository
 
-    db_path = ROOT / "data" / "aitp.db"
+    db_path = pathlib.Path(app.config["AITP_DB_PATH"])
     conn = get_standalone_conn(db_path)
     try:
         repo = AIProfileRepository(conn)
@@ -186,15 +211,154 @@ def check_pii_masking() -> None:
     check("脱敏后不残留密钥", "sk-abcdefgh12345" not in masked, masked)
 
 
+def check_same_site_guard(app: Flask) -> None:
+    """本机同源防护：挡外部网页盲打，但放过本机页面与命令行。"""
+    from aitp.errors import ErrorCode
+
+    client = app.test_client()
+    blocked = ErrorCode.CROSS_SITE_BLOCKED
+
+    def post_code(**headers: str) -> int:
+        body = client.post("/api/v1/todos", json={}, headers=headers).get_json()
+        return int((body or {}).get("code") or 0)
+
+    def get_code(**headers: str) -> int:
+        body = client.get("/api/v1/todos", headers=headers).get_json()
+        return int((body or {}).get("code") or 0)
+
+    check("外部网页写接口被拒", post_code(Origin="http://evil.example") == blocked,
+          str(post_code(Origin="http://evil.example")))
+    check("外部 Referer 写接口被拒",
+          post_code(Referer="http://evil.example/page.html") == blocked,
+          str(post_code(Referer="http://evil.example/page.html")))
+    check("Sec-Fetch-Site 跨站被拒",
+          post_code(**{"Sec-Fetch-Site": "cross-site"}) == blocked,
+          str(post_code(**{"Sec-Fetch-Site": "cross-site"})))
+    check("无 Origin 的本机调用放行", post_code() != blocked, str(post_code()))
+    check("同源页面写接口放行",
+          post_code(Origin="http://localhost:8760") != blocked,
+          str(post_code(Origin="http://localhost:8760")))
+    # 前端 dev 服务器把请求代理给后端：页面端口与接口端口不同，仍属本机
+    check("本机其他端口的页面放行",
+          post_code(Origin="http://localhost:5180") != blocked,
+          str(post_code(Origin="http://localhost:5180")))
+    # vite 代理不改写 Host：页面与接口都落在 dev 端口上
+    check("dev 代理转发后仍放行",
+          post_code(**{"Host": "127.0.0.1:5180", "Origin": "http://127.0.0.1:5180"}) != blocked,
+          str(post_code(**{"Host": "127.0.0.1:5180", "Origin": "http://127.0.0.1:5180"})))
+    check("读接口不受同源限制", get_code(Origin="http://evil.example") != blocked,
+          str(get_code(Origin="http://evil.example")))
+    check("非法 Host 被拒",
+          post_code(**{"Host": "attacker.example"}) == blocked,
+          str(post_code(**{"Host": "attacker.example"})))
+
+
+def check_access_guard(app: Flask) -> None:
+    """本地访问口令：默认关闭；启用后无会话的接口一律被拒，登录后放行。"""
+    from aitp.errors import ErrorCode
+    from aitp.services import access_service
+
+    data_dir = pathlib.Path(app.config["AITP_DB_PATH"]).parent
+    password = "aitp-check-pass-2468"
+
+    def code_of(resp: Any) -> int:
+        return int((resp.get_json() or {}).get("code") or 0)
+
+    def data_of(resp: Any) -> dict[str, Any]:
+        return cast("dict[str, Any]", (resp.get_json() or {}).get("data") or {})
+
+    try:
+        anon = app.test_client()
+        status = data_of(anon.get("/api/v1/auth/status"))
+        check("默认未启用访问口令", status.get("enabled") is False, str(status))
+        check("未启用时接口直接放行", code_of(anon.get("/api/v1/todos")) == 200000)
+
+        check("弱口令被拒",
+              code_of(anon.put("/api/v1/auth/password", json={
+                  "password": "123", "confirmPassword": "123",
+              })) == ErrorCode.PARAM_ERROR)
+        check("两次口令不一致被拒",
+              code_of(anon.put("/api/v1/auth/password", json={
+                  "password": password, "confirmPassword": password + "x",
+              })) == ErrorCode.PARAM_ERROR)
+
+        owner = app.test_client()
+        saved = owner.put("/api/v1/auth/password", json={
+            "password": password, "confirmPassword": password,
+        })
+        cookie = saved.headers.get("Set-Cookie", "")
+        check("启用口令成功", code_of(saved) == 200000 and data_of(saved).get("enabled") is True,
+              str(data_of(saved)))
+        check("登录 Cookie 为 HttpOnly + SameSite=Strict",
+              "HttpOnly" in cookie and "SameSite=Strict" in cookie, cookie[:120])
+
+        status = data_of(anon.get("/api/v1/auth/status"))
+        check("启用后状态如实上报", status.get("enabled") is True and status.get("authenticated") is False,
+              str(status))
+        check("无会话访问业务接口被拒", code_of(anon.get("/api/v1/todos")) == ErrorCode.AUTH_REQUIRED,
+              str(code_of(anon.get("/api/v1/todos"))))
+        check("健康检查不要求口令", code_of(anon.get("/api/v1/health")) == 200000)
+
+        check("错误口令登录被拒",
+              code_of(anon.post("/api/v1/auth/login", json={"password": "wrong-pass"}))
+              == ErrorCode.AUTH_FAILED)
+        login = anon.post("/api/v1/auth/login", json={"password": password})
+        check("正确口令登录成功", code_of(login) == 200000 and data_of(login).get("authenticated") is True,
+              str(data_of(login)))
+        check("登录后业务接口放行", code_of(anon.get("/api/v1/todos")) == 200000)
+
+        bearer = app.test_client()
+        token, _ = access_service.create_session()
+        check("Bearer 令牌同样可用",
+              code_of(bearer.get("/api/v1/todos", headers={"Authorization": f"Bearer {token}"}))
+              == 200000)
+
+        anon.post("/api/v1/auth/logout")
+        check("退出登录后会话失效", code_of(anon.get("/api/v1/todos")) == ErrorCode.AUTH_REQUIRED)
+
+        record_file = access_service.password_path(data_dir)
+        raw = record_file.read_text(encoding="utf-8")
+        check("口令文件只存哈希不存明文",
+              record_file.name == "access_password.json"
+              and "pbkdf2_sha256$" in raw and password not in raw)
+
+        for _ in range(access_service.MAX_FAILURES):
+            anon.post("/api/v1/auth/login", json={"password": "wrong-pass"})
+        check("连续输错后触发限流",
+              code_of(anon.post("/api/v1/auth/login", json={"password": password}))
+              == ErrorCode.AUTH_LOCKED)
+        access_service.reset_failures("127.0.0.1")
+
+        check("关闭口令需校验当前口令",
+              code_of(owner.delete("/api/v1/auth/password", json={"password": "wrong-pass"}))
+              == ErrorCode.AUTH_FAILED)
+        removed = owner.delete("/api/v1/auth/password", json={"password": password})
+        check("关闭口令成功", code_of(removed) == 200000 and data_of(removed).get("enabled") is False,
+              str(data_of(removed)))
+        check("关闭后无需会话即可访问", code_of(app.test_client().get("/api/v1/todos")) == 200000)
+    finally:
+        access_service.remove(data_dir)
+        access_service.reset_failures("127.0.0.1")
+
+
 def main() -> int:
-    check_path_safety()
-    check_no_cors_and_static()
-    check_secret_storage()
-    check_key_not_in_db()
-    check_sql_parameterization()
-    check_sort_whitelist()
-    check_pagination_limit()
-    check_pii_masking()
+    workdir = pathlib.Path(tempfile.mkdtemp(prefix="aitp-checksecurity-"))
+    try:
+        app = build_app(workdir)
+        check_path_safety()
+        check_no_cors_and_static(app)
+        check_same_site_guard(app)
+        check_access_guard(app)
+        check_secret_storage(workdir)
+        check_key_not_in_db(app)
+        check_sql_parameterization()
+        check_sort_whitelist()
+        check_pagination_limit()
+        check_pii_masking()
+    finally:
+        # 日志 handler 一直占着临时目录里的文件，Windows 上不先关掉就删不掉
+        logging.shutdown()
+        shutil.rmtree(workdir, ignore_errors=True)
 
     print("-" * 40)
     print(f"PASS={_passed} FAIL={_failed}")

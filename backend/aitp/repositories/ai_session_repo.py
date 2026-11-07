@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ..common.pagination import RowDict, RowList
+from ..common.pagination import MAX_PAGE_SIZE, Page, RowDict, RowList, build_page
 from ..common.time_utils import utcnow_iso
 from .base import BaseRepository, loads
 
@@ -15,6 +15,37 @@ class AISessionRepository(BaseRepository):
     default_order = "updated_at"
     order_whitelist = {"id", "title", "module", "created_at", "updated_at"}
     searchable = ["title"]
+
+    def page_scoped(
+        self,
+        filters: dict[str, Any] | None,
+        project_id: int | None,
+        page_num: int,
+        page_size: int,
+    ) -> Page:
+        """会话表没有 project_id 列，项目维度只能顺着它名下的任务收敛。
+
+        不给 project 时就是原来的全局列表；给了就只留该项目跑过的会话，
+        否则项目页的「会话记录」会把别人的对话一起列出来。
+        """
+        where, params = self._build_where(filters, None)
+        if project_id:
+            where += (
+                " AND EXISTS (SELECT 1 FROM biz_ai_task t WHERE t.session_id = biz_ai_session.id"
+                " AND t.is_deleted = 0 AND t.project_id = ?)"
+            )
+            params = [*params, int(project_id)]
+        total = int(self.conn.execute(
+            f"SELECT COUNT(*) FROM {self.table} WHERE {where}", params
+        ).fetchone()[0])
+        limit = max(1, min(int(page_size or 20), MAX_PAGE_SIZE))
+        offset = (max(1, int(page_num or 1)) - 1) * limit
+        rows = self.conn.execute(
+            f"SELECT * FROM {self.table} WHERE {where} ORDER BY {self.default_order}"
+            f" {self.default_order_dir.upper()} LIMIT ? OFFSET ?",
+            [*params, limit, offset],
+        ).fetchall()
+        return build_page([dict(row) for row in rows], total, page_num, limit)
 
     def get_detail(self, pk: int) -> RowDict | None:
         row = self.get(pk)
@@ -66,6 +97,17 @@ class AITaskRepository(BaseRepository):
     default_order = "created_at"
     order_whitelist = {"id", "task_type", "status", "created_at", "updated_at"}
     searchable = ["task_type", "status"]
+
+    def recent(self, limit: int = 5, project_id: int | None = None) -> RowList:
+        """首页「最近任务」：给了项目就只看本项目，且必须按时间倒序取。"""
+        scope = " AND project_id = ?" if project_id else ""
+        params: list[Any] = [int(project_id)] if project_id else []
+        params.append(int(limit))
+        rows = self.conn.execute(
+            f"SELECT * FROM biz_ai_task WHERE is_deleted = 0{scope} ORDER BY id DESC LIMIT ?",
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def start(self, task_type: str, **fields: Any) -> int:
         payload = {

@@ -1,7 +1,7 @@
 <template>
   <div class="base-pro-table">
-    <div v-if="searchFields.length" class="toolbar">
-      <template v-for="field in searchFields" :key="field.prop">
+    <div v-if="visibleSearchFields.length" class="toolbar">
+      <template v-for="field in visibleSearchFields" :key="field.prop">
         <el-select
           v-if="field.type === 'select'"
           v-model="filters[field.prop]"
@@ -25,11 +25,11 @@
           clearable
           size="default"
           style="width: 180px"
+          @input="scheduleReload"
           @keyup.enter="reload"
           @clear="reload"
         />
       </template>
-      <el-button type="primary" :icon="Search" @click="reload">查询</el-button>
       <el-button :icon="Refresh" @click="reset">重置</el-button>
       <div class="spacer" />
       <slot name="toolbar" />
@@ -93,11 +93,12 @@
 </template>
 
 <script setup lang="ts" generic="T extends Record<string, any>">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import type { TableInstance } from 'element-plus'
-import { Refresh, Search } from '@element-plus/icons-vue'
+import { Refresh } from '@element-plus/icons-vue'
+import { useAutoQuery } from '@/composables/useAutoQuery'
 import type { PagePayload } from '@/api/request'
 import { dateTimeText } from '@/utils/format'
 
@@ -118,6 +119,8 @@ export interface SearchField {
   label: string
   type?: 'text' | 'select'
   options?: Array<{ label: string; value: string | number }>
+  /** 不在工具栏渲染控件，但仍参与筛选、地址栏同步与导出；供左侧树这类外部控件驱动。 */
+  hidden?: boolean
 }
 
 /** 表格对外暴露的方法，供父组件调用。 */
@@ -127,6 +130,8 @@ export interface TableExpose {
   clearSelection: () => void
   selectedRows: () => Record<string, any>[]
   filterQuery: () => Record<string, string>
+  clearFilter: (prop: string | string[]) => void
+  setFilter: (prop: string, value: string | number | undefined | null) => void
 }
 
 const props = withDefaults(
@@ -163,6 +168,7 @@ const emit = defineEmits<{
   (event: 'row-click', row: T): void
   (event: 'loaded', payload: PagePayload<T>): void
   (event: 'selection-change', rows: T[]): void
+  (event: 'filters-reset'): void
 }>()
 
 const route = useRoute()
@@ -180,6 +186,9 @@ const tableRef = ref<TableInstance | null>(null)
 const PAGE_KEY = 'page'
 const SIZE_KEY = 'size'
 const PAGE_SIZES = [10, 20, 50, 100]
+
+/** 工具栏只渲染有控件的筛选项；hidden 项交给页面里的外部控件（如功能点面板）驱动。 */
+const visibleSearchFields = computed(() => props.searchFields.filter((field) => !field.hidden))
 
 /** el-table 内部对行数据做了 Unwrap，事件参数用宽松类型再接回 T。 */
 type RawRow = Record<string, any>
@@ -214,7 +223,10 @@ function clearSelection(): void {
   tableRef.value?.clearSelection()
 }
 
+let loadSeq = 0
+
 async function load(): Promise<void> {
+  const my = ++loadSeq
   loading.value = true
   try {
     const payload = await props.fetcher({
@@ -223,17 +235,37 @@ async function load(): Promise<void> {
       ...props.extraQuery,
       ...filters,
     })
-    rows.value = payload.list ?? []
-    total.value = payload.total ?? 0
+    // 连续切换筛选/翻页时只认最后一次请求，避免慢请求把新结果覆盖回去
+    if (my !== loadSeq) {
+      return
+    }
+    const list = payload.list ?? []
+    const totalCount = payload.total ?? 0
+    // 删到最后一页时当前页码可能已经越界，自动退回最后一页再拉一次
+    if (!list.length && totalCount > 0 && pageNum.value > 1) {
+      const lastPage = Math.max(1, Math.ceil(totalCount / pageSize.value))
+      if (lastPage < pageNum.value) {
+        pageNum.value = lastPage
+        void load()
+        return
+      }
+    }
+    rows.value = list
+    total.value = totalCount
     emit('loaded', payload)
     syncToQuery()
   } catch (err) {
+    if (my !== loadSeq) {
+      return
+    }
     rows.value = []
     total.value = 0
     const message = err instanceof Error ? err.message : '加载失败'
     ElMessage.error(message)
   } finally {
-    loading.value = false
+    if (my === loadSeq) {
+      loading.value = false
+    }
   }
 }
 
@@ -242,10 +274,18 @@ function reload(): void {
   void load()
 }
 
+/*
+ * 筛选条件即改即查：下拉/清空立即重查，输入框打打字要防抖，
+ * 否则每敲一个字都发一次请求。有输入型筛选项时不再放「查询」按钮，
+ * 避免「选了自动查、打了要点按钮」两套口径打架。
+ */
+const scheduleReload = useAutoQuery(reload)
+
 function reset(): void {
   Object.keys(filters).forEach((key) => {
     delete filters[key]
   })
+  emit('filters-reset')
   reload()
 }
 
@@ -259,6 +299,28 @@ function filterQuery(): Record<string, string> {
     }
   })
   return query
+}
+
+/**
+ * 外部联动用：清掉筛选项并重新加载。
+ * 页面切换项目后，旧项目的版本、功能点等筛选项在新项目里不存在，留着会把列表筛成空。
+ */
+function clearFilter(prop: string | string[]): void {
+  const list = Array.isArray(prop) ? prop : [prop]
+  list.forEach((key) => {
+    delete filters[key]
+  })
+  reload()
+}
+
+/** 外部联动用：把某个筛选项设成给定值并重查（空值等同清除），配合隐藏筛选项使用。 */
+function setFilter(prop: string, value: string | number | undefined | null): void {
+  if (value === undefined || value === null || String(value) === '') {
+    delete filters[prop]
+  } else {
+    filters[prop] = value
+  }
+  reload()
 }
 
 // ---- 查询参数与地址栏同步 ----
@@ -363,6 +425,8 @@ defineExpose({
   clearSelection,
   selectedRows: () => selectedRows.value,
   filterQuery,
+  clearFilter,
+  setFilter,
 })
 </script>
 

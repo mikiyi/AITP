@@ -24,6 +24,7 @@ cast(Any, sys.stdout).reconfigure(encoding="utf-8", errors="replace")
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend"))
 
+from aitp.ai.client import RETRY_LIMIT  # noqa: E402
 from aitp.app import create_app  # noqa: E402
 from aitp.config import AppConfig  # noqa: E402
 from aitp.db.migrator import init_db  # noqa: E402
@@ -331,6 +332,12 @@ def check_cases(api: Api, project_id: int, requirement_id: int, feature_id: int)
     })
     scoped = api.data("GET", f"/api/v1/test-cases?projectId={project_id}&priority=P0")
     check("过滤不串项目", scoped["total"] == 1, str(scoped["total"]))
+
+    # 用例列表左侧功能点面板的两种扩展写法：未挂功能点、多个功能点（含下级由前端展开成 id 列表）
+    no_module = api.data("GET", f"/api/v1/test-cases?projectId={other_project['id']}&moduleId=none")
+    check("按未挂功能点筛选生效", no_module["total"] == 1, str(no_module))
+    multi_module = api.data("GET", f"/api/v1/test-cases?projectId={project_id}&moduleId={feature_id},999999")
+    check("按多个功能点筛选生效", multi_module["total"] == 5, str(multi_module["total"]))
 
     keyword = api.data("GET", "/api/v1/test-cases?keyword=冒烟用例")
     check("关键词检索命中", keyword["total"] == 5, str(keyword["total"]))
@@ -665,15 +672,17 @@ def check_meta(api: Api) -> None:
     enums = api.data("GET", "/api/v1/meta/enums")
     check("枚举字典含缺陷状态机", "bugTransitions" in enums, str(sorted(enums.keys())))
     caps = api.data("GET", "/api/v1/meta/capabilities")
-    check("能力目录含 20 项", len(caps) == 20, str(len(caps)))
+    check("能力目录含 19 项", len(caps) == 19, str(len(caps)))
     codes = {item["code"] for item in caps}
     check("能力目录覆盖需求确认与新增脚本能力",
-          "requirement_confirm" in codes and "knowledge_qa" in codes and "prompt_optimize" in codes
+          "requirement_confirm" in codes and "knowledge_assistant" not in codes
+          and "prompt_optimize" in codes
           and "api_test_design" in codes and "risk_assessment" in codes
           and "automation_script" in codes and "performance_script" in codes,
           str(sorted(codes)))
-    check("旧需求评审编号已下线",
-          "requirement_review" not in codes and "requirement_clarify" not in codes,
+    check("重复能力与旧需求评审编号已下线",
+          "requirement_review" not in codes and "requirement_clarify" not in codes
+          and "knowledge_qa" not in codes,
           str(sorted(codes)))
 
 
@@ -798,6 +807,12 @@ def _sse_frames(iterator: Any) -> list[JsonDict]:
     return frames
 
 
+def _chained_stream(head: Any, rest: Any) -> Any:
+    """把已经取出的第一帧放回流头部，供 _sse_frames 完整解析。"""
+    yield head
+    yield from rest
+
+
 def check_lab(api: Api, project_id: int, feature_id: int) -> None:
     mock = MockAI()
     saved_env = {k: os.environ.get(k) for k in ("AITP_AI_PROVIDER", "AITP_AI_BASE_URL",
@@ -818,9 +833,12 @@ def check_lab(api: Api, project_id: int, feature_id: int) -> None:
 
 def _check_lab_inner(api: Api, project_id: int, feature_id: int) -> None:
     caps = api.data("GET", "/api/v1/lab/capabilities")
-    check("能力目录含 20 项", len(caps) == 20, str(len(caps)))
+    check("能力目录含 19 项", len(caps) == 19, str(len(caps)))
     main_caps = api.data("GET", "/api/v1/lab/main-capabilities")
     check("实验室主能力 19 个", len(main_caps) == 19, str(len(main_caps)))
+    check("每个能力都有卡片入口",
+          {item["code"] for item in caps} == {item["code"] for item in main_caps},
+          str(sorted({item["code"] for item in caps} ^ {item["code"] for item in main_caps})))
     check("扩展能力已并入核心能力",
           sum(1 for item in main_caps if item.get("category") == "core") == 19
           and sum(1 for item in main_caps if item.get("category") == "extended") == 0,
@@ -834,7 +852,7 @@ def _check_lab_inner(api: Api, project_id: int, feature_id: int) -> None:
           all("requiredVariables" in item and "optionalVariables" in item
               for item in main_caps), str(main_caps[:1]))
     prompts = api.data("GET", "/api/v1/lab/prompts")
-    check("提示词库可列出 20 个模板", len(prompts) >= 20, str(len(prompts)))
+    check("提示词库列出全部 23 个模板", len(prompts) == 23, str(len(prompts)))
 
     # 缺变量 → 120102 并列出缺失名
     body = api.expect("缺必填变量返回 120102", "POST", "/api/v1/lab/requirement_confirm/run",
@@ -923,6 +941,25 @@ def _check_lab_inner(api: Api, project_id: int, feature_id: int) -> None:
     cancelled = api.data("GET", "/api/v1/lab/tasks?status=cancelled&pageSize=100")
     check("客户端中断后任务落库 cancelled", cancelled["total"] >= 1, str(cancelled["total"]))
 
+    # 显式取消：先取出 start 帧让生成器进入事件循环，再打取消接口，
+    # 验证进程内注册表真的叫停了模型输出（而不是只改库、模型继续计费）。
+    resp_cancel = api.client.post("/api/v1/lab/requirement_confirm/stream", json={
+        "variables": LAB_SAMPLES["requirement_confirm"],
+    })
+    cancel_task_id = int(resp_cancel.headers.get("X-AITP-Task-Id") or 0)
+    cancel_stream = cast(Any, resp_cancel.response)
+    cancel_head = next(cancel_stream)
+    cancel_result = api.data("POST", f"/api/v1/lab/tasks/{cancel_task_id}/cancel", {})
+    cancel_frames = _sse_frames(_chained_stream(cancel_head, cancel_stream))
+    cancel_detail = api.data("GET", f"/api/v1/lab/tasks/{cancel_task_id}")
+    check("取消接口命中正在跑的流", bool(cancel_result.get("interrupted")), str(cancel_result)[:200])
+    check("取消后流以用户取消的错误帧收尾",
+          bool(cancel_frames) and str(cancel_frames[-1].get("type")) == "error"
+          and "取消" in str(cancel_frames[-1].get("errorMessage")),
+          str(cancel_frames[-1])[:200])
+    check("取消后任务落库为 cancelled", str(cancel_detail.get("status")) == "cancelled",
+          str(cancel_detail.get("status")))
+
     # 错密钥 → 只有一个 error 帧
     os.environ["AITP_AI_API_KEY"] = "sk-wrong-key"
     resp3 = api.client.post("/api/v1/lab/requirement_confirm/stream", json={
@@ -971,13 +1008,44 @@ def _check_lab_inner(api: Api, project_id: int, feature_id: int) -> None:
     check("优化失败给出提示", bool(failed.get("message")), str(failed.get("message")))
     os.environ["AITP_AI_API_KEY"] = "sk-test"
 
-    # 知识问答带引用
-    ask = api.data("POST", "/api/v1/ai/ask", {"question": "登录失败怎么排查"})
-    check("知识问答返回答案", bool(ask.get("answer")), str(ask)[:200])
-    check("知识问答返回引用清单", isinstance(ask.get("refs"), list), str(type(ask.get("refs"))))
+    # 不可达模型排第一：应先重试若干次，再按优先级降级到可用模型，而不是失败一次就放弃。
+    # 这里同时建一个可用的库内档案——库里一旦有档案，环境变量那份就不再进候选链了。
+    bad_profile = api.data("POST", "/api/v1/settings/ai/profiles", {
+        "name": "不可达模型",
+        "provider": "custom",
+        "protocol": "openai_compat",
+        "baseUrl": "http://127.0.0.1:1/v1",
+        "model": "mock-model",
+        "apiKey": "sk-test",
+        "isActive": True,
+        "priority": 900,
+    })
+    fallback_profile = api.data("POST", "/api/v1/settings/ai/profiles", {
+        "name": "降级目标模型",
+        "provider": "custom",
+        "protocol": "openai_compat",
+        "baseUrl": os.environ.get("AITP_AI_BASE_URL") or "",
+        "model": os.environ.get("AITP_AI_MODEL") or "mock-model",
+        "apiKey": "sk-test",
+        "isActive": True,
+        "priority": 100,
+    })
+    retried = api.data("POST", "/api/v1/lab/requirement_confirm/run", {
+        "variables": LAB_SAMPLES["requirement_confirm"],
+    })
+    bad_attempts = [item for item in (retried.get("degrade") or {}).get("attempts") or []
+                    if "不可达模型" in str(item.get("config"))]
+    check("不可达模型记录重试次数",
+          bool(bad_attempts) and int(bad_attempts[0].get("retries") or 0) == RETRY_LIMIT,
+          str(bad_attempts)[:200])
+    check("不可达模型重试后降级到下一候选出结果",
+          bool(retried.get("output")) and bool((retried.get("degrade") or {}).get("degraded")),
+          str(retried)[:200])
+    for cleanup in (bad_profile, fallback_profile):
+        api.data("DELETE", f"/api/v1/settings/ai/profiles/{cleanup['id']}")
 
 
-def check_backups(api: Api, project_id: int) -> None:
+def check_backups(api: Api, project_id: int, workdir: pathlib.Path) -> None:
     """备份 / 下载 / 恢复 / 删除，以及恢复前的强制文件名确认。"""
     created = api.data("POST", "/api/v1/settings/backups")
     name = str(created.get("name") or "")
@@ -1026,6 +1094,50 @@ def check_backups(api: Api, project_id: int) -> None:
           all(item.get("name") != name for item in after_delete.get("list") or []), str(names)[:200])
     api.expect("删除不存在的备份报错", "DELETE", f"/api/v1/settings/backups/{name}",
                ErrorCode.RESOURCE_NOT_FOUND)
+
+    # ---- 整包备份：库 + 附件 / 脚本 / 生成物 / 密钥 / 知识库正文 ----
+    knowledge_root = workdir / "knowledge"
+    attachments_root = workdir / "attachments"
+    knowledge_root.mkdir(parents=True, exist_ok=True)
+    attachments_root.mkdir(parents=True, exist_ok=True)
+    knowledge_file = knowledge_root / "整包正文.md"
+    attachment_file = attachments_root / "整包附件.txt"
+    knowledge_file.write_text("# 整包正文\n", encoding="utf-8")
+    attachment_file.write_text("attachment", encoding="utf-8")
+    api.data("PUT", "/api/v1/settings/config", {"items": [
+        {"key": "knowledge.storage_path", "value": str(knowledge_root), "valueType": "string"}]})
+
+    bundle = api.data("POST", "/api/v1/settings/backups/bundle")
+    bundle_name = str(bundle.get("name") or "")
+    check("整包备份返回 zip 名", bundle_name.endswith(".zip"), str(bundle)[:200])
+    check("整包统计带文件数", int(bundle.get("files") or 0) >= 3, str(bundle)[:200])
+    listed_bundles = api.data("GET", "/api/v1/settings/backups").get("bundles") or []
+    check("整包出现在备份列表",
+          any(item.get("name") == bundle_name and item.get("kind") == "bundle"
+              for item in listed_bundles),
+          str(listed_bundles)[:200])
+    bundle_resp, _ = api.call("GET", f"/api/v1/settings/backups/{bundle_name}/download")
+    check("整包可下载", bundle_resp.status_code == 200 and len(bundle_resp.data) > 0,
+          f"status={bundle_resp.status_code}")
+    bundle_resp.close()
+
+    knowledge_file.unlink()
+    attachment_file.unlink()
+    api.expect("整包恢复缺少文件覆盖确认被拒", "POST",
+               f"/api/v1/settings/backups/{bundle_name}/restore", ErrorCode.ILLEGAL_OPERATION,
+               {"confirm": bundle_name})
+    bundle_restored = api.data("POST", f"/api/v1/settings/backups/{bundle_name}/restore",
+                               {"confirm": bundle_name, "confirmFiles": "覆盖本机文件"})
+    check("整包恢复回补知识库正文", knowledge_file.exists(), str(bundle_restored)[:200])
+    check("整包恢复回补附件目录", attachment_file.exists(), str(bundle_restored)[:200])
+    check("整包恢复自动留一份安全整包",
+          str(bundle_restored.get("safetyBundle") or "").startswith("pre-bundle"),
+          str(bundle_restored)[:200])
+    api.data("DELETE", f"/api/v1/settings/backups/{bundle_name}")
+    after_bundle_delete = api.data("GET", "/api/v1/settings/backups").get("bundles") or []
+    check("删除整包后不再列出",
+          all(item.get("name") != bundle_name for item in after_bundle_delete),
+          str(after_bundle_delete)[:200])
 
 
 def check_bulk_and_export(api: Api, project_id: int) -> None:
@@ -1488,8 +1600,13 @@ def check_todos(api: Api, project_id: int) -> None:
 
     stats = api.data("GET", "/api/v1/todos/stats")
     summary = stats.get("summary") or {}
-    check("任务统计带总数与逾期", int(summary.get("total") or 0) >= 3 and int(summary.get("overdue") or 0) >= 1,
+    check("任务统计带总数与逾期", int(summary.get("total") or 0) >= 1 and int(summary.get("overdue") or 0) >= 1,
           str(summary)[:200])
+    # 计数口径：stats 与列表都是顶层任务优先，子任务不占左栏计数
+    top_level_rows = api.data("GET", "/api/v1/todos?pageSize=100").get("list") or []
+    check("任务统计总数与顶层列表同口径",
+          int(summary.get("total") or 0) == len(top_level_rows),
+          f"summary={summary.get('total')} rows={len(top_level_rows)}")
     check("任务统计带完成率", isinstance(summary.get("completionRate"), float), str(summary)[:200])
     check("任务统计带状态分布", set((stats.get("byStatus") or {})) == {"open", "doing", "done", "cancelled"},
           str(stats.get("byStatus")))
@@ -1547,7 +1664,7 @@ def main() -> int:
         check_audit(api, project_id)
         check_meta(api)
         check_bulk_and_export(api, project_id)
-        check_backups(api, project_id)
+        check_backups(api, project_id, workdir)
         check_ai_records_and_search(api, project_id)
         check_preflight(api, project_id)
         check_prompt_library(api)

@@ -76,6 +76,7 @@ _RECORD_COLUMNS = (
     "prompt_code",
     "latency_ms",
     "steps_json",
+    "mask_json",
     "created_at",
     "updated_at",
 )
@@ -292,6 +293,7 @@ def build_record(
     prompt_code: str = "",
     latency_ms: int | None = None,
     steps: list[dict[str, Any]] | None = None,
+    mask: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """组装一条结构化执行记录（尚未落库）。"""
     evidence = extract_evidence(conn, output, refs)
@@ -320,6 +322,8 @@ def build_record(
         "usage": dict(usage or {}),
         "promptCode": prompt_code,
         "latencyMs": latency_ms,
+        # 只记类型与数量，绝不落原始输入，避免脱敏前的敏感内容随记录再次扩散
+        "mask": dict(mask or {}),
     }
 
 
@@ -344,6 +348,7 @@ def create_record(conn: sqlite3.Connection, record: dict[str, Any]) -> int:
         "route_json": _dump(record.get("route") or []),
         "usage_json": _dump(record.get("usage") or {}),
         "prompt_code": str(record.get("promptCode") or ""),
+        "mask_json": _dump(record.get("mask") or {}),
         "created_at": now,
         "updated_at": now,
     }

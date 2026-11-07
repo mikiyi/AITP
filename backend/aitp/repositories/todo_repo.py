@@ -96,7 +96,11 @@ class TodoRepository(BaseRepository):
         today = date.today().isoformat()
         week_end = (date.today() + timedelta(days=7)).isoformat()
         if view == VIEW_TODAY:
-            return "parent_id = 0 AND status IN (?, ?) AND due_date <= ?", [*TODO_ACTIVE_STATUSES, today]
+            return (
+                "parent_id = 0 AND status IN (?, ?) AND due_date IS NOT NULL "
+                "AND due_date != '' AND due_date <= ?",
+                [*TODO_ACTIVE_STATUSES, today],
+            )
         if view == VIEW_WEEK:
             return (
                 "parent_id = 0 AND status IN (?, ?) AND due_date IS NOT NULL "
@@ -110,10 +114,34 @@ class TodoRepository(BaseRepository):
                 [*TODO_ACTIVE_STATUSES, today],
             )
         if view == VIEW_DONE:
-            return "parent_id = 0 AND status IN (?, ?)", [TODO_DONE, TODO_CANCELLED]
+            return "parent_id = 0 AND status = ?", [TODO_DONE]
         if view == VIEW_STARRED:
             return "parent_id = 0 AND is_pinned = 1", []
         return "parent_id = 0", []
+
+    def list_export(
+        self,
+        view: str = VIEW_ALL,
+        filters: dict[str, Any] | None = None,
+        keyword: str | None = None,
+    ) -> RowList:
+        """导出用：与列表同一套视图/关键词/筛选条件，不分页也不截断。"""
+        merged = dict(filters or {})
+        where, params = self._build_where(merged, keyword)
+        extra = self._view_clause(view)
+        if extra:
+            clause, clause_params = extra
+            where = f"{where} AND {clause}"
+            params.extend(clause_params)
+        rows = self.conn.execute(
+            f"SELECT * FROM biz_todo WHERE {where} "
+            "ORDER BY is_pinned DESC, "
+            "CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 "
+            "WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END ASC, "
+            "sort_order ASC, id DESC",
+            params,
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def list_children(self, parent_id: int) -> RowList:
         rows = self.conn.execute(
@@ -140,9 +168,16 @@ class TodoRepository(BaseRepository):
 
     # ---- 统计 ----
     def stats(self, project_id: int | None = None) -> dict[str, Any]:
-        """总量 / 未完成 / 今天到期 / 逾期 / 已完成，一次算完给前端。"""
+        """总量 / 未完成 / 今天到期 / 本周到期 / 逾期 / 已完成，一次算完给前端。
+
+        口径与快捷视图（_view_clause）严格一致：
+        - 只统计顶层任务，子任务挂在父任务下，不占左栏计数；
+        - 「今天到期」含已逾期（今天该处理），到期日为空的任务不进到期视图；
+        - 「已完成」只含 done，cancelled 是已取消，单独统计。
+        """
         today = date.today().isoformat()
-        clauses = ["is_deleted = 0"]
+        week_end = (date.today() + timedelta(days=7)).isoformat()
+        clauses = ["is_deleted = 0", "parent_id = 0"]
         params: list[Any] = []
         if project_id:
             clauses.append("project_id = ?")
@@ -156,12 +191,15 @@ class TodoRepository(BaseRepository):
             f" SUM(CASE WHEN status IN ('open','doing') THEN 1 ELSE 0 END) AS active,"
             f" SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done,"
             f" SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled,"
-            f" SUM(CASE WHEN status IN ('open','doing') AND due_date = ? THEN 1 ELSE 0 END) AS due_today,"
+            f" SUM(CASE WHEN status IN ('open','doing') AND due_date IS NOT NULL"
+            f" AND due_date != '' AND due_date <= ? THEN 1 ELSE 0 END) AS due_today,"
+            f" SUM(CASE WHEN status IN ('open','doing') AND due_date IS NOT NULL"
+            f" AND due_date != '' AND due_date <= ? THEN 1 ELSE 0 END) AS due_week,"
             f" SUM(CASE WHEN status IN ('open','doing') AND due_date IS NOT NULL"
             f" AND due_date != '' AND due_date < ? THEN 1 ELSE 0 END) AS overdue,"
             f" SUM(CASE WHEN is_pinned = 1 THEN 1 ELSE 0 END) AS pinned"
             f" FROM biz_todo WHERE {where}",
-            [today, today, *params],
+            [today, week_end, today, *params],
         ).fetchone()
         stats = {key: int(row[key] or 0) for key in row.keys()} if row else {}
         active = stats.get("active", 0)
@@ -175,13 +213,14 @@ class TodoRepository(BaseRepository):
             "done": done,
             "cancelled": stats.get("cancelled", 0),
             "dueToday": stats.get("due_today", 0),
+            "dueWeek": stats.get("due_week", 0),
             "overdue": stats.get("overdue", 0),
             "pinned": stats.get("pinned", 0),
             "completionRate": round(done / total, 4) if total else 0.0,
         }
 
     def status_stats(self, project_id: int | None = None) -> dict[str, int]:
-        clauses = ["is_deleted = 0"]
+        clauses = ["is_deleted = 0", "parent_id = 0"]
         params: list[Any] = []
         if project_id:
             clauses.append("project_id = ?")
@@ -198,7 +237,7 @@ class TodoRepository(BaseRepository):
 
     def categories(self, project_id: int | None = None) -> list[dict[str, Any]]:
         """分类清单带未完成条数，供左侧筛选栏直接显示。"""
-        clauses = ["is_deleted = 0", "category IS NOT NULL", "category != ''"]
+        clauses = ["is_deleted = 0", "parent_id = 0", "category IS NOT NULL", "category != ''"]
         params: list[Any] = []
         if project_id:
             clauses.append("project_id = ?")
@@ -248,6 +287,7 @@ def todo_summary(row: dict[str, Any]) -> dict[str, Any]:
         "parentId": row.get("parent_id") or 0,
         "projectId": row.get("project_id"),
         "moduleId": row.get("module_id"),
+        "versionId": row.get("version_id"),
         "title": row.get("title"),
         "description": row.get("description") or "",
         "status": row.get("status"),

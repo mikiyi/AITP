@@ -3,7 +3,9 @@
     GET    /api/v1/doc-templates            列表（按类别过滤）
     GET    /api/v1/doc-templates/options    某类别可用模板（能力页下拉用）
     GET    /api/v1/doc-templates/<pk>       详情
+    GET    /api/v1/doc-templates/<pk>/file  下载最近一次上传的模板原件
     POST   /api/v1/doc-templates/upload     上传模板文件，解析正文 / 列名 / 版式
+    POST   /api/v1/doc-templates/uploads/cleanup 清理取消保存后遗留的上传原件
     POST   /api/v1/doc-templates            新增
     PUT    /api/v1/doc-templates/<pk>       修改
     DELETE /api/v1/doc-templates/<pk>       删除（软删）
@@ -11,9 +13,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
-from flask import Blueprint, Response, request
+from flask import Blueprint, Response, current_app, request, send_file
 
 from ..common.validators import check_choice, optional_str, require_int, require_str
 from ..envelope import ok
@@ -35,8 +38,13 @@ bp = Blueprint("doc_templates", __name__)
 #: 允许写入的列（白名单）
 _FIELDS = (
     "name", "kind", "description", "columns_json", "content", "style_hint",
-    "file_name", "file_type", "file_size", "is_default", "updated_at",
+    "file_name", "file_type", "file_size", "stored_name", "is_default", "updated_at",
 )
+
+
+def _templates_root() -> Path:
+    """模板原文件与数据库同放在 data 目录下，不进 static（那是构建产物目录）。"""
+    return Path(current_app.config["AITP_DB_PATH"]).parent / "doc_templates"
 
 
 def _payload(data: dict[str, Any], *, partial: bool = False) -> dict[str, Any]:
@@ -61,6 +69,12 @@ def _payload(data: dict[str, Any], *, partial: bool = False) -> dict[str, Any]:
         result["file_type"] = optional_str(data.get("fileType"), "fileType", 20)
     if "fileSize" in data:
         result["file_size"] = max(0, require_int(data.get("fileSize"), "fileSize", 0))
+    if "storedName" in data:
+        # 落盘名只认 upload 接口发回来的格式，非法就当没文件
+        stored = optional_str(data.get("storedName"), "storedName", 60)
+        result["stored_name"] = (
+            stored if doc_template_service.is_valid_stored_name(stored) else ""
+        )
     if not partial or "isDefault" in data:
         result["is_default"] = 1 if data.get("isDefault") else 0
     return {key: value for key, value in result.items() if key in _FIELDS}
@@ -116,21 +130,63 @@ def get_template(pk: str) -> Response:
     return ok(decorate(row))
 
 
+@bp.post("/uploads/cleanup")
+def cleanup_uploads() -> Response:
+    """清理取消保存后遗留的原件：只删没有被任何模板引用的落盘文件。"""
+    names = body().get("storedNames")
+    if not isinstance(names, list):
+        raise AppError(ErrorCode.PARAM_ERROR, "storedNames 必须是数组")
+    conn = db()
+    referenced = DocTemplateRepository(conn).stored_names()
+    removed = doc_template_service.cleanup_unreferenced_files(
+        _templates_root(), [str(item) for item in names], referenced
+    )
+    return ok({"removed": removed})
+
+
 @bp.post("/upload")
 def upload_template() -> Response:
-    """上传模板文件，返回解析结果；是否保存由用户在表单里确认。"""
+    """上传模板文件：解析正文 / 列名 / 版式，同时把原文件留一份在本机。
+
+    留原文件是为了模板可以再下载回去；是否保存这条模板仍由用户在表单里确认。
+    """
     uploaded = request.files.get("file")
     if uploaded is None or not uploaded.filename:
         raise AppError(ErrorCode.PARAM_ERROR, "请选择要上传的模板文件")
-    parsed = doc_template_service.parse_template_file(uploaded.read(), uploaded.filename)
+    data = uploaded.read()
+    parsed = doc_template_service.parse_template_file(data, uploaded.filename)
+    stored = doc_template_service.save_template_file(_templates_root(), parsed.file_name, data)
     return ok({
         "fileName": parsed.file_name,
         "fileType": parsed.file_type,
         "fileSize": parsed.file_size,
+        "storedName": stored,
         "content": parsed.content,
         "columns": parsed.columns,
         "styleHint": parsed.style_hint,
     })
+
+
+@bp.get("/<pk>/file")
+def download_template_file(pk: str) -> Response:
+    """下载模板最近一次上传的原始文件。"""
+    conn = db()
+    row = DocTemplateRepository(conn).get(path_int(pk))
+    if not row:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "模板不存在")
+    stored = str(row.get("stored_name") or "")
+    if not stored:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "该模板没有上传过文件")
+    path = doc_template_service.template_file_path(_templates_root(), stored)
+    if path is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "模板文件已不在本机，请重新上传")
+    display = str(row.get("file_name") or path.name)
+    return send_file(
+        path,
+        as_attachment=True,
+        download_name=display,
+        mimetype=doc_template_service.mimetype_of(display),
+    )
 
 
 @bp.post("")
@@ -163,6 +219,10 @@ def update_template(pk: str) -> Response:
         _clear_other_defaults(conn, kind, keep_id=target)
     repo.update(target, payload)
     commit(conn)
+    if "stored_name" in payload:
+        old = str(existing.get("stored_name") or "")
+        if old and old != str(payload.get("stored_name") or ""):
+            doc_template_service.delete_template_file(_templates_root(), old)
     audit(
         conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_DOC_TEMPLATE,
         target, str(payload.get("name") or existing.get("name") or ""),
@@ -181,6 +241,10 @@ def delete_template(pk: str) -> Response:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "模板不存在")
     repo.soft_delete(target)
     commit(conn)
+    # 模板删了就没入口再下载，落盘文件跟着清掉，不在本机堆积没人用的原件。
+    doc_template_service.delete_template_file(
+        _templates_root(), str(existing.get("stored_name") or "")
+    )
     audit(
         conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_DOC_TEMPLATE,
         target, str(existing.get("name") or ""),

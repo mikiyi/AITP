@@ -41,9 +41,19 @@
           <el-input v-model="form.description" type="textarea" :rows="3" />
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="form.status">
-            <el-option label="启用" value="active" />
-            <el-option label="归档" value="archived" />
+          <el-select v-model="form.status" popper-class="project-status-popper">
+            <el-option label="启用" value="active">
+              <div class="status-option">
+                <span class="status-option__label">启用</span>
+                <span class="status-option__desc">在用项目。出现在页头「项目」下拉与首页概览里，需求 / 用例 / 缺陷 / 报告等资产照常新建、统计和 AI 取数。</span>
+              </div>
+            </el-option>
+            <el-option label="归档" value="archived">
+              <div class="status-option">
+                <span class="status-option__label">归档</span>
+                <span class="status-option__desc">收尾停用的项目。列表标签变灰、状态栏显示「归档」，历史数据全部保留可查可导出；归档只是状态标记，不会删除数据，也不会阻止继续录入。</span>
+              </div>
+            </el-option>
           </el-select>
         </el-form-item>
       </el-form>
@@ -150,3 +160,34 @@ function onRowClick(row: Project): void {
   openEdit(row)
 }
 </script>
+
+<style scoped>
+.status-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.status-option__label {
+  font-size: 14px;
+}
+
+.status-option__desc {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary);
+  white-space: normal;
+}
+
+/* 下拉面板挂在 body 上，且选项默认固定 34px 高，两行文案会被裁掉 */
+:global(.project-status-popper .el-select-dropdown__item) {
+  height: auto;
+  padding: 8px 12px;
+  line-height: 1.4;
+}
+
+:global(.project-status-popper .el-select-dropdown__item.is-selected .status-option__label) {
+  color: var(--el-color-primary);
+  font-weight: 600;
+}
+</style>

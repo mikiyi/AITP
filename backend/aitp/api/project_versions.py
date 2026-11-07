@@ -17,7 +17,17 @@ from ..errors import AppError, ErrorCode
 from ..repositories.project_repo import ProjectRepository
 from ..repositories.project_version_repo import ProjectVersionRepository
 from ..services import audit_service
-from .helpers import audit, body, commit, db, path_int, query_filters
+from .helpers import (
+    audit,
+    body,
+    commit,
+    db,
+    guard_project_scope,
+    path_int,
+    query_filters,
+    require_project,
+    scope_arg,
+)
 
 bp = Blueprint("project_versions", __name__)
 
@@ -63,7 +73,7 @@ def list_versions() -> Response:
     rows = repo.list_by_project(int(project_id))
     return ok({
         "list": [
-            _to_public(row, repo.count_assets(int(row["id"])))
+            _to_public(row, repo.count_assets(int(row["id"]), project_id))
             for row in rows
         ],
         "statusOptions": VERSION_STATUS_OPTIONS,
@@ -78,7 +88,8 @@ def get_version(pk: str) -> Response:
     row = repo.get_by_id(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "项目版本不存在")
-    return ok(_to_public(row, repo.count_assets(target)))
+    guard_project_scope(row, scope_arg(), "项目版本")
+    return ok(_to_public(row, repo.count_assets(target, row.get("project_id"))))
 
 
 @bp.post("")
@@ -86,8 +97,9 @@ def create_version() -> Response:
     conn = db()
     data = body()
     project_id = optional_int(data.get("projectId"), "projectId")
-    if not project_id or not ProjectRepository(conn).get(project_id):
+    if not project_id:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "项目不存在")
+    require_project(conn, project_id)
     version_code = require_str(data.get("versionCode"), "versionCode", 60)
     repo = _repo(conn)
     if repo.code_exists(project_id, version_code):
@@ -135,7 +147,8 @@ def update_version(pk: str) -> Response:
     audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_PROJECT_VERSION,
           target, str(payload.get("version_code", row.get("version_code", "")) or ""),
           {"fields": sorted(payload.keys())})
-    return ok(_to_public(repo.get_by_id(target) or {}, repo.count_assets(target)))
+    return ok(_to_public(repo.get_by_id(target) or {},
+                         repo.count_assets(target, row.get("project_id"))))
 
 
 @bp.delete("/<pk>")
@@ -146,7 +159,13 @@ def delete_version(pk: str) -> Response:
     row = repo.get_by_id(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "项目版本不存在")
-    asset_count = repo.count_assets(target)
+    asset_count = repo.count_assets(target, row.get("project_id"))
+    if asset_count:
+        raise AppError(
+            ErrorCode.ILLEGAL_OPERATION,
+            f"该版本下仍有 {asset_count} 个资产或执行记录（需求/用例/缺陷/报告/脚本/计划/轮次等），"
+            "请先迁移或删除后再删版本",
+        )
     repo.soft_delete(target)
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_PROJECT_VERSION,

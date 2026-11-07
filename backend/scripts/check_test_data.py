@@ -22,6 +22,7 @@ import gzip
 import hashlib
 import io
 import json
+import logging
 import pathlib
 import shutil
 import sqlite3
@@ -546,6 +547,9 @@ def main() -> int:
         check_api(api, workdir)
         check_api_errors(api)
     finally:
+        # 应用的日志 handler 还占着临时目录里的文件，Windows 上不先关掉就删不掉，
+        # ignore_errors 又会把失败吞掉，于是每跑一次就留一个临时目录。
+        logging.shutdown()
         shutil.rmtree(workdir, ignore_errors=True)
 
     print(f"\nPASS={_passed} FAIL={_failed}")

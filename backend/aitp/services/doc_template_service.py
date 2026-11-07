@@ -1,8 +1,8 @@
 """测试文档模板：上传解析与提示词渲染。
 
 支持的上传格式：
-- .docx：取正文段落与表格，记录字体/字号；
-- .xlsx / .csv：取首个工作表的前若干行，首行当表头，记录表头字体/字号；
+- .docx：取正文段落与表格，记录正文与表头的字体/字号；
+- .xlsx / .csv：首行当表头，记录表头字体/字号（csv 无字体信息）；
 - .md / .txt / .json：按纯文本读入。
 
 模板正文会被渲染进提示词的 outputTemplate 变量，模型据此对齐
@@ -11,12 +11,15 @@
 
 from __future__ import annotations
 
+import csv
 import io
 import re
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterable
 
+from ..common.secret_store import atomic_write_bytes
 from ..errors import AppError, ErrorCode
 from ..repositories.doc_template_repo import (
     CAPABILITY_KIND,
@@ -79,9 +82,12 @@ def parse_template_file(data: bytes, filename: str) -> ParsedTemplate:
         raise AppError(ErrorCode.PARAM_ERROR, "模板文件不能超过 5MB")
 
     if suffix == ".docx":
-        content, columns, style = _parse_docx(data)
+        content, columns, style = _parse_archive(_parse_docx, data, "Word", "docx")
     elif suffix == ".xlsx":
-        content, columns, style = _parse_xlsx(data)
+        content, columns, style = _parse_archive(_parse_xlsx, data, "Excel", "xlsx")
+    elif suffix == ".csv":
+        text = _decode(data).strip()
+        content, columns, style = text, _columns_from_csv(text), ""
     else:
         text = _decode(data).strip()
         content, columns, style = text, _columns_from_markdown(text), ""
@@ -97,6 +103,24 @@ def parse_template_file(data: bytes, filename: str) -> ParsedTemplate:
         columns=columns,
         style_hint=style[:MAX_STYLE_HINT],
     )
+
+
+def _parse_archive(
+    parser: Callable[[bytes], tuple[str, list[str], str]],
+    data: bytes,
+    label: str,
+    ext: str,
+) -> tuple[str, list[str], str]:
+    """docx/xlsx 本质是压缩包，损坏时解析器会抛 zip/xml 底层异常，统一转成参数错误。"""
+    try:
+        return parser(data)
+    except AppError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - 底层异常类型多，都说明文件本身不可读
+        raise AppError(
+            ErrorCode.PARAM_ERROR,
+            f"{label} 模板已损坏或不是有效的 {ext} 文件，请重新导出后再上传",
+        ) from exc
 
 
 def _columns_from_markdown(text: str) -> list[str]:
@@ -118,6 +142,35 @@ def _columns_from_markdown(text: str) -> list[str]:
     return []
 
 
+def _columns_from_csv(text: str) -> list[str]:
+    """CSV 模板：第一个非空行当表头，逗号 / 分号 / 制表符都识别。"""
+    first_line = next((line for line in text.splitlines() if line.strip()), "")
+    try:
+        delimiter = csv.Sniffer().sniff(first_line, delimiters=",;\t").delimiter
+    except csv.Error:
+        delimiter = next((item for item in (",", ";", "\t") if item in first_line), ",")
+    try:
+        rows = csv.reader(io.StringIO(text), delimiter=delimiter)
+        for row in rows:
+            cells = [cell.strip() for cell in row if cell.strip()]
+            if cells:
+                return cells[:MAX_COLUMNS]
+    except csv.Error:
+        return []
+    return []
+
+
+def _collect_style(fonts: list[str], sizes: list[str], runs: Iterable[Any]) -> None:
+    """把文字里的字体名与字号收进去重列表，正文段落与表格单元格通用。"""
+    for run in runs:
+        name = (run.font.name or "").strip()
+        size = _fmt_size(run.font.size.pt if run.font.size else None)
+        if name and name not in fonts:
+            fonts.append(name)
+        if size and size not in sizes:
+            sizes.append(size)
+
+
 def _parse_docx(data: bytes) -> tuple[str, list[str], str]:
     try:
         from docx import Document
@@ -131,26 +184,26 @@ def _parse_docx(data: bytes) -> tuple[str, list[str], str]:
         if text:
             lines.append(text)
 
+    fonts: list[str] = []
+    sizes: list[str] = []
     columns: list[str] = []
     for table in document.tables:
+        header_collected = False
         for row_index, row in enumerate(table.rows):
             cells = [(cell.text or "").strip() for cell in row.cells]
             if not any(cells):
                 continue
             if row_index == 0 and not columns:
                 columns = [cell for cell in cells if cell][:MAX_COLUMNS]
+            if not header_collected:
+                header_collected = True
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        _collect_style(fonts, sizes, paragraph.runs)
             lines.append("| " + " | ".join(cells) + " |")
 
-    fonts: list[str] = []
-    sizes: list[str] = []
     for paragraph in document.paragraphs:
-        for run in paragraph.runs:
-            name = (run.font.name or "").strip()
-            size = _fmt_size(run.font.size.pt if run.font.size else None)
-            if name and name not in fonts:
-                fonts.append(name)
-            if size and size not in sizes:
-                sizes.append(size)
+        _collect_style(fonts, sizes, paragraph.runs)
     hint = _style_hint(fonts, sizes)
     return "\n".join(lines), columns, hint
 
@@ -228,3 +281,77 @@ def resolve_for_run(conn: Any, template_id: int, capability: str) -> str:
     if template.get("kind") != expected:
         raise AppError(ErrorCode.PARAM_ERROR, "模板类别与当前能力不匹配")
     return render_for_prompt(template)
+
+
+# ---------------------------------------------------------------------
+# 原始模板文件落盘：解析完还留一份，用户才能把模板再下载回去
+# ---------------------------------------------------------------------
+
+#: 落盘文件名：<uuid32><后缀>，读取时按这个格式校验，请求内容碰不到路径
+_STORED_NAME_RE = re.compile(r"\A[0-9a-f]{32}(\.[a-z0-9]{1,8})?\Z")
+
+#: 下载时给浏览器的 MIME，缺项一律按二进制流处理
+_MIME_BY_SUFFIX = {
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".csv": "text/csv",
+    ".md": "text/markdown",
+    ".markdown": "text/markdown",
+    ".txt": "text/plain",
+    ".json": "application/json",
+}
+
+
+def save_template_file(root: Path, file_name: str, data: bytes) -> str:
+    """原子落盘原始模板，返回 stored_name。"""
+    suffix = Path(file_name).suffix.lower()[:9]
+    stored = f"{uuid.uuid4().hex}{suffix}"
+    root.mkdir(parents=True, exist_ok=True)
+    atomic_write_bytes(root / stored, data, mode=0o600)
+    return stored
+
+
+def template_file_path(root: Path, stored_name: str) -> Path | None:
+    """按 stored_name 定位落盘文件；名字非法或文件不在时返回 None。"""
+    if not is_valid_stored_name(stored_name):
+        return None
+    path = root / stored_name
+    return path if path.is_file() else None
+
+
+def is_valid_stored_name(stored_name: str) -> bool:
+    return bool(_STORED_NAME_RE.fullmatch(stored_name or ""))
+
+
+def delete_template_file(root: Path, stored_name: str) -> None:
+    """换文件或删模板时清掉旧文件，不让本机堆积没人用的模板。"""
+    path = template_file_path(root, stored_name)
+    if path is None:
+        return
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
+def cleanup_unreferenced_files(
+    root: Path, stored_names: Iterable[str], referenced: set[str]
+) -> list[str]:
+    """删除取消保存后没人引用的上传原件；仍被模板占用的文件一律跳过。"""
+    removed: list[str] = []
+    for name in set(stored_names):
+        if name in referenced:
+            continue
+        path = template_file_path(root, name)
+        if path is None:
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        removed.append(name)
+    return removed
+
+
+def mimetype_of(file_name: str) -> str:
+    return _MIME_BY_SUFFIX.get(Path(file_name).suffix.lower(), "application/octet-stream")

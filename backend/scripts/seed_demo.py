@@ -1,7 +1,12 @@
 """写入演示数据，便于快速体验与验收。
 
-    python backend/scripts/seed_demo.py
-    python backend/scripts/seed_demo.py --reset   # 先清空业务数据
+演示数据默认写进独立的 `data/demo.db`，不碰正在使用的 `data/aitp.db`：
+这个脚本带 `--reset`，会无差别清空 19 张业务表，一旦指错库就是真实数据全没。
+确实要往正式库里灌演示数据时，显式加 `--force`。
+
+    python backend/scripts/seed_demo.py                 # 写 data/demo.db
+    python backend/scripts/seed_demo.py --reset         # 先清空 demo 库业务数据
+    python backend/scripts/seed_demo.py --db data/aitp.db --force   # 明确要对正式库动手
 """
 
 from __future__ import annotations
@@ -22,7 +27,9 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from aitp.common.security import content_checksum  # noqa: E402
 from aitp.common.time_utils import utcnow_iso  # noqa: E402
+from aitp.config import load_config  # noqa: E402
 from aitp.db.connection import get_standalone_conn  # noqa: E402
+from aitp.db.migrator import init_db  # noqa: E402
 from aitp.services import knowledge_storage  # noqa: E402
 
 TABLES = [
@@ -181,7 +188,7 @@ def seed(conn: sqlite3.Connection) -> dict[str, int]:
         cur = conn.execute(
             "INSERT INTO biz_requirement (project_id, req_no, title, content, source, version,"
             " status, priority, tags, created_at, updated_at) VALUES (?, ?, ?, ?, '手工录入', 'V1.0',"
-            " 'reviewed', 'P1', '核心流程', ?, ?)",
+            " 'approved', 'P1', '核心流程', ?, ?)",
             (project_id, req_no, title, content, now, now),
         )
         req_ids.append(int(cast("int", cur.lastrowid)))
@@ -402,21 +409,38 @@ def seed(conn: sqlite3.Connection) -> dict[str, int]:
     return counts
 
 
+def _live_db_path() -> pathlib.Path:
+    """当前服务实际在用的库；演示脚本默认不许碰它。"""
+    return load_config().db_path.resolve()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="AITP 演示数据")
-    parser.add_argument("--db", default=str(ROOT / "data" / "aitp.db"))
+    parser.add_argument("--db", default=str(ROOT / "data" / "demo.db"))
     parser.add_argument("--reset", action="store_true", help="先清空业务数据")
+    parser.add_argument("--force", action="store_true",
+                        help="允许对正在使用的正式库写入并清空")
     args = parser.parse_args()
 
     db_path = pathlib.Path(args.db)
     if not db_path.exists():
-        print(f"[FAIL] 数据库不存在，请先运行 init_db.py: {db_path}")
+        print(f"[INFO] 数据库不存在，新建并建表：{db_path}")
+        init_db(db_path)
+
+    if not args.force and db_path.resolve() == _live_db_path():
+        print(
+            "[FAIL] 这是正在使用的正式库，演示脚本会清空业务表，已拒绝执行。\n"
+            f"       目标库：{db_path}\n"
+            "       要体验演示数据：不带 --db 运行，脚本会写 data/demo.db；\n"
+            "       确实要对正式库动手：加 --force。"
+        )
         return 1
 
     conn = get_standalone_conn(db_path)
     try:
         stale_files: list[str] = []
         if args.reset:
+            print(f"[WARN] 即将清空 {db_path} 的 19 张业务表。")
             stale_files = [
                 str(row[0]) for row in conn.execute(
                     "SELECT file_path FROM biz_knowledge_article"
@@ -430,6 +454,7 @@ def main() -> int:
         counts = seed(conn)
         conn.commit()
         _drop_stale_mirror_files(conn, stale_files)
+        print(f"目标库：{db_path}")
         print(" | ".join(f"{k} {v}" for k, v in counts.items()))
     finally:
         conn.close()

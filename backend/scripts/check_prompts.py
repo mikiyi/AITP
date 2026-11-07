@@ -1,4 +1,4 @@
-"""提示词库校验：模板可解析、变量齐全、渲染无残留、能力与模板对齐。
+"""提示词库校验：模板可解析、变量齐全、渲染无残留、能力与模板对齐、使用次数有来源。
 
   python backend/scripts/check_prompts.py
 
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import pathlib
+import sqlite3
 import sys
 from typing import Any, cast
 
@@ -20,6 +21,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 from aitp.ai.capability_codes import CAPABILITIES, LAB_CAPABILITIES  # noqa: E402
 from aitp.errors import AppError, ErrorCode  # noqa: E402
 from aitp.prompts.registry import PromptRegistry  # noqa: E402
+from aitp.services import prompt_usage  # noqa: E402
 
 PROMPTS_DIR = ROOT / "backend" / "prompts"
 
@@ -48,8 +50,11 @@ SAMPLES: dict[str, dict[str, Any]] = {
     "project-progress-board": {
         "projectName": "示例电商", "progressData": "完成 60%", "period": "第 3 周", "milestones": "登录上线",
     },
-    "knowledge-qa": {"question": "登录失败怎么排查", "context": "[K1] 验证码 5 分钟有效"},
     "knowledge-assistant": {"question": "登录失败怎么排查", "context": "[K1] 验证码 5 分钟有效"},
+    "knowledge-organize": {
+        "articles": "[A1] 标题：支付回调重复推送\n分类：踩坑记录\n正文：…",
+        "categories": "通用、测试方法、踩坑记录",
+    },
     "prompt-optimizer": {"capability": "用例生成", "capabilityGoal": "生成用例", "rawText": "写点用例"},
     "intent-router": {"rawText": "支付回调重复推送", "capabilityCatalog": "- bug_analysis"},
     "module-router": {"rawText": "支付回调重复推送", "moduleCatalog": "- id=1｜示例电商/交易/支付"},
@@ -197,6 +202,47 @@ def main() -> int:
     for code in LAB_CAPABILITIES:
         spec = CAPABILITIES[code]
         checker.check(f"实验室能力 {code} 有模板", bool(spec.prompt_code), "缺少提示词编号")
+
+    # 「用过 N 次」口径：每张卡片都得有一个计数来源
+    #   绑定能力的模板由 biz_ai_record 统计，幕后调用的（路由/问答助手/自动整理）
+    #   由 sys_prompt_usage 统计；两边都不沾的模板会永远显示 0 次。
+    bound = {spec.prompt_code for spec in CAPABILITIES.values() if spec.prompt_code}
+    for template in templates:
+        checker.check(
+            f"{template.code} 使用次数有来源",
+            template.code in bound or template.code in prompt_usage.TRACKED,
+            "既没绑定能力，也不在内部调用计数清单里，卡片会永远显示 0 次",
+        )
+    checker.check(
+        "内部计数清单不与能力重叠",
+        not (set(prompt_usage.TRACKED) & bound),
+        f"重叠：{sorted(set(prompt_usage.TRACKED) & bound)}",
+    )
+
+    # 内部计数的读写：累加与白名单过滤
+    usage_sql = next(
+        (ROOT / "backend" / "aitp" / "db" / "migrations").glob("*prompt_usage.sql"), None
+    )
+    checker.check("内部计数迁移存在", usage_sql is not None, "找不到 sys_prompt_usage 迁移")
+    if usage_sql is not None:
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript(usage_sql.read_text(encoding="utf-8"))
+        prompt_usage.record(conn, "knowledge-assistant")
+        prompt_usage.record(conn, "knowledge-assistant")
+        prompt_usage.record(conn, "capability-prompt-not-tracked")
+        usage_counts = prompt_usage.counts(conn)
+        checker.check(
+            "内部调用计数累加",
+            usage_counts.get("knowledge-assistant") == 2,
+            f"{usage_counts}",
+        )
+        checker.check(
+            "清单外的模板不计数",
+            "capability-prompt-not-tracked" not in usage_counts,
+            f"{usage_counts}",
+        )
+        conn.close()
 
     return checker.report()
 

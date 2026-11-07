@@ -101,20 +101,31 @@
             v-model="keyword"
             placeholder="搜索任务"
             clearable
-            style="width: 180px"
+            style="width: 160px"
+            @input="scheduleQuery"
             @keyup.enter="reload"
             @clear="reload"
           />
-          <el-select v-model="status" placeholder="状态" clearable style="width: 130px" @change="reload">
+          <el-select v-model="status" placeholder="状态" clearable style="width: 110px" @change="reload">
             <el-option v-for="item in STATUSES" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
-          <el-select v-model="priority" placeholder="优先级" clearable style="width: 130px" @change="reload">
+          <el-select v-model="priority" placeholder="优先级" clearable style="width: 110px" @change="reload">
             <el-option v-for="item in PRIORITIES" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
-          <el-select v-model="projectId" placeholder="项目" clearable style="width: 150px" @change="reload">
+          <el-select v-model="projectId" placeholder="项目" clearable style="width: 130px" @change="onFilterProjectChange">
             <el-option v-for="item in appStore.projects" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
-          <el-button :icon="Search" @click="reload">查询</el-button>
+          <el-select
+            v-model="versionId"
+            placeholder="版本"
+            :no-data-text="projectId ? '该项目暂无版本' : '先选项目'"
+            clearable
+            :disabled="!projectId"
+            style="width: 120px"
+            @change="reload"
+          >
+            <el-option v-for="item in filterVersionOptions" :key="item.value" :label="item.label" :value="item.value" />
+          </el-select>
           <el-button :icon="RefreshLeft" @click="reset">重置</el-button>
           <div class="spacer" />
           <el-button :icon="Tickets" @click="selectMode = !selectMode">批量</el-button>
@@ -164,6 +175,7 @@
             <span class="todo-row__title" @click="select(todo)">{{ todo.title }}</span>
             <el-tag v-if="todo.isPinned" size="small" type="warning" effect="plain">置顶</el-tag>
             <el-tag v-if="todo.category" size="small" effect="plain">{{ todo.category }}</el-tag>
+            <el-tag v-if="todo.versionCode" size="small" type="info" effect="plain">{{ todo.versionCode }}</el-tag>
             <el-tag
               v-if="todo.dueDate"
               size="small"
@@ -282,9 +294,17 @@
             <el-input v-model="form.category" placeholder="例如：缺陷跟进" />
           </el-form-item>
           <el-form-item label="所属项目">
-            <el-select v-model="form.projectId" placeholder="不关联项目" clearable style="width: 100%">
+            <el-select v-model="form.projectId" placeholder="不关联项目" clearable style="width: 100%" @change="onFormProjectChange">
               <el-option v-for="item in appStore.projects" :key="item.id" :label="item.name" :value="item.id" />
             </el-select>
+          </el-form-item>
+          <el-form-item label="版本">
+            <el-select v-model="form.versionId" placeholder="不指定版本" clearable style="width: 100%">
+              <el-option v-for="item in formVersionOptions" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="formVersionName" label="版本名称">
+            <span class="muted">{{ formVersionName }}</span>
           </el-form-item>
           <el-form-item label="标签">
             <el-input v-model="form.tags" placeholder="逗号分隔" />
@@ -323,7 +343,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -334,16 +354,16 @@ import {
   MoreFilled,
   Plus,
   RefreshLeft,
-  Search,
   Select,
   Star,
   Tickets,
 } from '@element-plus/icons-vue'
 import BaseExportMenu from '@/components/BaseExportMenu.vue'
-import { todoApi } from '@/api'
+import { projectVersionApi, todoApi } from '@/api'
 import { percentText } from '@/utils/format'
 import type { Todo, TodoSummary } from '@/api/types'
 import { useAppStore } from '@/stores/app'
+import { useAutoQuery } from '@/composables/useAutoQuery'
 
 interface Option {
   value: string
@@ -400,6 +420,7 @@ const summary = reactive<TodoSummary>({
   done: 0,
   cancelled: 0,
   dueToday: 0,
+  dueWeek: 0,
   overdue: 0,
   pinned: 0,
   completionRate: 0,
@@ -417,6 +438,42 @@ const category = ref('')
 const keyword = ref('')
 /** 项目筛选默认不过滤：任务清单是个人清单，不该被当前项目悄悄藏掉。 */
 const projectId = ref<number | ''>('')
+/** 版本只在选定项目后才有意义，每个项目的版本号会重名。 */
+const versionId = ref<number | ''>('')
+
+const filterVersionOptions = ref<Array<{ label: string; value: number }>>([])
+const formVersionOptions = ref<Array<{ label: string; value: number; name: string }>>([])
+
+async function versionsOf(project: number | '' | null): Promise<Array<{ label: string; value: number; name: string }>> {
+  if (!project) return []
+  try {
+    const result = await projectVersionApi.list(Number(project))
+    // 下拉统一只显版本号，版本名单独用只读行展示，避免选项文本过长撑破窄列
+    return (result.list ?? []).map((v) => ({ label: v.versionCode, value: v.id as number, name: v.name || '' }))
+  } catch {
+    return []
+  }
+}
+
+function onFilterProjectChange(): void {
+  versionId.value = ''
+  void versionsOf(projectId.value).then((items) => {
+    filterVersionOptions.value = items
+  })
+  reload()
+}
+
+function onFormProjectChange(): void {
+  form.versionId = null
+  void versionsOf(form.projectId).then((items) => {
+    formVersionOptions.value = items
+  })
+}
+
+const formVersionName = computed(() => {
+  const hit = formVersionOptions.value.find((item) => item.value === form.versionId)
+  return hit?.name || ''
+})
 
 const quickTitle = ref('')
 const quickPriority = ref('medium')
@@ -438,6 +495,7 @@ const form = reactive({
   progress: 0,
   description: '',
   projectId: null as number | null,
+  versionId: null as number | null,
 })
 
 /** 当前页的查询条件，导出与列表共用一份，导出的就是看到的。 */
@@ -449,12 +507,14 @@ function queryOf(): Record<string, unknown> {
   if (category.value) query.category = category.value
   if (keyword.value.trim()) query.keyword = keyword.value.trim()
   if (projectId.value !== '') query.projectId = projectId.value
+  if (versionId.value !== '') query.versionId = versionId.value
   return query
 }
 
 function viewCount(key: string): number {
   if (key === 'all') return summary.total
   if (key === 'today') return summary.dueToday
+  if (key === 'week') return summary.dueWeek
   if (key === 'overdue') return summary.overdue
   if (key === 'starred') return summary.pinned
   if (key === 'done') return summary.done
@@ -498,12 +558,16 @@ function reload(): void {
   void syncQuery()
 }
 
+const scheduleQuery = useAutoQuery(reload)
+
 function reset(): void {
   status.value = ''
   priority.value = ''
   category.value = ''
   keyword.value = ''
   projectId.value = ''
+  versionId.value = ''
+  filterVersionOptions.value = []
   view.value = 'all'
   reload()
 }
@@ -527,6 +591,7 @@ function syncQuery(): void {
   if (category.value) query.category = category.value
   if (keyword.value.trim()) query.keyword = keyword.value.trim()
   if (projectId.value !== '') query.project = String(projectId.value)
+  if (versionId.value !== '') query.version = String(versionId.value)
   if (pageNum.value > 1) query.page = String(pageNum.value)
   if (pageSize.value !== 20) query.size = String(pageSize.value)
   void router.replace({ query })
@@ -542,6 +607,11 @@ function hydrateFromQuery(): void {
   keyword.value = first(q.keyword)
   const project = Number(first(q.project))
   projectId.value = Number.isInteger(project) && project > 0 ? project : ''
+  const version = Number(first(q.version))
+  versionId.value = Number.isInteger(version) && version > 0 ? version : ''
+  void versionsOf(projectId.value).then((items) => {
+    filterVersionOptions.value = items
+  })
   const page = Number(first(q.page))
   pageNum.value = Number.isInteger(page) && page > 1 ? page : 1
   const size = Number(first(q.size))
@@ -573,6 +643,8 @@ async function quickAdd(): Promise<void> {
     // 新任务默认挂在当前项目上；筛选里指定了项目就跟着筛选走
     const targetProject = projectId.value !== '' ? projectId.value : appStore.currentProjectId
     if (targetProject) payload.projectId = targetProject
+    // 版本属于项目，只在筛选里真的选了项目时才跟着带，否则挂到别的项目的版本上
+    if (projectId.value !== '' && versionId.value !== '') payload.versionId = versionId.value
     await todoApi.create(payload)
     quickTitle.value = ''
     quickDue.value = null
@@ -586,10 +658,13 @@ async function quickAdd(): Promise<void> {
 async function toggle(todo: Todo): Promise<void> {
   try {
     await todoApi.toggle(todo.id)
-    if (current.value?.id === todo.id) {
-      await select(todo)
-    }
     await load()
+    // 勾选子任务会回推父任务状态与进度，详情里两份数据都要重新取。
+    const currentId = current.value?.id
+    if (currentId === todo.id || currentId === todo.parentId) {
+      await refreshCurrent()
+      if (current.value) syncRollupFields(current.value)
+    }
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '操作失败')
   }
@@ -664,8 +739,7 @@ function toggleExpand(id: number): void {
   expanded.value = next
 }
 
-function select(todo: Todo): void {
-  current.value = todo
+function fillForm(todo: Todo): void {
   form.title = todo.title
   form.status = todo.status
   form.priority = todo.priority
@@ -675,6 +749,35 @@ function select(todo: Todo): void {
   form.progress = todo.progress
   form.description = todo.description || ''
   form.projectId = todo.projectId ?? null
+  form.versionId = Number(todo.versionId ?? 0) || null
+  void versionsOf(form.projectId).then((items) => {
+    formVersionOptions.value = items
+  })
+}
+
+function select(todo: Todo): void {
+  current.value = todo
+  fillForm(todo)
+}
+
+/** 子任务增删、勾选、保存与置顶后，详情里的子任务与回推状态都要重新取一次。 */
+async function refreshCurrent(): Promise<void> {
+  if (!current.value) return
+  const id = current.value.id
+  try {
+    const detail = await todoApi.get(id)
+    if (current.value?.id === id) {
+      current.value = detail
+    }
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '刷新任务详情失败')
+  }
+}
+
+/** 只同步会被子任务回推的字段，避免覆盖表单里尚未保存的其他修改。 */
+function syncRollupFields(todo: Todo): void {
+  form.status = todo.status
+  form.progress = todo.progress
 }
 
 async function save(): Promise<void> {
@@ -695,10 +798,14 @@ async function save(): Promise<void> {
       progress: form.progress,
       description: form.description,
       projectId: form.projectId ?? '',
+      versionId: form.versionId ?? '',
     })
     current.value = updated
+    fillForm(updated)
     ElMessage.success('已保存')
     await load()
+    await refreshCurrent()
+    if (current.value) syncRollupFields(current.value)
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '保存失败')
   } finally {
@@ -712,6 +819,7 @@ async function togglePin(): Promise<void> {
     const updated = await todoApi.update(current.value.id, { isPinned: !current.value.isPinned })
     current.value = updated
     await load()
+    await refreshCurrent()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '操作失败')
   }
@@ -729,8 +837,9 @@ async function addSubtask(): Promise<void> {
     if (!title) return
     await todoApi.create({ title, parentId: current.value.id })
     ElMessage.success('已添加子任务')
-    await select(current.value)
     await load()
+    await refreshCurrent()
+    if (current.value) syncRollupFields(current.value)
   } catch {
     // 用户取消，不提示
   }
@@ -742,13 +851,19 @@ async function remove(todo: Todo): Promise<void> {
   } catch {
     return
   }
+  const selectedId = current.value?.id
+  const selectedParentId = current.value?.parentId
   try {
     await todoApi.remove(todo.id)
-    if (current.value?.id === todo.id) {
+    if (selectedId === todo.id || selectedParentId === todo.id) {
       current.value = null
     }
     ElMessage.success('已删除')
     await load()
+    if (current.value && selectedId === todo.parentId) {
+      await refreshCurrent()
+      if (current.value) syncRollupFields(current.value)
+    }
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '删除失败')
   }
@@ -761,13 +876,16 @@ async function onCommand(raw: string | number | object, todo: Todo): Promise<voi
     return
   }
   if (command === 'subtask') {
-    current.value = todo
+    select(todo)
     await addSubtask()
     return
   }
   if (command === 'pin') {
     await todoApi.update(todo.id, { isPinned: !todo.isPinned })
     await load()
+    if (current.value?.id === todo.id) {
+      await refreshCurrent()
+    }
     return
   }
   if (command === 'delete') {
@@ -775,20 +893,44 @@ async function onCommand(raw: string | number | object, todo: Todo): Promise<voi
     return
   }
   try {
-    await todoApi.move(todo.id, command === 'up' ? 'up' : 'down')
+    const result = await todoApi.move(todo.id, command === 'up' ? 'up' : 'down')
+    if (!result.moved) {
+      ElMessage.info(result.reason || '已经到边界了')
+      return
+    }
     await load()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '移动失败')
   }
 }
 
+const pageActive = ref(true)
+
 watch(
   () => route.query,
   () => {
+    // keep-alive 下其他页面的查询变化也会走到这里，隐藏时不能跟着重拉
+    if (!pageActive.value) {
+      return
+    }
     hydrateFromQuery()
     void load()
   },
 )
+
+let activatedOnce = false
+onActivated(() => {
+  pageActive.value = true
+  if (activatedOnce) {
+    hydrateFromQuery()
+    void load()
+  }
+  activatedOnce = true
+})
+
+onDeactivated(() => {
+  pageActive.value = false
+})
 
 onMounted(async () => {
   hydrateFromQuery()

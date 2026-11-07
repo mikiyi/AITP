@@ -78,11 +78,17 @@ class KnowledgeRepository(BaseRepository):
         return [dict(r) for r in rows]
 
     # ---- 计数 ----
-    def published_count(self) -> int:
-        return int(self.conn.execute(
+    def published_count(self, project_id: int | None = None) -> int:
+        """已发布知识数；给了 project_id 就只数本项目，项目视图不吃全库。"""
+        sql = (
             "SELECT COUNT(*) FROM biz_knowledge_article"
             " WHERE is_deleted = 0 AND review_status = 'published'"
-        ).fetchone()[0])
+        )
+        params: tuple[Any, ...] = ()
+        if project_id:
+            sql += " AND project_id = ?"
+            params = (int(project_id),)
+        return int(self.conn.execute(sql, params).fetchone()[0])
 
     def count_by_status(self, review_status: str) -> int:
         return int(self.conn.execute(

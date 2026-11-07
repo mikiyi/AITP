@@ -2,7 +2,8 @@
   <div class="page">
     <div class="page-header">
       <h2 class="page-title">测试用例</h2>
-      <div>
+      <div class="toolbar" style="margin: 0">
+        <ProjectSwitcher />
         <el-button :icon="Upload" @click="importVisible = true">导入 xlsx</el-button>
         <BaseExportMenu
           :formats="['xlsx', 'csv', 'json']"
@@ -14,42 +15,85 @@
       </div>
     </div>
 
-    <div class="panel panel-pad">
-      <BaseProTable
-        ref="tableRef"
-        :columns="columns"
-        :fetcher="fetcher"
-        :search-fields="searchFields"
-        :extra-query="extraQuery"
-        selectable
-        sync-query
-        @row-click="onRowClick"
-      >
-        <template #batch="{ rows }">
-          <el-button size="small" type="danger" plain :loading="batchRemoving" @click="batchRemove(rows)">
-            批量删除
-          </el-button>
-        </template>
-        <template #caseType="{ row }">
-          <el-tag size="small" effect="plain">{{ caseTypeLabel(row.caseType) }}</el-tag>
-        </template>
-        <template #priority="{ row }">
-          <el-tag :type="priorityTag(row.priority)" size="small" effect="plain">{{ row.priority }}</el-tag>
-        </template>
-        <template #status="{ row }">
-          <el-tag :type="statusTag(row.status)" size="small" effect="plain">
-            {{ statusLabel(row.status) }}
-          </el-tag>
-        </template>
-        <template #moduleId="{ row }">
-          {{ moduleName(row.moduleId) }}
-        </template>
-        <template #actions="{ row }">
-          <el-button link type="primary" @click.stop="openEdit(row)">编辑</el-button>
-          <el-button link type="success" @click.stop="openKnowledge(row)">加入知识库</el-button>
-          <el-button link type="danger" @click.stop="remove(row)">删除</el-button>
-        </template>
-      </BaseProTable>
+    <div class="case-layout">
+      <div class="panel panel-pad case-nav">
+        <h3 class="case-nav__title">
+          功能点
+          <el-tag size="small" effect="plain">{{ caseTotal }} 条</el-tag>
+        </h3>
+        <el-input
+          v-model="moduleKeyword"
+          size="small"
+          placeholder="过滤功能点"
+          clearable
+          class="case-nav__filter"
+        />
+        <div v-loading="moduleNavLoading" class="case-nav__tree">
+          <el-tree
+            ref="moduleNavRef"
+            :data="moduleNavTree"
+            :props="{ label: 'name', children: 'children' }"
+            node-key="key"
+            highlight-current
+            :expand-on-click-node="false"
+            default-expand-all
+            :filter-node-method="filterModuleNode"
+            @node-click="onModuleNodeClick"
+          >
+            <template #default="{ data }">
+              <span class="case-nav__node">
+                <span class="case-nav__node-name" :title="data.path || data.name">{{ data.name }}</span>
+                <span class="case-nav__node-count">{{ data.total }}</span>
+              </span>
+            </template>
+          </el-tree>
+          <el-empty
+            v-if="!moduleNavLoading && !hasModuleNodes"
+            description="该项目还没有功能点"
+            :image-size="60"
+          />
+        </div>
+        <p class="case-nav__hint muted">节点数字含下级功能点的用例数，点击筛选，再点一次取消</p>
+      </div>
+
+      <div class="panel panel-pad">
+        <BaseProTable
+          ref="tableRef"
+          :columns="columns"
+          :fetcher="fetcher"
+          :search-fields="searchFields"
+          :extra-query="extraQuery"
+          selectable
+          sync-query
+          @row-click="onRowClick"
+          @filters-reset="clearModuleNav"
+        >
+          <template #batch="{ rows }">
+            <el-button size="small" type="danger" plain :loading="batchRemoving" @click="batchRemove(rows)">
+              批量删除
+            </el-button>
+          </template>
+          <template #caseType="{ row }">
+            <el-tag size="small" effect="plain">{{ caseTypeLabel(row.caseType) }}</el-tag>
+          </template>
+          <template #priority="{ row }">
+            <el-tag :type="priorityTag(row.priority)" size="small" effect="plain">{{ row.priority }}</el-tag>
+          </template>
+          <template #status="{ row }">
+            <el-tag :type="statusTag(row.status)" size="small" effect="plain">
+              {{ statusLabel(row.status) }}
+            </el-tag>
+          </template>
+          <template #moduleId="{ row }">
+            {{ moduleName(row.moduleId) }}
+          </template>
+          <template #actions="{ row }">
+            <el-button link type="primary" @click.stop="openEdit(row)">编辑</el-button>
+            <el-button link type="success" @click.stop="openKnowledge(row)">加入知识库</el-button>
+            <el-button link type="danger" @click.stop="remove(row)">删除</el-button>
+          </template>
+        </BaseProTable>
+      </div>
     </div>
 
     <el-dialog v-model="dialogVisible" :title="editing ? '编辑用例' : '新建用例'" width="720px">
@@ -58,7 +102,7 @@
           <el-input v-model="form.title" placeholder="格式：场景-条件-预期" />
         </el-form-item>
         <el-form-item label="项目" required>
-          <el-select v-model="form.projectId" placeholder="选择项目">
+          <el-select v-model="form.projectId" placeholder="选择项目" @change="onProjectChange">
             <el-option v-for="item in appStore.projects" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
@@ -68,13 +112,13 @@
           </el-select>
         </el-form-item>
         <el-form-item label="功能点">
-          <el-select v-model="form.moduleId" placeholder="选择功能点" clearable filterable>
-            <el-option v-for="item in moduleOptions" :key="item.id" :label="item.path" :value="item.id" />
+          <el-select v-model="form.moduleId" placeholder="选择功能点" clearable filterable :loading="formModuleLoading">
+            <el-option v-for="item in formModuleOptions" :key="item.id" :label="item.path" :value="item.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="需求">
           <el-select v-model="form.requirementId" placeholder="选择需求" clearable filterable>
-            <el-option v-for="item in requirementOptions" :key="item.id" :label="item.title" :value="item.id" />
+            <el-option v-for="item in formRequirementOptions" :key="item.id" :label="item.title" :value="item.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="用例类型">
@@ -141,7 +185,7 @@
         <div class="el-upload__text">拖拽 xlsx 文件到此处，或<em>点击选择</em></div>
       </el-upload>
       <p class="muted import-hint">
-        导入前请确保已在「项目」中选择目标项目；编号冲突的用例会被跳过。
+        导入前请确保已在「项目」中选择目标项目；编号冲突的用例会自动重排编号后导入，不会跳过。
       </p>
       <template #footer>
         <el-button @click="importVisible = false">取消</el-button>
@@ -187,7 +231,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { DataAnalysis, Plus, Upload, UploadFilled } from '@element-plus/icons-vue'
@@ -195,8 +239,11 @@ import type { UploadFile, UploadFiles } from 'element-plus'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
+import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import { caseApi, moduleApi, projectVersionApi, requirementApi } from '@/api'
-import type { CaseStep, ModuleCoverage, ModuleOption, Requirement, TestCase } from '@/api/types'
+import type { CaseStep, CaseTreeNode, ModuleCoverage, ModuleOption, Requirement, TestCase } from '@/api/types'
+import { caseTypeText } from '@/utils/format'
+import { useProjectScope } from '@/composables/useProjectScope'
 import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
@@ -302,17 +349,15 @@ const EXTRA_FIELDS: Record<string, ExtraField[]> = {
   ],
 }
 
+/** 列表列渲染用的功能点名称，跟随本页当前项目。 */
 const moduleOptions = ref<ModuleOption[]>([])
-const requirementOptions = ref<Requirement[]>([])
 
 const extraQuery = computed(() => ({
   projectId: appStore.currentProjectId ?? undefined,
-  versionId: selectedVersionId.value ?? undefined,
 }))
 
 /** 当前项目下的版本清单，供版本下拉筛选。 */
 const versionOptions = ref<Array<{ label: string; value: number }>>([])
-const selectedVersionId = ref<number | null>(null)
 
 async function loadVersionOptions(): Promise<void> {
   const pid = appStore.currentProjectId
@@ -331,9 +376,120 @@ async function loadVersionOptions(): Promise<void> {
   }
 }
 
-watch(() => appStore.currentProjectId, () => {
-  selectedVersionId.value = null
-  void loadVersionOptions()
+/**
+ * 功能点筛选面板（原「用例树」独立页并入这里）。
+ * 节点数字按「本级 + 下级」汇总，点一下写进 moduleId 筛选，与列表看到的结果一致。
+ */
+interface ModuleNavNode {
+  key: string
+  name: string
+  path: string
+  total: number
+  /** 写进 moduleId 筛选的值：功能点为子树 id 列表，未关联为 'none'，全部为空。 */
+  query: string
+  children: ModuleNavNode[]
+}
+
+const NAV_ALL_KEY = 'all'
+const NAV_NONE_KEY = 'none'
+
+const moduleNavRef = ref<{ filter: (value: string) => void; setCurrentKey: (key: string | null) => void } | null>(null)
+const moduleNavTree = ref<ModuleNavNode[]>([])
+const moduleNavLoading = ref(false)
+const moduleKeyword = ref('')
+const caseTotal = ref(0)
+const hasModuleNodes = computed(() => moduleNavTree.value.some((node) => node.query !== '' && node.key !== NAV_NONE_KEY))
+
+function toNavNode(node: CaseTreeNode): ModuleNavNode {
+  const children = ((node.children ?? []) as CaseTreeNode[]).map(toNavNode)
+  const ids = [Number(node.id), ...children.flatMap((child) => childIds(child))]
+  return {
+    key: String(node.id),
+    name: node.name,
+    path: node.path ?? '',
+    total: Number(node.caseCount ?? 0) + children.reduce((sum, child) => sum + child.total, 0),
+    query: ids.join(','),
+    children,
+  }
+}
+
+function childIds(node: ModuleNavNode): number[] {
+  return node.query.split(',').filter(Boolean).map(Number)
+}
+
+function findNavNode(list: ModuleNavNode[], query: string): ModuleNavNode | null {
+  for (const node of list) {
+    if (node.query === query) {
+      return node
+    }
+    const hit = findNavNode(node.children, query)
+    if (hit) {
+      return hit
+    }
+  }
+  return null
+}
+
+async function loadModuleNav(): Promise<void> {
+  const pid = appStore.currentProjectId
+  if (!pid) {
+    moduleNavTree.value = []
+    caseTotal.value = 0
+    return
+  }
+  moduleNavLoading.value = true
+  try {
+    const data = await caseApi.tree(pid)
+    const nodes = (data.list ?? []).map(toNavNode)
+    const tree: ModuleNavNode[] = [
+      { key: NAV_ALL_KEY, name: '全部用例', path: '', total: data.total ?? 0, query: '', children: [] },
+      ...nodes,
+    ]
+    const orphanCount = (data.orphans ?? []).length
+    if (orphanCount) {
+      tree.push({ key: NAV_NONE_KEY, name: '未关联功能点', path: '', total: orphanCount, query: 'none', children: [] })
+    }
+    moduleNavTree.value = tree
+    caseTotal.value = data.total ?? 0
+    await nextTick()
+    syncModuleNav()
+  } catch (err) {
+    moduleNavTree.value = []
+    caseTotal.value = 0
+    ElMessage.error(err instanceof Error ? err.message : '功能点加载失败')
+  } finally {
+    moduleNavLoading.value = false
+  }
+}
+
+/** 地址栏或重置按钮改了筛选，面板高亮要跟着走，否则树和列表两边显示对不上。 */
+function syncModuleNav(): void {
+  const query = tableRef.value?.filterQuery().moduleId ?? ''
+  moduleNavRef.value?.setCurrentKey(query ? (findNavNode(moduleNavTree.value, query)?.key ?? null) : NAV_ALL_KEY)
+}
+
+function clearModuleNav(): void {
+  moduleNavRef.value?.setCurrentKey(NAV_ALL_KEY)
+}
+
+function onModuleNodeClick(data: ModuleNavNode): void {
+  const active = tableRef.value?.filterQuery().moduleId ?? ''
+  const deselect = data.query !== '' && data.query === active
+  const query = deselect ? '' : data.query
+  moduleNavRef.value?.setCurrentKey(query ? data.key : NAV_ALL_KEY)
+  tableRef.value?.setFilter('moduleId', query || undefined)
+}
+
+function filterModuleNode(value: string, data: ModuleNavNode): boolean {
+  if (!value) {
+    return true
+  }
+  const key = value.toLowerCase()
+  return `${data.name} ${data.path}`.toLowerCase().includes(key)
+}
+
+watch(moduleKeyword, (value) => {
+  moduleNavRef.value?.filter(value)
 })
 
 const columns: ColumnDef[] = [
@@ -354,6 +510,8 @@ const searchFields = computed<SearchField[]>(() => [
   { prop: 'priority', label: '优先级', type: 'select', options: ['P0', 'P1', 'P2', 'P3'].map((p) => ({ label: p, value: p })) },
   { prop: 'status', label: '执行状态', type: 'select', options: caseStatusOptions },
   { prop: 'versionId', label: '版本', type: 'select', options: versionOptions.value },
+  // 功能点由左侧面板驱动，不占工具栏；登记成筛选项才能进地址栏、被重置清掉、跟着导出走。
+  { prop: 'moduleId', label: '功能点', hidden: true },
 ])
 
 function fetcher(query: Record<string, unknown>) {
@@ -361,7 +519,7 @@ function fetcher(query: Record<string, unknown>) {
 }
 
 function caseTypeLabel(value: string): string {
-  return caseTypeOptions.find((item) => item.value === value)?.label ?? value
+  return caseTypeText(value)
 }
 
 function statusLabel(value: string): string {
@@ -422,44 +580,82 @@ const form = reactive({
 
 const extraFields = computed<ExtraField[]>(() => EXTRA_FIELDS[form.caseType] ?? [])
 
-/** 表单里的版本下拉跟随表单中选的项目，切换项目时重新拉取该项目的版本。 */
+/** 表单里的版本、功能点、需求下拉跟随表单中选的项目，切换项目时重新拉取该项目的清单。 */
 const formVersionOptions = ref<Array<{ label: string; value: number }>>([])
-const formVersionProjectId = ref<number | null>(null)
-/** 编辑回显时要保留的版本 id，等选项拉完再赋值，避免被 watch 清空。 */
-const pendingVersionId = ref<number | null>(null)
+const formModuleOptions = ref<ModuleOption[]>([])
+const formRequirementOptions = ref<Requirement[]>([])
+const formModuleLoading = ref(false)
+/** 请求回来时项目可能已经换过一次，只认最后一次请求的项目。 */
+const formScopeProjectId = ref<number | null>(null)
 
 watch(() => form.projectId, async (pid) => {
-  form.versionId = pendingVersionId.value
-  pendingVersionId.value = null
+  formScopeProjectId.value = pid ?? null
   if (!pid) {
     formVersionOptions.value = []
-    formVersionProjectId.value = null
+    formModuleOptions.value = []
+    formRequirementOptions.value = []
     return
   }
-  formVersionProjectId.value = pid
+  const isStale = () => formScopeProjectId.value !== pid
+  formModuleLoading.value = true
   try {
-    const result = await projectVersionApi.list(pid)
-    if (formVersionProjectId.value === pid) {
-      formVersionOptions.value = result.list.map((v) => ({
-        label: v.versionCode,
-        value: v.id as number,
-      }))
+    try {
+      const result = await projectVersionApi.list(pid)
+      if (!isStale()) {
+        formVersionOptions.value = result.list.map((v) => ({
+          label: v.versionCode,
+          value: v.id as number,
+        }))
+      }
+    } catch {
+      if (!isStale()) {
+        formVersionOptions.value = []
+      }
     }
-  } catch {
-    formVersionOptions.value = []
+    try {
+      const modules = await moduleApi.options(pid, true)
+      if (!isStale()) {
+        formModuleOptions.value = modules
+      }
+    } catch {
+      if (!isStale()) {
+        formModuleOptions.value = []
+      }
+    }
+    try {
+      const page = await requirementApi.list({ projectId: pid, pageSize: 100 })
+      if (!isStale()) {
+        formRequirementOptions.value = page.list
+      }
+    } catch {
+      if (!isStale()) {
+        formRequirementOptions.value = []
+      }
+    }
+  } finally {
+    formModuleLoading.value = false
   }
 }, { immediate: true })
+
+/** 表单里换了项目，版本、功能点、需求都会指向别的项目，必须一起清掉。 */
+function onProjectChange(): void {
+  form.versionId = null
+  form.moduleId = null
+  form.requirementId = null
+}
 
 function openCreate(): void {
   editing.value = null
   const fq = tableRef.value?.filterQuery() ?? {}
-  pendingVersionId.value = fq.versionId ? Number(fq.versionId) : null
+  const moduleFilter = Number(fq.moduleId)
   Object.assign(form, {
     title: '',
     projectId: appStore.currentProjectId,
-    moduleId: null,
+    // 列表正按单个功能点筛选时，新建的用例直接挂到该功能点下，保存后不会从列表里消失。
+    moduleId: Number.isInteger(moduleFilter) && moduleFilter > 0 ? moduleFilter : null,
     requirementId: null,
-    versionId: null,
+    // 列表正按版本筛选时，新建的用例直接挂到该版本下，保存后不会从列表里消失。
+    versionId: fq.versionId ? Number(fq.versionId) : null,
     caseType: 'functional',
     priority: 'P2',
     status: 'not_executed',
@@ -476,12 +672,12 @@ async function openEdit(row: TestCase): Promise<void> {
   try {
     const detail = await caseApi.get(row.id)
     editing.value = detail
-    pendingVersionId.value = (detail as any).versionId ?? null
     Object.assign(form, {
       title: detail.title ?? '',
       projectId: detail.projectId ?? null,
       moduleId: detail.moduleId ?? null,
       requirementId: detail.requirementId ?? null,
+      versionId: detail.versionId ?? null,
       caseType: detail.caseType ?? 'functional',
       priority: detail.priority ?? 'P2',
       status: detail.status ?? 'not_executed',
@@ -520,6 +716,7 @@ async function save(): Promise<void> {
     ElMessage.success('保存成功')
     dialogVisible.value = false
     tableRef.value?.reload()
+    void loadModuleNav()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '保存失败')
   } finally {
@@ -537,6 +734,7 @@ async function remove(row: TestCase): Promise<void> {
     await caseApi.remove(row.id)
     ElMessage.success('已删除')
     tableRef.value?.reload()
+    void loadModuleNav()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '删除失败')
   }
@@ -569,6 +767,7 @@ async function batchRemove(rows: Record<string, any>[]): Promise<void> {
     ElMessage.success(`已删除 ${result.count} 条${skipped}`)
     tableRef.value?.clearSelection()
     tableRef.value?.reload()
+    void loadModuleNav()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '批量删除失败')
   } finally {
@@ -592,7 +791,7 @@ async function doImport(): Promise<void> {
     return
   }
   if (!appStore.currentProjectId) {
-    ElMessage.warning('请先在右上角选择项目')
+    ElMessage.warning('请先在本页「项目」下拉选择项目')
     return
   }
   importing.value = true
@@ -601,9 +800,14 @@ async function doImport(): Promise<void> {
     data.append('file', pickedFile.raw)
     data.append('projectId', String(appStore.currentProjectId))
     const result = await caseApi.importExcel(data)
-    ElMessage.success(`导入完成：新增 ${result.created ?? 0} 条，跳过 ${result.skipped ?? 0} 条`)
+    const renumbered = result.renumbered ?? 0
+    ElMessage.success(
+      `导入完成：新增 ${result.created ?? 0} 条，跳过 ${result.skipped ?? 0} 条` +
+        (renumbered ? `，${renumbered} 条编号冲突已自动重排` : ''),
+    )
     importVisible.value = false
     tableRef.value?.reload()
+    void loadModuleNav()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '导入失败')
   } finally {
@@ -612,7 +816,7 @@ async function doImport(): Promise<void> {
 }
 
 function exportGuard(): string {
-  return appStore.currentProjectId ? '' : '请先在右上角选择项目'
+  return appStore.currentProjectId ? '' : '请先在本页「项目」下拉选择项目'
 }
 
 function resolveExportUrl(format: string): string {
@@ -654,7 +858,6 @@ async function loadOptions(): Promise<void> {
   const projectId = appStore.currentProjectId
   if (!projectId) {
     moduleOptions.value = []
-    requirementOptions.value = []
     return
   }
   try {
@@ -662,20 +865,86 @@ async function loadOptions(): Promise<void> {
   } catch {
     moduleOptions.value = []
   }
-  try {
-    requirementOptions.value = await requirementApi.list({ projectId, pageSize: 100 }).then((p) => p.list)
-  } catch {
-    requirementOptions.value = []
-  }
 }
 
-watch(() => appStore.currentProjectId, () => {
-  void loadOptions()
-  tableRef.value?.reload()
-}, { immediate: true })
+useProjectScope({
+  load: () => {
+    void loadOptions()
+    void loadVersionOptions()
+    void loadModuleNav()
+  },
+  resetScopedFilters: () => {
+    clearModuleNav()
+    // 旧项目的版本、功能点筛选在新项目里不存在，留着会把列表筛成空。
+    tableRef.value?.clearFilter(['versionId', 'moduleId'])
+  },
+})
 </script>
 
 <style scoped>
+.case-layout {
+  display: grid;
+  grid-template-columns: minmax(200px, 236px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+/* 表格列宽之和超过剩余空间时靠自身横向滚动，不能把网格列撑破 */
+.case-layout > .panel {
+  min-width: 0;
+}
+
+.case-nav__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.case-nav__filter {
+  margin-bottom: 8px;
+}
+
+.case-nav__tree {
+  min-height: 120px;
+  max-height: 62vh;
+  overflow: auto;
+}
+
+.case-nav__node {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding-right: 6px;
+}
+
+.case-nav__node-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.case-nav__node-count {
+  flex: none;
+  color: var(--aitp-text-weak);
+  font-size: 12px;
+}
+
+.case-nav__hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+@media (max-width: 1280px) {
+  .case-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .step-editor {
   width: 100%;
 }

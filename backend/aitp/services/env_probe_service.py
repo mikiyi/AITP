@@ -3,6 +3,7 @@
 只做本机发起的可达性检查，绝不把环境信息发给任何大模型：
   - 应用服务器：HTTP GET 健康路径，看状态码与响应耗时
   - 数据库服务器：TCP 端口握手，看能否连上、握手耗时
+  - 资源指标：本机目标直接采本机 CPU/内存/磁盘；远程目标读可选监控地址
 凭据只在需要登录验证时由调用方在服务端取用，探测本身不回显任何明文。
 """
 
@@ -16,6 +17,7 @@ from typing import Any
 
 from ..common.validators import optional_str
 from ..repositories.test_env_repo import DB_DEFAULT_PORTS
+from . import server_metrics_service
 
 #: 单项探测的超时秒数；本机探测不该久等
 PROBE_TIMEOUT = 5.0
@@ -42,13 +44,13 @@ def _probe_http(base_url: str, health_path: str) -> dict[str, Any]:
             }
     except urllib.error.HTTPError as exc:
         elapsed_ms = round((time.monotonic() - started) * 1000)
-        # 4xx/5xx 说明服务在响应，只是该路径非 200；对健康监测而言「有响应」即可达
+        # 4xx/5xx 说明端口可连但服务状态异常，健康监测不能判为就绪
         return {
-            "ok": True,
-            "status": "up",
+            "ok": False,
+            "status": "down",
             "httpStatus": int(exc.code),
             "latencyMs": elapsed_ms,
-            "message": f"应用服务有响应（HTTP {exc.code}，{elapsed_ms}ms）",
+            "message": f"应用服务有响应但状态异常（HTTP {exc.code}，{elapsed_ms}ms）",
         }
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
         elapsed_ms = round((time.monotonic() - started) * 1000)
@@ -94,9 +96,19 @@ def probe_env(
     db_type: str,
     db_host: str,
     db_port: int | None,
+    app_metrics_url: str = "",
+    db_metrics_url: str = "",
 ) -> dict[str, Any]:
-    """对一套环境的两组服务器各做一次探测，返回结构化结果。"""
+    """对一套环境的两组服务器各做一次探测，返回结构化结果与资源指标。"""
     app_result = _probe_http(app_base_url, optional_str(app_health_path, "healthPath", 200))
+    app_result["metrics"] = (
+        server_metrics_service.collect_metrics(
+            host=server_metrics_service.host_of_url(app_base_url),
+            metrics_url=app_metrics_url,
+        )
+        if app_base_url.strip()
+        else server_metrics_service.unavailable_metrics("未配置应用服务器")
+    )
 
     port = int(db_port) if db_port is not None and str(db_port) != "" else DB_DEFAULT_PORTS.get(db_type, 0)
     if db_type == "sqlite":
@@ -107,8 +119,14 @@ def probe_env(
             "latencyMs": 0,
             "message": "SQLite 为本地文件库，无网络端口探测" if (db_host or db_port) else "未配置数据库文件路径",
         }
+        db_result["metrics"] = server_metrics_service.local_metrics()
     else:
         db_result = _probe_tcp(db_host, port)
+        db_result["metrics"] = (
+            server_metrics_service.collect_metrics(host=db_host, metrics_url=db_metrics_url)
+            if db_host.strip()
+            else server_metrics_service.unavailable_metrics("未配置数据库主机")
+        )
 
     return {
         "app": app_result,

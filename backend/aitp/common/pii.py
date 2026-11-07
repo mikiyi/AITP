@@ -8,6 +8,16 @@ from __future__ import annotations
 
 import re
 
+#: 类型码 → 中文名。前端展示与 AI 记录都用这一份，避免两端各写一套。
+TYPE_LABELS: dict[str, str] = {
+    "id_card": "身份证号",
+    "phone": "手机号",
+    "email": "邮箱",
+    "bank_card": "银行卡号",
+    "api_key": "API Key",
+    "password": "账号口令",
+}
+
 PATTERN_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("id_card", re.compile(r"\b\d{17}[\dXx]\b"), "[身份证已脱敏]"),
     ("phone", re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)"), "[手机号已脱敏]"),
@@ -30,17 +40,39 @@ def detect_sensitive(text: str) -> list[str]:
     return found
 
 
-def mask_sensitive(text: str) -> str:
-    """把识别到的敏感信息替换成占位文本。"""
+def label_of(type_code: str) -> str:
+    return TYPE_LABELS.get(type_code, type_code)
+
+
+def scan_sensitive(text: str) -> tuple[str, dict[str, int]]:
+    """脱敏并统计每类命中数量。
+
+    逐条规则替换并计数，返回 (脱敏后文本, {类型码: 数量})；
+    计数只保留命中过的类型，顺序与 PATTERN_RULES 一致。
+    """
     if not text:
-        return text
+        return text, {}
+    counts: dict[str, int] = {}
     masked = text
-    for _name, pattern, replacement in PATTERN_RULES:
-        if _name == "password":
+    for name, pattern, replacement in PATTERN_RULES:
+        hits = len(pattern.findall(masked))
+        if hits:
+            counts[name] = hits
+        if name == "password":
             masked = pattern.sub(lambda m: f"{m.group(1)}=[凭证已脱敏]", masked)
         else:
             masked = pattern.sub(replacement, masked)
-    return masked
+    return masked, counts
+
+
+def detect_sensitive_counts(text: str) -> dict[str, int]:
+    """返回每个敏感类型的命中次数；只用于统计，不返回原文。"""
+    return scan_sensitive(text)[1]
+
+
+def mask_sensitive(text: str) -> str:
+    """把识别到的敏感信息替换成占位文本。"""
+    return scan_sensitive(text)[0]
 
 
 def contains_sensitive(text: str) -> bool:

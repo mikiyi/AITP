@@ -158,30 +158,12 @@ const loading = ref(false)
 const result = ref<RouteResponse | null>(null)
 const preflight = ref<PreflightResult | null>(null)
 
-const CAPABILITY_LABELS: Record<string, string> = {
-  requirement_confirm: '需求确认',
-  testpoint_generation: '测试点生成',
-  case_generation: '用例生成',
-  xmind_to_case: 'XMind 转用例',
-  bug_analysis: '缺陷分析',
-  log_analysis: '日志分析',
-  sql_analysis: 'SQL 分析',
-  regression_generation: '回归清单',
-  report_generation: '报告生成',
-  knowledge_qa: '知识问答',
-  prompt_optimize: '提示词优化',
-  api_test_design: '接口测试设计',
-  test_plan: '测试计划',
-  case_review: '用例评审',
-  bug_classification: '缺陷归类',
-  risk_assessment: '风险评估',
-  automation_script: '自动化脚本生成',
-  performance_script: '性能脚本生成',
-  test_data_generation: '测试数据生成',
-}
-
+/**
+ * 能力名以服务端预检结果为准（PreflightTask.label 来自后端能力目录），
+ * 前端不再另写一份映射，避免与后端目录对不上、把中文名显示成英文编号。
+ */
 function labelOf(code: string): string {
-  return CAPABILITY_LABELS[code] ?? code
+  return preflight.value?.tasks.find((item) => item.capability === code)?.label ?? code
 }
 
 async function route(): Promise<void> {

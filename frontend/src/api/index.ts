@@ -1,4 +1,16 @@
-import { del, get, post, postBlob, put, request, type BlobResult, type PagePayload } from './request'
+import {
+  del,
+  get,
+  getBlob,
+  post,
+  postBlob,
+  postLong,
+  put,
+  request,
+  LONG_TIMEOUT_MS,
+  type BlobResult,
+  type PagePayload,
+} from './request'
 import type {
   AdoptCaseItem,
   AiModelInfo,
@@ -10,11 +22,14 @@ import type {
   AiTask,
   AuditLog,
   AutomationCategoryInfo,
+  AutomationInterpreters,
   AutomationRuntime,
   AutomationRun,
   AutomationRunPage,
   AutomationScript,
   AutomationScriptPage,
+  AutoBackupForm,
+  AutoBackupPlan,
   BackupListResult,
   BatchDeleteResult,
   BatchReviewResult,
@@ -22,13 +37,16 @@ import type {
   BugLog,
   CapabilitySpec,
   CaseTreeNode,
+  CiSettings,
   DbBackup,
   DocTemplate,
   DocTemplatePage,
   DocTemplateUpload,
   DocumentAttachment,
-  EntityRelation,
+  HomeCardItem,
   KnowledgeAnswer,
+  AssistantEgress,
+  AssistantPreview,
   KnowledgeArticle,
   KnowledgeCategory,
   KnowledgeDraft,
@@ -38,20 +56,29 @@ import type {
   KnowledgeStorage,
   KnowledgeVersion,
   ImageAttachment,
+  MaskInfo,
   ModuleCoverage,
   ModuleNode,
   ModuleOption,
+  NotificationChannel,
+  NotificationChannelList,
+  NotificationLogPage,
   PipelineResult,
   PreflightResult,
   Project,
   ProjectVersion,
   ProjectVersionListResult,
   PromptTemplate,
+  QueueTask,
+  QueueTaskPage,
   Regression,
   RegressionItem,
+  ReleaseGate,
+  ReleaseGateResult,
   Report,
   ReportItem,
   ReportStats,
+  ReportTrend,
   Requirement,
   SqlAnalysis,
   RestoreResult,
@@ -63,14 +90,21 @@ import type {
   TestEnvListResult,
   TestEnvProbe,
   TestCase,
+  InterfaceBatchResult,
+  InterfaceExecution,
   TestDataBatch,
   TestDataBatchPage,
   TestDataCatalog,
+  TestPlan,
+  TestRun,
+  TestRunCase,
   Todo,
   TodoPage,
   TodoStats,
+  TraceabilityResult,
   ValidationCase,
   ValidationResult,
+  VersionCompare,
   WorkbenchEntry,
   WorkbenchOverview,
   XmindParseResult,
@@ -86,6 +120,13 @@ function exportUrl(path: string, query: Record<string, unknown>): string {
   })
   const qs = params.toString()
   return qs ? `/api/v1/${path}?${qs}` : `/api/v1/${path}`
+}
+
+/** 同步执行接口/自动化脚本时，按脚本自身超时再留 1 分钟余量。 */
+function runTimeout(body: Record<string, unknown>): number {
+  const seconds = Number(body.timeoutSeconds)
+  const own = Number.isFinite(seconds) && seconds > 0 ? seconds : 300
+  return Math.max(LONG_TIMEOUT_MS, own * 1000 + 60_000)
 }
 
 /** 工作台概览。 */
@@ -142,7 +183,7 @@ export const regressionApi = {
     put<Regression>(`/regressions/${id}`, body),
   remove: (id: number) => del(`/regressions/${id}`),
   generate: (id: number, body: Record<string, unknown> = {}) =>
-    post<{ id: number; created: number; items: RegressionItem[]; output: string }>(
+    postLong<{ id: number; created: number; items: RegressionItem[]; output: string }>(
       `/regressions/${id}/generate`,
       body,
     ),
@@ -159,8 +200,84 @@ export const regressionApi = {
     ),
 }
 
-/** 任务清单。 */
-export const todoApi = {
+/** 测试计划：定义长期测试范围，可据此发起轮次。 */
+export const testPlanApi = {
+  list: (query: Record<string, unknown> = {}) =>
+    get<PagePayload<TestPlan>>('/test-plans', query as never),
+  get: (id: number) => get<TestPlan>(`/test-plans/${id}`),
+  create: (body: Record<string, unknown>) => post<TestPlan>('/test-plans', body),
+  update: (id: number, body: Record<string, unknown>) => put<TestPlan>(`/test-plans/${id}`, body),
+  remove: (id: number) => del(`/test-plans/${id}`),
+  createRun: (id: number, body: Record<string, unknown>) =>
+    post<TestRun>(`/test-plans/${id}/runs`, body),
+}
+
+/** 测试轮次：一次具体执行，含用例快照与逐条结果。 */
+export const testRunApi = {
+  list: (query: Record<string, unknown> = {}) =>
+    get<PagePayload<TestRun>>('/test-runs', query as never),
+  get: (id: number) => get<TestRun>(`/test-runs/${id}`),
+  create: (body: Record<string, unknown>) => post<TestRun>('/test-runs', body),
+  update: (id: number, body: Record<string, unknown>) => put<TestRun>(`/test-runs/${id}`, body),
+  remove: (id: number) => del(`/test-runs/${id}`),
+  addCases: (id: number, body: Record<string, unknown>) =>
+    post<{ added: number[]; count: number; skipped: number[] }>(`/test-runs/${id}/cases`, body),
+  removeCase: (id: number, caseId: number) => del(`/test-runs/${id}/cases/${caseId}`),
+  recordCase: (id: number, caseId: number, body: Record<string, unknown>) =>
+    put<{ runCase: TestRunCase; run: TestRun }>(`/test-runs/${id}/cases/${caseId}`, body),
+  batchRecord: (id: number, entries: unknown[], executedBy = '') =>
+    post<{ updated: number[]; skipped: number[]; run: TestRun }>(`/test-runs/${id}/cases/batch`, {
+      entries,
+      executedBy,
+    }),
+  createBug: (id: number, caseId: number, body: Record<string, unknown> = {}) =>
+    post<{ created: boolean; bugId: number; bugNo: string; runCaseId: number }>(
+      `/test-runs/${id}/cases/${caseId}/bug`,
+      body,
+    ),
+  runInterfaceCase: (id: number, caseId: number, body: Record<string, unknown> = {}) =>
+    postLong<InterfaceExecution>(
+      `/test-runs/${id}/cases/${caseId}/interface-run`,
+      body,
+      runTimeout(body),
+    ),
+  runInterfaceBatch: (id: number, body: Record<string, unknown> = {}) =>
+    postLong<InterfaceBatchResult | { queued: boolean; task: QueueTask; runId: number; envId: number }>(
+      `/test-runs/${id}/interface-run`,
+      body,
+      runTimeout(body),
+    ),
+  complete: (id: number, remark = '') => post<TestRun>(`/test-runs/${id}/complete`, { remark }),
+  automationRuns: (id: number) =>
+    get<{ list: AutomationRun[] }>(`/test-runs/${id}/automation-runs`),
+  runAutomation: (id: number, body: Record<string, unknown>) =>
+    postLong<
+      | { total: number; runs: AutomationRun[]; runId: number }
+      | { queued: boolean; tasks: QueueTask[]; runId: number }
+    >(`/test-runs/${id}/automation-run`, body, runTimeout(body)),
+  exportUrl: (id: number, query: Record<string, unknown>) =>
+    exportUrl(`test-runs/${id}/export`, query),
+}
+
+/** 需求追溯矩阵。 */
+export const traceabilityApi = {
+  get: (query: Record<string, unknown>) =>
+    get<TraceabilityResult>('/traceability', query as never),
+  exportUrl: (query: Record<string, unknown>) => exportUrl('traceability/export', query),
+}
+
+/** 发布准入 / 质量门禁。 */
+export const releaseGateApi = {
+  list: (query: Record<string, unknown> = {}) =>
+    get<PagePayload<ReleaseGate>>('/release-gates', query as never),
+  get: (id: number) => get<ReleaseGate>(`/release-gates/${id}`),
+  preview: (body: Record<string, unknown>) =>
+    post<ReleaseGateResult>('/release-gates/preview', body),
+  create: (body: Record<string, unknown>) => post<ReleaseGate>('/release-gates', body),
+  remove: (id: number) => del(`/release-gates/${id}`),
+}
+
+/** 任务清单。 */export const todoApi = {
   list: (query: Record<string, unknown> = {}) =>
     get<TodoPage>('/todos', query as never),
   get: (id: number) => get<Todo>(`/todos/${id}`),
@@ -181,19 +298,6 @@ export const todoApi = {
   stats: (query: Record<string, unknown> = {}) => get<TodoStats>('/todos/stats', query as never),
   categories: (query: Record<string, unknown> = {}) =>
     get<{ list: TodoStats['categories'] }>('/todos/categories', query as never),
-}
-
-/** 通用实体关联。 */
-export const relationApi = {  types: () =>
-    get<{ entityTypes: string[]; relationTypes: string[] }>('/relations/types'),
-  list: (query: Record<string, unknown> = {}) =>
-    get<PagePayload<EntityRelation>>('/relations', query as never),
-  of: (entityType: string, entityId: number) =>
-    get<{
-      list: Array<EntityRelation & { direction: string; peerType: string; peerId: number }>
-    }>(`/relations/of/${entityType}/${entityId}`),
-  create: (body: Record<string, unknown>) => post<EntityRelation>('/relations', body),
-  remove: (id: number) => del(`/relations/${id}`),
 }
 
 /** 项目。 */
@@ -256,8 +360,10 @@ export const caseApi = {
   remove: (id: number) => del(`/test-cases/${id}`),
   batchRemove: (ids: number[]) => post<BatchDeleteResult>('/test-cases/batch-delete', { ids }),
   execute: (id: number, body: Record<string, unknown>) => post(`/test-cases/${id}/execute`, body),
+  runInterface: (id: number, body: Record<string, unknown> = {}) =>
+    postLong<InterfaceExecution>(`/test-cases/${id}/interface-run`, body, runTimeout(body)),
   coverage: (projectId: number) => get('/test-cases/coverage', { projectId }),
-  /** 用例树：功能点树上挂各自的用例。 */
+  /** 功能点用例树：树上每个功能点挂自己的用例，未挂功能点的用例单独返回，供用例列表左侧筛选面板。 */
   tree: (projectId: number) =>
     get<{ list: CaseTreeNode[]; orphans: TestCase[]; total: number }>('/test-cases/tree', {
       projectId,
@@ -268,6 +374,7 @@ export const caseApi = {
     projectId: number
     moduleId?: number | null
     requirementId?: number | null
+    versionId?: number | null
     cases: AdoptCaseItem[]
   }) =>
     post<{ created: Array<{ id: number; caseNo: string }>; count: number }>(
@@ -275,9 +382,10 @@ export const caseApi = {
       body,
     ),
   importExcel: (form: FormData) =>
-    request<{ created: number; skipped: number; total: number }>('/test-cases/import', {
+    request<{ created: number; skipped: number; renumbered: number; total: number }>('/test-cases/import', {
       method: 'POST',
       body: form,
+      timeoutMs: LONG_TIMEOUT_MS,
     }),
   exportUrl: (query: Record<string, unknown>) => exportUrl('test-cases/export', query),
 }
@@ -303,7 +411,25 @@ export const bugApi = {
 export const knowledgeApi = {
   /** 知识库问答助手：kb 纯本地检索 / llm 纯大模型 / hybrid 检索 + 大模型补强。 */
   ask: (body: { question: string; mode: 'kb' | 'llm' | 'hybrid' }) =>
-    post<KnowledgeAnswer>('/knowledge/ask', body),
+    postLong<KnowledgeAnswer>('/knowledge/ask', body),
+  /** 把模型回答连同溯源信息加入待审池；同一问同答同时间只入池一次。 */
+  addAssistantAnswer: (body: Record<string, unknown>) =>
+    post<KnowledgeDraft>('/knowledge/assistant/add', body),
+  /** 问答链路实际外发评估：本地首选 + 云端兜底也算可能外发。 */
+  assistantEgress: (mode: 'llm' | 'hybrid') =>
+    get<AssistantEgress>('/knowledge/assistant/egress', { mode }),
+  /** 外发前的站内检查：问答助手来源正式条目的 .md 全文与落盘路径。 */
+  assistantPreview: () => get<AssistantPreview>('/knowledge/assistant/preview'),
+  /** 发起问答助手来源条目的自动整理，只产出待审版本。 */
+  organizeArticle: (id: number, body: Record<string, unknown> = {}) =>
+    postLong(`/knowledge/articles/${id}/organize`, body),
+  organizeStatus: (id: number) =>
+    get<{
+      articleId: number
+      organizeStatus: '' | 'pending' | 'running' | 'done'
+      organizeAt: string | null
+      task: { status: string; statusLabel: string; errorMessage: string } | null
+    }>(`/knowledge/articles/${id}/organize`),
   /** 分类清单：内置中文分类 + 自定义分类。 */
   categories: () => get<{ list: KnowledgeCategory[] }>('/knowledge/categories'),
   createCategory: (name: string) => post<KnowledgeCategory>('/knowledge/categories', { name }),
@@ -340,8 +466,8 @@ export const knowledgeApi = {
   updateStorage: (body: Record<string, unknown>) =>
     put<KnowledgeStorage>('/knowledge/storage', body),
   migrateStorage: (body: Record<string, unknown>) =>
-    post<KnowledgeMigrateResult>('/knowledge/storage/migrate', body),
-  reindex: () => post<KnowledgeReindexResult>('/knowledge/reindex'),
+    postLong<KnowledgeMigrateResult>('/knowledge/storage/migrate', body),
+  reindex: () => postLong<KnowledgeReindexResult>('/knowledge/reindex'),
 }
 
 /** 测试报告。 */
@@ -355,10 +481,22 @@ export const reportApi = {
   items: (id: number) => get<ReportItem[]>(`/reports/${id}/items`),
   setItems: (id: number, items: unknown[]) => put(`/reports/${id}/items`, { items }),
   stats: (id: number) => get<ReportStats>(`/reports/${id}/stats`),
+  trends: (query: { projectId: number; granularity?: 'day' | 'week'; periods?: number }) =>
+    get<ReportTrend>('/reports/trends', query as never),
+  versionCompare: (query: {
+    projectId: number
+    baseVersionId: number
+    targetVersionId: number
+  }) => get<VersionCompare>('/reports/version-compare', query as never),
+  insertTrend: (id: number, body: { granularity: 'day' | 'week'; periods?: number }) =>
+    post<{ reportId: number; items: ReportItem[] }>(`/reports/${id}/trend-item`, body),
   generate: (body: Record<string, unknown>) => post<Report>('/reports/generate', body),
   adopt: (body: Record<string, unknown>) => post<Report>('/reports/adopt', body),
   exportUrl: (id: number, format: 'md' | 'html' | 'pdf' | 'print') =>
     `/api/v1/reports/${id}/export?format=${format}`,
+  /** PDF 走 fetch 而非直接打开：只有这样才能读到中文字体降级的响应头。 */
+  exportBlob: (id: number, format: 'md' | 'html' | 'pdf' | 'print') =>
+    getBlob(`/reports/${id}/export`, { format }) as Promise<BlobResult>,
 }
 
 /** AI 实验室。 */
@@ -367,7 +505,7 @@ export const labApi = {
   mainCapabilities: () => get<CapabilitySpec[]>('/lab/main-capabilities'),
   prompts: () => get<PromptTemplate[]>('/lab/prompts'),
   run: (capability: string, body: Record<string, unknown>) =>
-    post(`/lab/${capability}/run`, body),
+    postLong(`/lab/${capability}/run`, body),
   /** 把产出物一键添加到需求 / 缺陷 / 回归清单。 */
   adoptOutput: (body: {
     capability: string
@@ -423,14 +561,30 @@ export const labApi = {
     profileId?: number | null
     moduleId?: number | null
     continueOnError?: boolean
-  }) => post<PipelineResult>('/lab/composite/run', body),
+  }) => postLong<PipelineResult>('/lab/composite/run', body),
+  /** 停止本机正在跑的顺序执行；当前步骤结束后生效。 */
+  compositeCancel: (body: { sessionId?: number | null } = {}) =>
+    post<{ cancelled: number }>('/lab/composite/cancel', body),
   prompt: (code: string) => get<PromptTemplate>(`/lab/prompts/${encodeURIComponent(code)}`),
+  /** 保存自定义正文：存进库并覆盖磁盘默认模板。 */
+  savePrompt: (code: string, text: string) =>
+    put<PromptTemplate>(`/lab/prompts/${encodeURIComponent(code)}`, { body: text }),
+  /** 一键重置：删掉自定义正文，回到 backend/prompts 的默认模板。 */
+  resetPrompt: (code: string) => del<PromptTemplate>(`/lab/prompts/${encodeURIComponent(code)}`),
   /** 导入文档并抽取文本：Word / Excel / Markdown / PDF / HTML / JSON / TXT。 */
   uploadDocument: (form: FormData) =>
-    request<DocumentAttachment>('/lab/attachments/document', { method: 'POST', body: form }),
+    request<DocumentAttachment>('/lab/attachments/document', {
+      method: 'POST',
+      body: form,
+      timeoutMs: LONG_TIMEOUT_MS,
+    }),
   /** 上传图片：先去水印再落库。 */
   uploadImage: (form: FormData) =>
-    request<ImageAttachment>('/lab/attachments/image', { method: 'POST', body: form }),
+    request<ImageAttachment>('/lab/attachments/image', {
+      method: 'POST',
+      body: form,
+      timeoutMs: LONG_TIMEOUT_MS,
+    }),
   /** 粘贴图片（data URL）：同样先走去水印。 */
   uploadImageDataUrl: (dataUrl: string) =>
     post<ImageAttachment>('/lab/attachments/image', { dataUrl }),
@@ -443,7 +597,7 @@ export const labApi = {
   deleteAttachment: (id: string) => del(`/lab/attachments/${id}`),
 }
 
-/** AI 工具：提示词优化、引用式问答。 */
+/** AI 工具：提示词优化、外发前的站内脱敏检查。 */
 export const aiApi = {
   optimize: (capability: string, rawText: string) =>
     post<{
@@ -454,17 +608,10 @@ export const aiApi = {
       usage: Record<string, unknown>
       failed: boolean
       message: string
+      mask: MaskInfo
     }>('/ai/prompts/optimize', { capability, rawText }),
-  ask: (question: string) =>
-    post<{
-      answer: string
-      refs: unknown[]
-      model: string
-      usage: Record<string, unknown>
-      egress: string
-      egressWarning: string
-      contextFound: boolean
-    }>('/ai/ask', { question }),
+  /** 外发前的站内检查：识别文本里的敏感信息，只回类型与数量。 */
+  maskPreview: (text: string) => post<MaskInfo>('/ai/mask/preview', { text }),
 }
 
 /** AI 执行记录：证据、缺项、风险点与人工复核结论。 */
@@ -491,6 +638,18 @@ export const automationApi = {
   categories: () => get<AutomationCategoryInfo[]>('/automation/categories'),
   /** 运行时体检：解释器与 JMeter 是否可用。 */
   runtime: () => get<AutomationRuntime>('/automation/runtime'),
+  /** 本机解释器体检：每个 Python 装了哪些框架依赖。 */
+  interpreters: (category?: string) =>
+    get<AutomationInterpreters>('/automation/interpreters', category ? { category } : {}),
+  /** 切换执行用的 Python 解释器。 */
+  selectInterpreter: (path: string) =>
+    post<AutomationRuntime>('/automation/interpreters/select', { path }),
+  /** 批量投递执行。 */
+  batchRun: (scriptIds: number[], body: Record<string, unknown> = {}) =>
+    post<{ queued: boolean; tasks: QueueTask[]; total: number }>('/automation/scripts/batch-run', {
+      scriptIds,
+      ...body,
+    }),
   /** 脚本列表。 */
   list: (query: Record<string, unknown> = {}) =>
     get<AutomationScriptPage>('/automation/scripts', query as never),
@@ -502,7 +661,13 @@ export const automationApi = {
   remove: (id: number) => del(`/automation/scripts/${id}`),
   /** 执行脚本；失败也返回记录（status=failed）。 */
   run: (id: number, body: Record<string, unknown> = {}) =>
-    post<AutomationRun>(`/automation/scripts/${id}/run`, body),
+    postLong<AutomationRun>(`/automation/scripts/${id}/run`, body, runTimeout(body)),
+  /** 后台执行：入队后立即返回任务。 */
+  runAsync: (id: number, body: Record<string, unknown> = {}) =>
+    post<{ queued: boolean; task: QueueTask }>(`/automation/scripts/${id}/run`, {
+      ...body,
+      async: true,
+    }),
   /** 把 AI 实验室的脚本产出一键存成资产。 */
   createFromOutput: (body: Record<string, unknown>) =>
     post<AutomationScript>('/automation/scripts/from-output', body),
@@ -551,25 +716,60 @@ export const settingsApi = {
   providers: () => get('/settings/ai/providers'),
   status: () => get<AiStatus>('/settings/ai/status'),
   selfCheck: (body: Record<string, unknown>) =>
-    post<SelfCheckResult>('/settings/ai/selfcheck', body),
+    postLong<SelfCheckResult>('/settings/ai/selfcheck', body),
   models: (body: Record<string, unknown>) =>
-    post<AiModelInfo[]>('/settings/ai/models', body),
+    postLong<AiModelInfo[]>('/settings/ai/models', body),
   config: () => get<SystemConfigItem[]>('/settings/config'),
   updateConfig: (items: Array<{ key: string; value: string; valueType?: string }>) =>
     put('/settings/config', { items }),
+  /** 首页卡片布局：固定区 + 可定制区，含每张卡的显隐与顺序；default 取服务端默认排布。 */
+  homeCards: (params: { default?: boolean } = {}) =>
+    get<{ list: HomeCardItem[] }>('/settings/home-cards', params.default ? { default: 1 } : {}),
+  saveHomeCards: (cards: Array<{ key: string; visible: boolean }>) =>
+    put<{ list: HomeCardItem[] }>('/settings/home-cards', { cards }),
   auditLogs: (query: Record<string, unknown> = {}) =>
     get<PagePayload<AuditLog>>('/settings/audit-logs', query as never),
   auditResources: (resourceType: string, resourceId: number) =>
     get('/settings/audit-logs/resources', { resourceType, resourceId }),
   backups: () => get<BackupListResult>('/settings/backups'),
-  createBackup: () => post<DbBackup>('/settings/backups'),
+  /** 保存自动备份计划：开关、频率、时间、星期、保留份数与磁盘保护。 */
+  saveAutoBackup: (body: AutoBackupForm) =>
+    put<AutoBackupPlan>('/settings/backups/auto', body),
+  /** 立即按自动备份策略执行一次（走任务队列，结果在任务中心可查）。 */
+  runAutoBackupNow: () => post<QueueTask>('/settings/backups/auto/run', {}),
+  createBackup: () => postLong<DbBackup>('/settings/backups'),
+  /** 整包备份：库快照之外，附件、脚本、生成物、密钥、知识库正文一起打包。 */
+  createBundleBackup: () => postLong<DbBackup>('/settings/backups/bundle'),
   /** 上传外部备份文件，校验通过后进入备份列表，可再选择恢复。 */
   uploadBackup: (form: FormData) =>
-    request<DbBackup>('/settings/backups/upload', { method: 'POST', body: form }),
-  restoreBackup: (name: string, confirm: string) =>
-    post<RestoreResult>(`/settings/backups/${encodeURIComponent(name)}/restore`, { confirm }),
+    request<DbBackup>('/settings/backups/upload', {
+      method: 'POST',
+      body: form,
+      timeoutMs: LONG_TIMEOUT_MS,
+    }),
+  restoreBackup: (name: string, confirm: string, confirmFiles?: string) =>
+    postLong<RestoreResult>(`/settings/backups/${encodeURIComponent(name)}/restore`, {
+      confirm,
+      confirmFiles,
+    }),
   deleteBackup: (name: string) => del(`/settings/backups/${encodeURIComponent(name)}`),
   backupDownloadUrl: (name: string) => `/api/v1/settings/backups/${encodeURIComponent(name)}/download`,
+  /** CI 触发令牌状态；生成时响应里带一次明文 token。 */
+  ci: () => get<CiSettings>('/settings/ci'),
+  issueCiToken: (body: Record<string, unknown>) => post<CiSettings>('/settings/ci/token', body),
+  revokeCiToken: () => del<{ revoked: number; enabled: boolean }>('/settings/ci/token'),
+  notificationChannels: () => get<NotificationChannelList>('/settings/notifications'),
+  createNotification: (body: Record<string, unknown>) =>
+    post<NotificationChannel>('/settings/notifications', body),
+  updateNotification: (id: number, body: Record<string, unknown>) =>
+    put<NotificationChannel>(`/settings/notifications/${id}`, body),
+  removeNotification: (id: number) => del(`/settings/notifications/${id}`),
+  testNotification: (id: number) =>
+    post<{ success: boolean; httpStatus: number; message: string }>(
+      `/settings/notifications/${id}/test`,
+    ),
+  notificationLogs: (query: Record<string, unknown> = {}) =>
+    get<NotificationLogPage>('/settings/notification-logs', query as never),
   enums: () => get('/meta/enums'),
   capabilities: () => get('/meta/capabilities'),
 }
@@ -595,10 +795,21 @@ export const testEnvApi = {
       `/test-envs/${id}/password`,
       { password },
     ),
-  /** 对已保存环境做健康探测。 */
-  probe: (id: number) => post<TestEnvProbe>(`/test-envs/${id}/probe`),
+  /** 对已保存环境做健康探测；quiet 用于首页轮询，不写操作日志。 */
+  probe: (id: number, options?: { quiet?: boolean }) =>
+    post<TestEnvProbe>(`/test-envs/${id}/probe`, options ?? {}),
   /** 对未保存的草稿配置试连。 */
   probeDraft: (body: Record<string, unknown>) => post<TestEnvProbe>('/test-envs/probe-draft', body),
+}
+
+/** 后台任务队列：排队、执行、失败原因、取消与重试。 */
+export const taskApi = {
+  list: (query: Record<string, unknown> = {}) =>
+    get<QueueTaskPage>('/tasks', query as never),
+  get: (id: number) => get<QueueTask>(`/tasks/${id}`),
+  cancel: (id: number) => post<QueueTask>(`/tasks/${id}/cancel`),
+  retry: (id: number) => post<QueueTask>(`/tasks/${id}/retry`),
+  remove: (id: number) => del<{ id: number; deleted: boolean }>(`/tasks/${id}`),
 }
 
 /** 测试文档模板：按类别（测试用例 / 测试报告 / 测试点脑图）维护产出物模板。 */
@@ -612,7 +823,12 @@ export const templateApi = {
   update: (id: number, body: Record<string, unknown>) =>
     put<DocTemplate>(`/doc-templates/${id}`, body),
   remove: (id: number) => del(`/doc-templates/${id}`),
-  /** 上传模板文件：解析正文、列名与字体字号，不落库。 */
+  /** 上传模板文件：解析正文、列名与字体字号，同时把原文件留一份在本机。 */
   upload: (form: FormData) =>
     request<DocTemplateUpload>('/doc-templates/upload', { method: 'POST', body: form }),
+  /** 清理取消保存后遗留在本机的上传原件（后端跳过仍被模板引用的文件）。 */
+  cleanupUploads: (storedNames: string[]) =>
+    post<{ removed: string[] }>('/doc-templates/uploads/cleanup', { storedNames }),
+  /** 模板原文件下载直链：配合 window.open 用，Cookie 鉴权。 */
+  fileDownloadUrl: (id: number) => `/api/v1/doc-templates/${id}/file`,
 }

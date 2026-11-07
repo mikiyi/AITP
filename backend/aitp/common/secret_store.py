@@ -24,7 +24,7 @@ from pathlib import Path
 
 from .security import decrypt, encrypt, get_or_create_secret_key
 
-SERVICE_NAME = "com.aitestpilot.secrets"
+SERVICE_NAME = "com.aitestplatform.secrets"
 
 BACKEND_DPAPI = "dpapi"
 BACKEND_KEYCHAIN = "keychain"
@@ -218,6 +218,8 @@ class SecretStore:
         self.blob_dir = base_dir / "secrets"
         self.blob_dir.mkdir(parents=True, exist_ok=True)
         self._backend = self._detect_backend()
+        # 钥匙串曾经失败过的原因；非空说明有密钥落在本地加密文件里
+        self._keychain_error = ""
 
     def _detect_backend(self) -> str:
         if _dpapi_available():
@@ -231,6 +233,8 @@ class SecretStore:
         return self._backend
 
     def backend_label(self) -> str:
+        if self._backend == BACKEND_KEYCHAIN and self._keychain_error:
+            return "macOS 钥匙串不可用，已改用本地加密文件"
         return {
             BACKEND_DPAPI: "Windows DPAPI（当前用户）",
             BACKEND_KEYCHAIN: "macOS 钥匙串",
@@ -255,13 +259,19 @@ class SecretStore:
                 return ""
             return _dpapi_unprotect(path.read_bytes()).decode("utf-8")
         if self._backend == BACKEND_KEYCHAIN:
-            data = _keychain_get(ref)
-            return data.decode("utf-8") if data else ""
-        index = self._read_index()
-        ciphertext = index.get(ref)
-        if not ciphertext:
-            return ""
-        return decrypt(ciphertext, self.base_dir / ".secret_key")
+            # 写失败回落过：本地副本才是最新值，不能被钥匙串里的旧值盖回去
+            if self._keychain_error:
+                restored = self._file_get(ref)
+                if restored:
+                    return restored
+            try:
+                data = _keychain_get(ref)
+            except OSError as exc:
+                # 钥匙串被锁定或授权失败时不能读不出旧密钥，回落到文件侧
+                self._keychain_error = str(exc)
+                return self._file_get(ref)
+            return data.decode("utf-8") if data else self._file_get(ref)
+        return self._file_get(ref)
 
     # ---- 写 ----
     def set(self, ref: str, secret: str) -> None:
@@ -269,13 +279,18 @@ class SecretStore:
             atomic_write_bytes(self._blob_path(ref), _dpapi_protect(secret.encode("utf-8")))
             return
         if self._backend == BACKEND_KEYCHAIN:
-            _keychain_set(ref, secret.encode("utf-8"))
+            try:
+                _keychain_set(ref, secret.encode("utf-8"))
+            except OSError as exc:
+                # 登录钥匙串不可用（锁定、无钥匙串、授权被拒）时落本地加密文件，
+                # 保存模型 Key / 环境密码不该因此整条接口失败
+                self._keychain_error = str(exc)
+                self._file_set(ref, secret)
+                return
+            self._keychain_error = ""
+            self._file_delete(ref)
             return
-        index = self._read_index()
-        index[ref] = encrypt(secret, self.base_dir / ".secret_key")
-        atomic_write_text(
-            self._file_index_path(), json.dumps(index, ensure_ascii=False, indent=2)
-        )
+        self._file_set(ref, secret)
 
     def delete(self, ref: str) -> None:
         if self._backend == BACKEND_DPAPI:
@@ -284,14 +299,39 @@ class SecretStore:
                 path.unlink()
             return
         if self._backend == BACKEND_KEYCHAIN:
-            _keychain_delete(ref)
+            try:
+                _keychain_delete(ref)
+            except OSError as exc:
+                self._keychain_error = str(exc)
+            else:
+                self._keychain_error = ""
+            # 回落期间写入的副本同样要清掉，否则删除后仍可读出旧密钥
+            self._file_delete(ref)
             return
+        self._file_delete(ref)
+
+    # ---- 文件后端 ----
+    def _file_get(self, ref: str) -> str:
+        ciphertext = self._read_index().get(ref)
+        if not ciphertext:
+            return ""
+        return decrypt(ciphertext, self.base_dir / ".secret_key")
+
+    def _file_set(self, ref: str, secret: str) -> None:
+        index = self._read_index()
+        index[ref] = encrypt(secret, self.base_dir / ".secret_key")
+        self._write_index(index)
+
+    def _file_delete(self, ref: str) -> None:
         index = self._read_index()
         if ref in index:
             index.pop(ref)
-            atomic_write_text(
-                self._file_index_path(), json.dumps(index, ensure_ascii=False, indent=2)
-            )
+            self._write_index(index)
+
+    def _write_index(self, index: dict[str, str]) -> None:
+        atomic_write_text(
+            self._file_index_path(), json.dumps(index, ensure_ascii=False, indent=2)
+        )
 
     # ---- 内部 ----
     def _read_index(self) -> dict[str, str]:

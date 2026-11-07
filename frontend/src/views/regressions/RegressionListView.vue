@@ -3,6 +3,7 @@
     <div class="page-header">
       <h2 class="page-title">回归清单</h2>
       <div class="toolbar" style="margin: 0">
+        <ProjectSwitcher />
         <el-button :icon="Refresh" @click="load">刷新</el-button>
         <el-button type="primary" :icon="Plus" @click="openCreate">新建清单</el-button>
       </div>
@@ -15,6 +16,7 @@
           placeholder="搜索标题"
           clearable
           style="width: 200px"
+          @input="scheduleQuery"
           @keyup.enter="reload"
           @clear="reload"
         />
@@ -29,18 +31,25 @@
           <el-option label="中" value="medium" />
           <el-option label="高" value="high" />
         </el-select>
-        <el-button type="primary" :icon="Search" @click="reload">查询</el-button>
+        <el-select v-model="filters.versionId" placeholder="版本" clearable style="width: 140px" @change="reload">
+          <el-option v-for="item in versionOptions" :key="item.value" :label="item.label" :value="item.value" />
+        </el-select>
         <el-button :icon="RefreshLeft" @click="resetFilters">重置</el-button>
       </div>
 
       <el-table v-loading="loading" :data="rows" border stripe>
-        <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="version" label="版本" width="100">
+        <el-table-column prop="title" label="标题" min-width="170" show-overflow-tooltip />
+        <el-table-column label="版本号" width="110">
           <template #default="scope">
-            <span class="muted">{{ scope.row.version || '-' }}</span>
+            <span class="muted">{{ scope.row.versionCode || scope.row.version || '-' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="affectedModules" label="影响范围" min-width="160" show-overflow-tooltip />
+        <el-table-column label="版本名称" width="130">
+          <template #default="scope">
+            <span class="muted">{{ scope.row.versionName || '-' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="affectedModules" label="影响范围" min-width="130" show-overflow-tooltip />
         <el-table-column label="风险" width="90">
           <template #default="scope">
             <el-tag size="small" :type="riskTagType(scope.row.riskLevel)">
@@ -55,7 +64,9 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="updatedAt" label="更新时间" width="170" />
+        <el-table-column label="更新时间" width="165">
+          <template #default="scope">{{ dateTimeText(scope.row.updatedAt) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="280" fixed="right">
           <template #default="scope">
             <el-button link type="primary" @click="openDetail(scope.row)">明细</el-button>
@@ -85,7 +96,7 @@
     <el-dialog v-model="editVisible" :title="form.id ? '编辑回归清单' : '新建回归清单'" width="680px">
       <el-form label-width="100px">
         <el-form-item label="项目" required>
-          <el-select v-model="form.projectId" placeholder="选择项目" style="width: 100%">
+          <el-select v-model="form.projectId" placeholder="选择项目" style="width: 100%" @change="onFormProjectChange">
             <el-option
               v-for="item in appStore.projects"
               :key="item.id"
@@ -103,7 +114,12 @@
         <el-form-item label="影响模块">
           <el-input v-model="form.affectedModules" placeholder="例如：支付/退款、订单中心" />
         </el-form-item>
-        <el-form-item label="版本">
+        <el-form-item label="项目版本">
+          <el-select v-model="form.versionId" placeholder="不指定版本" clearable style="width: 100%">
+            <el-option v-for="item in formVersionOptions" :key="item.value" :label="item.label" :value="item.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="版本备注">
           <el-input v-model="form.version" placeholder="例如：v2.3.0" />
         </el-form-item>
         <el-form-item label="风险等级">
@@ -133,7 +149,8 @@
       <template v-if="detail">
         <el-descriptions :column="3" border>
           <el-descriptions-item label="标题">{{ detail.title }}</el-descriptions-item>
-          <el-descriptions-item label="版本">{{ detail.version || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="版本号">{{ detail.versionCode || detail.version || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="版本名称">{{ detail.versionName || '-' }}</el-descriptions-item>
           <el-descriptions-item label="风险">
             <el-tag size="small" :type="riskTagType(detail.riskLevel)">{{ riskText(detail.riskLevel) }}</el-tag>
           </el-descriptions-item>
@@ -242,11 +259,15 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Check, MagicStick, Plus, Refresh, RefreshLeft, Search } from '@element-plus/icons-vue'
-import { regressionApi } from '@/api'
+import { Check, MagicStick, Plus, Refresh, RefreshLeft } from '@element-plus/icons-vue'
+import { projectVersionApi, regressionApi } from '@/api'
+import { dateTimeText } from '@/utils/format'
+import { useAutoQuery } from '@/composables/useAutoQuery'
+import { useProjectScope } from '@/composables/useProjectScope'
 import type { Regression, RegressionItem } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
+import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 
 interface RegressionForm {
   id: number | null
@@ -255,6 +276,7 @@ interface RegressionForm {
   changeScope: string
   affectedModules: string
   version: string
+  versionId: number | null
   riskLevel: string
   source: string
   content: string
@@ -305,7 +327,7 @@ const detailVisible = ref(false)
 const itemVisible = ref(false)
 const detail = ref<Regression | null>(null)
 
-const filters = reactive({ keyword: '', status: '', riskLevel: '' })
+const filters = reactive({ keyword: '', status: '', riskLevel: '', versionId: null as number | null })
 
 const form = reactive<RegressionForm>({
   id: null,
@@ -314,10 +336,38 @@ const form = reactive<RegressionForm>({
   changeScope: '',
   affectedModules: '',
   version: '',
+  versionId: null,
   riskLevel: 'low',
   source: 'manual',
   content: '',
 })
+
+/** 筛选下拉跟随本页项目，表单下拉跟随表单里选的项目。 */
+const versionOptions = ref<Array<{ label: string; value: number }>>([])
+const formVersionOptions = ref<Array<{ label: string; value: number }>>([])
+
+async function versionsOf(projectId: number | null | undefined): Promise<Array<{ label: string; value: number }>> {
+  if (!projectId) return []
+  try {
+    const result = await projectVersionApi.list(projectId)
+    return (result.list ?? []).map((v) => ({ label: v.versionCode, value: v.id as number }))
+  } catch {
+    return []
+  }
+}
+
+async function loadVersionOptions(): Promise<void> {
+  versionOptions.value = await versionsOf(appStore.currentProjectId)
+}
+
+async function loadFormVersionOptions(): Promise<void> {
+  formVersionOptions.value = await versionsOf(form.projectId)
+}
+
+function onFormProjectChange(): void {
+  form.versionId = null
+  void loadFormVersionOptions()
+}
 
 const itemForm = reactive<ItemForm>({
   title: '',
@@ -363,6 +413,7 @@ async function load(): Promise<void> {
       keyword: filters.keyword,
       status: filters.status,
       riskLevel: filters.riskLevel,
+      versionId: filters.versionId ?? undefined,
       projectId: appStore.currentProjectId ?? undefined,
       pageNum: pageNum.value,
       pageSize: pageSize.value,
@@ -381,10 +432,13 @@ function reload(): void {
   void load()
 }
 
+const scheduleQuery = useAutoQuery(reload)
+
 function resetFilters(): void {
   filters.keyword = ''
   filters.status = ''
   filters.riskLevel = ''
+  filters.versionId = null
   reload()
 }
 
@@ -395,9 +449,11 @@ function openCreate(): void {
   form.changeScope = ''
   form.affectedModules = ''
   form.version = ''
+  form.versionId = null
   form.riskLevel = 'low'
   form.source = 'manual'
   form.content = ''
+  void loadFormVersionOptions()
   editVisible.value = true
 }
 
@@ -408,9 +464,11 @@ function openEdit(row: Regression): void {
   form.changeScope = row.changeScope
   form.affectedModules = row.affectedModules
   form.version = row.version
+  form.versionId = Number(row.versionId ?? 0) || null
   form.riskLevel = row.riskLevel
   form.source = row.source
   form.content = row.content
+  void loadFormVersionOptions()
   editVisible.value = true
 }
 
@@ -543,6 +601,15 @@ async function submitResults(): Promise<void> {
     ElMessage.error(err instanceof Error ? err.message : '提交失败')
   }
 }
+
+/** 列表按本页当前项目过滤，切换项目要重拉版本清单并清掉跨项目的版本筛选。 */
+useProjectScope({
+  load: () => void loadVersionOptions(),
+  resetScopedFilters: () => {
+    filters.versionId = null
+    reload()
+  },
+})
 
 onMounted(async () => {
   await appStore.loadProjects()

@@ -21,10 +21,17 @@ from ..repositories.sys_config_repo import SysConfigRepository
 CONFIG_PATH = "knowledge.storage_path"
 CONFIG_MODE = "knowledge.file_mode"
 CONFIG_AUTO_REINDEX = "knowledge.auto_reindex"
+CONFIG_ASSISTANT_MODE = "knowledge.assistant_default_mode"
 
 MODE_MIRROR = "mirror"
 MODE_DB_ONLY = "db_only"
 FILE_MODES = (MODE_MIRROR, MODE_DB_ONLY)
+
+ASSISTANT_MODE_KB = "kb"
+ASSISTANT_MODE_LLM = "llm"
+ASSISTANT_MODE_HYBRID = "hybrid"
+ASSISTANT_MODES = (ASSISTANT_MODE_KB, ASSISTANT_MODE_LLM, ASSISTANT_MODE_HYBRID)
+DEFAULT_ASSISTANT_MODE = ASSISTANT_MODE_HYBRID
 
 DEFAULT_DIR_NAME = "knowledge"
 
@@ -45,6 +52,14 @@ def file_mode(conn: sqlite3.Connection) -> str:
 def auto_reindex_enabled(conn: sqlite3.Connection) -> bool:
     raw = SysConfigRepository(conn).get_value(CONFIG_AUTO_REINDEX, "false")
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def assistant_default_mode(conn: sqlite3.Connection) -> str:
+    """问答助手打开时预选的回答模式；配置损坏时回落到 hybrid。"""
+    raw = str(
+        SysConfigRepository(conn).get_value(CONFIG_ASSISTANT_MODE, DEFAULT_ASSISTANT_MODE) or ""
+    ).strip().lower()
+    return raw if raw in ASSISTANT_MODES else DEFAULT_ASSISTANT_MODE
 
 
 def storage_root(conn: sqlite3.Connection) -> Path:
@@ -209,16 +224,43 @@ def file_status(conn: sqlite3.Connection, article: dict[str, Any]) -> dict[str, 
 # ---------------- 重建索引 ----------------
 
 def reindex(conn: sqlite3.Connection) -> dict[str, Any]:
-    """扫描目录里的 .md，以文件为准回填数据库并重建全文索引。"""
+    """扫描目录里的 .md，以文件为准回填数据库并重建全文索引。
+
+    「以文件为准」也适用于软删过的条目：删除接口清文件失败会留下孤儿 .md，
+    这类 id 在库里仍然占着主键，走插入分支必然撞库，所以命中软删行时改它、
+    顺手把它复活，并在返回的 revived 计数里说明「已删除的条目又回来了」。
+    """
     from ..repositories.knowledge_repo import KnowledgeRepository
 
     root = storage_root(conn)
+    mode = file_mode(conn)
+    if mode == MODE_DB_ONLY:
+        # 仅数据库模式下目录里的 .md 是历史遗留，读它们会把旧正文盖回库里；
+        # 这里只按库里重建全文索引。
+        _rebuild_fts(conn)
+        return {
+            "root": str(root),
+            "mode": mode,
+            "scanned": 0,
+            "imported": 0,
+            "updated": 0,
+            "revived": 0,
+            "skipped": 0,
+        }
+    repo = KnowledgeRepository(conn)
     scanned = 0
     imported = 0
     updated = 0
+    revived = 0
     skipped = 0
+    seen_ids: set[int] = set()
     if root.exists():
-        for path in sorted(root.glob("*.md")):
+        # 同一 id 可能有历史残留的多份 .md（改名前后各一份），取修改时间最新的那份，
+        # 否则按文件名排序会让旧内容盖掉新内容。
+        paths = sorted(
+            root.glob("*.md"), key=lambda p: (p.stat().st_mtime, p.name), reverse=True
+        )
+        for path in paths:
             scanned += 1
             try:
                 text = path.read_text(encoding="utf-8")
@@ -230,6 +272,10 @@ def reindex(conn: sqlite3.Connection) -> dict[str, Any]:
             if not isinstance(article_id, int):
                 skipped += 1
                 continue
+            if article_id in seen_ids:
+                skipped += 1
+                continue
+            seen_ids.add(article_id)
             relative = path.relative_to(root).as_posix()
             payload: dict[str, Any] = {
                 "title": str(meta.get("title") or path.stem),
@@ -247,8 +293,13 @@ def reindex(conn: sqlite3.Connection) -> dict[str, Any]:
             version = meta.get("version")
             if isinstance(version, int):
                 payload["current_version"] = version
-            repo = KnowledgeRepository(conn)
-            if repo.get(article_id):
+            existing = repo.raw_one(
+                "SELECT id, is_deleted FROM biz_knowledge_article WHERE id = ?", (article_id,)
+            )
+            if existing:
+                if int(existing["is_deleted"] or 0):
+                    payload["is_deleted"] = 0
+                    revived += 1
                 repo.update(article_id, payload)
                 updated += 1
             else:
@@ -259,9 +310,11 @@ def reindex(conn: sqlite3.Connection) -> dict[str, Any]:
     _rebuild_fts(conn)
     return {
         "root": str(root),
+        "mode": mode,
         "scanned": scanned,
         "imported": imported,
         "updated": updated,
+        "revived": revived,
         "skipped": skipped,
     }
 

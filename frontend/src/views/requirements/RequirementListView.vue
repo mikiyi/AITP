@@ -2,7 +2,8 @@
   <div class="page">
     <div class="page-header">
       <h2 class="page-title">需求</h2>
-      <div>
+      <div class="toolbar" style="margin: 0">
+        <ProjectSwitcher />
         <BaseExportMenu :resolve-url="resolveExportUrl" />
         <el-button type="primary" :icon="Plus" @click="openCreate">新建需求</el-button>
       </div>
@@ -14,6 +15,7 @@
         :columns="columns"
         :fetcher="fetcher"
         :search-fields="searchFields"
+        :extra-query="extraQuery"
         selectable
         sync-query
         @row-click="openEdit"
@@ -43,7 +45,7 @@
           <el-input v-model="form.title" placeholder="例如 手机号+验证码登录" />
         </el-form-item>
         <el-form-item label="项目">
-          <el-select v-model="form.projectId" placeholder="选择项目" clearable>
+          <el-select v-model="form.projectId" placeholder="选择项目" clearable @change="onProjectChange">
             <el-option
               v-for="item in appStore.projects"
               :key="item.id"
@@ -97,19 +99,26 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
+import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import { projectVersionApi, requirementApi } from '@/api'
 import type { Requirement } from '@/api/types'
+import { useProjectScope } from '@/composables/useProjectScope'
 import { useAppStore } from '@/stores/app'
 
 const appStore = useAppStore()
 
-/** 列表筛选用的版本清单，跟随右上角当前项目。 */
+/** 列表只展示本页当前项目的需求。 */
+const extraQuery = computed(() => ({
+  projectId: appStore.currentProjectId ?? undefined,
+}))
+
+/** 列表筛选用的版本清单，跟随本页当前项目。 */
 const versionOptions = ref<Array<{ label: string; value: number }>>([])
 
 async function loadVersionOptions(): Promise<void> {
@@ -173,18 +182,22 @@ const searchFields = computed<SearchField[]>(() => [
   { prop: 'versionId', label: '版本', type: 'select', options: versionOptions.value },
 ])
 
-onMounted(() => {
-  void loadVersionOptions()
+useProjectScope({
+  load: () => void loadVersionOptions(),
+  // 旧项目的版本筛选在新项目里不存在，留着会把列表筛成空。
+  resetScopedFilters: () => tableRef.value?.clearFilter('versionId'),
 })
-
-watch(() => appStore.currentProjectId, () => { void loadVersionOptions() })
 
 function fetcher(query: Record<string, unknown>) {
   return requirementApi.list(query)
 }
 
 function resolveExportUrl(format: string): string {
-  return requirementApi.exportUrl({ format, ...tableRef.value?.filterQuery() })
+  return requirementApi.exportUrl({
+    format,
+    projectId: appStore.currentProjectId,
+    ...tableRef.value?.filterQuery(),
+  })
 }
 
 const dialogVisible = ref(false)
@@ -203,11 +216,8 @@ const form = reactive({
 /** 表单里的版本下拉跟随表单中选的项目。 */
 const formVersionOptions = ref<Array<{ label: string; value: number }>>([])
 const formVersionProjectId = ref<number | null>(null)
-const pendingVersionId = ref<number | null>(null)
 
 watch(() => form.projectId, async (pid) => {
-  form.versionId = pendingVersionId.value
-  pendingVersionId.value = null
   if (!pid) {
     formVersionOptions.value = []
     formVersionProjectId.value = null
@@ -226,6 +236,11 @@ watch(() => form.projectId, async (pid) => {
     formVersionOptions.value = []
   }
 }, { immediate: true })
+
+/** 表单里换了项目，版本必须跟着换，否则会挂到别的项目的版本上。 */
+function onProjectChange(): void {
+  form.versionId = null
+}
 
 function priorityTag(priority: string): 'danger' | 'warning' | 'info' | 'primary' {
   if (priority === 'P0') {
@@ -253,11 +268,13 @@ function statusLabel(status: string): string {
 
 function openCreate(): void {
   editing.value = null
-  pendingVersionId.value = null
+  const fq = tableRef.value?.filterQuery() ?? {}
   Object.assign(form, {
     title: '',
     content: '',
     projectId: appStore.currentProjectId,
+    // 列表正按版本筛选时，新建的需求直接挂到该版本下，保存后不会从列表里消失。
+    versionId: fq.versionId ? Number(fq.versionId) : null,
     priority: 'P1',
     status: 'draft',
     source: '',
@@ -267,11 +284,11 @@ function openCreate(): void {
 
 function openEdit(row: Requirement): void {
   editing.value = row
-  pendingVersionId.value = (row as any).versionId ?? null
   Object.assign(form, {
     title: row.title ?? '',
     content: row.content ?? '',
     projectId: row.projectId ?? null,
+    versionId: row.versionId ?? null,
     priority: row.priority ?? 'P1',
     status: row.status ?? 'draft',
     source: row.source ?? '',

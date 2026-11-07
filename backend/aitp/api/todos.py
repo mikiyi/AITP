@@ -12,15 +12,18 @@ from ..errors import AppError, ErrorCode
 from ..repositories.todo_repo import TODO_VIEWS, TodoRepository, decorate
 from ..services import audit_service, tabular_export, todo_service
 from .helpers import (
+    attach_version_codes,
     audit,
     body,
     commit,
     db,
     download_response,
+    guard_project_scope,
     keyword_of,
     page_args,
     path_int,
     query_filters,
+    scope_arg,
     tabular_format_of,
 )
 
@@ -30,6 +33,7 @@ bp = Blueprint("todos", __name__)
 FILTERS = {
     "projectId": "project_id",
     "moduleId": "module_id",
+    "versionId": "version_id",
     "status": "status",
     "priority": "priority",
     "category": "category",
@@ -76,6 +80,7 @@ def list_todos() -> Response:
         page_num=page_num,
         page_size=page_size,
     )
+    attach_version_codes(conn, items)
     return ok({
         "list": items,
         "pageNum": page_num,
@@ -110,7 +115,10 @@ def categories() -> Response:
 def export_todos() -> Response:
     conn = db()
     fmt = tabular_format_of(request.args.get("format"))
-    rows = todo_service.export_rows(conn, query_filters(FILTERS))
+    view = check_choice(str(request.args.get("view") or "all"), TODO_VIEWS, "view", "all") or "all"
+    rows = todo_service.export_rows(
+        conn, query_filters(FILTERS), view=view, keyword=keyword_of() or None
+    )
     content, mimetype, extension = tabular_export.render(fmt, EXPORT_COLUMNS, rows)
     filename = tabular_export.safe_filename(f"AITP任务清单-{len(rows)}条", extension)
     audit(conn, audit_service.AUDIT_ACTION_EXPORT, audit_service.RESOURCE_TODO, None, "", {
@@ -128,9 +136,11 @@ def get_todo(pk: str) -> Response:
     row = repo.get_with_children(target)
     if row is None:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "任务不存在")
+    guard_project_scope(row, scope_arg(), "待办")
     children = row.pop("children") or []
     payload = decorate(conn, row)
     payload["children"] = [decorate(conn, child) for child in children]
+    attach_version_codes(conn, [payload] + list(payload["children"]))
     return ok(payload)
 
 

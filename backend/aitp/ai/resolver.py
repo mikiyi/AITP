@@ -31,12 +31,33 @@ from .errors import AICredentialMissing
 from .types import ResolvedAIConfig
 
 _PROFILE_LOADER: Callable[[], list[dict[str, Any]] | None] | None = None
+_SETTING_LOADER: Callable[[str, str], str] | None = None
 
 
 def set_profile_loader(loader: Callable[[], list[dict[str, Any]] | None]) -> None:
     """注入数据库档案读取器（返回启用中的档案列表）。"""
     global _PROFILE_LOADER
     _PROFILE_LOADER = loader
+
+
+def set_setting_loader(loader: Callable[[str, str], str]) -> None:
+    """注入系统配置读取器，供降级开关、默认超时等全局项使用。"""
+    global _SETTING_LOADER
+    _SETTING_LOADER = loader
+
+
+def _setting(key: str, default: str = "") -> str:
+    if _SETTING_LOADER is None:
+        return default
+    try:
+        return _SETTING_LOADER(key, default) or default
+    except Exception:  # noqa: BLE001 - 配置读取失败不能阻断 AI 调用
+        return default
+
+
+def degrade_enabled() -> bool:
+    """ai.degrade.enabled 关闭时不允许自动切换候选模型。"""
+    return _setting("ai.degrade.enabled", "true").strip().lower() not in {"false", "0", "no", "off"}
 
 
 def _load_profiles() -> list[dict[str, Any]]:
@@ -236,7 +257,7 @@ def _build_config(
 
     temperature = 0.7
     max_tokens = 4096
-    timeout = AI_DEFAULT_TIMEOUT
+    timeout = float(_setting("ai.timeout.default", str(AI_DEFAULT_TIMEOUT)) or AI_DEFAULT_TIMEOUT)
     if profile:
         if profile.get("temperature") is not None:
             temperature = float(profile["temperature"])
@@ -343,4 +364,6 @@ def resolve_candidates(
             fallback = None
         if fallback is not None and _is_usable(fallback):
             candidates.append(fallback)
+    if not degrade_enabled():
+        return candidates[:1]
     return candidates

@@ -42,6 +42,22 @@
         <div class="pre">{{ detail.expectedResult || '无' }}</div>
       </div>
 
+      <div v-if="detail.linkedCases?.length" class="panel panel-pad">
+        <div class="section-title">关联用例</div>
+        <el-table :data="detail.linkedCases" size="small" border>
+          <el-table-column label="编号" width="120">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openCase(row.id)">{{ row.caseNo }}</el-button>
+            </template>
+          </el-table-column>
+          <el-table-column prop="title" label="用例标题" min-width="240" show-overflow-tooltip />
+          <el-table-column prop="priority" label="优先级" width="90" />
+          <el-table-column label="当前状态" width="110">
+            <template #default="{ row }">{{ caseStatusLabel(row.status) }}</template>
+          </el-table-column>
+        </el-table>
+      </div>
+
       <div class="panel panel-pad">
         <div class="section-title">状态流转</div>
         <div class="toolbar">
@@ -120,6 +136,14 @@ const allowedTransitions = computed(() =>
 
 function statusLabel(value: string): string {
   return labels[value] ?? value
+}
+
+function caseStatusLabel(value: string): string {
+  return { not_executed: '未执行', pass: '通过', fail: '失败', blocked: '阻塞' }[value] ?? value
+}
+
+function openCase(id: number): void {
+  void router.push({ name: 'test-case-detail', params: { id } })
 }
 
 function severityTag(value: string): 'danger' | 'warning' | 'info' | 'primary' {

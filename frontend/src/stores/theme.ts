@@ -1,8 +1,18 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
-/** 六套皮肤的编号。 */
-export type ThemeKey = 'white' | 'black' | 'blue' | 'red' | 'pink' | 'orange'
+/** 十套皮肤的编号。 */
+export type ThemeKey =
+  | 'white'
+  | 'black'
+  | 'blue'
+  | 'red'
+  | 'pink'
+  | 'orange'
+  | 'tech'
+  | 'ocean'
+  | 'plant'
+  | 'industry'
 
 export interface ThemeOption {
   key: ThemeKey
@@ -21,6 +31,10 @@ export const THEMES: ThemeOption[] = [
   { key: 'red', label: '红色', swatch: { bg: '#fdf1f1', border: '#f3d5d6', primary: '#d9363e' }, dark: false },
   { key: 'pink', label: '粉色', swatch: { bg: '#fdf0f6', border: '#f4d4e5', primary: '#d63384' }, dark: false },
   { key: 'orange', label: '橙色', swatch: { bg: '#fff6ec', border: '#f5ddc2', primary: '#e0761b' }, dark: false },
+  { key: 'tech', label: '科技', swatch: { bg: '#070b12', border: '#1e2b3e', primary: '#0d92d6' }, dark: true },
+  { key: 'ocean', label: '海洋', swatch: { bg: '#edf6f8', border: '#cbe2e8', primary: '#0f7b8c' }, dark: false },
+  { key: 'plant', label: '植物', swatch: { bg: '#edf4ea', border: '#d6e5d1', primary: '#2e7d32' }, dark: false },
+  { key: 'industry', label: '工业', swatch: { bg: '#191817', border: '#3c4046', primary: '#cf7d18' }, dark: true },
 ]
 
 const STORAGE_KEY = 'aitp.theme'

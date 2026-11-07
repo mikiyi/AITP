@@ -2,8 +2,11 @@
   <div class="page">
     <div class="page-header">
       <h2 class="page-title">测试报告</h2>
-      <el-button :icon="MagicStick" :loading="generating" @click="openGenerate">按实时数据生成</el-button>
-      <el-button type="primary" :icon="Plus" @click="openCreate">新建报告</el-button>
+      <div class="toolbar" style="margin: 0">
+        <ProjectSwitcher />
+        <el-button :icon="MagicStick" :loading="generating" @click="openGenerate">按实时数据生成</el-button>
+        <el-button type="primary" :icon="Plus" @click="openCreate">新建报告</el-button>
+      </div>
     </div>
 
     <div class="panel panel-pad">
@@ -18,8 +21,8 @@
       >
         <template #reportType="{ row }">{{ typeLabel(row.reportType) }}</template>
         <template #status="{ row }">
-          <el-tag :type="row.status === 'published' ? 'success' : 'info'" size="small" effect="plain">
-            {{ row.status === 'published' ? '已发布' : '草稿' }}
+          <el-tag :type="statusTagType(row.status)" size="small" effect="plain">
+            {{ statusLabel(row.status) }}
           </el-tag>
         </template>
         <template #period="{ row }">
@@ -39,7 +42,7 @@
           <el-input v-model="form.title" />
         </el-form-item>
         <el-form-item label="项目" required>
-          <el-select v-model="form.projectId">
+          <el-select v-model="form.projectId" @change="onProjectChange">
             <el-option v-for="item in appStore.projects" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
@@ -123,8 +126,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { MagicStick, Plus } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
+import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import { projectVersionApi, reportApi } from '@/api'
 import type { Report } from '@/api/types'
+import { useProjectScope } from '@/composables/useProjectScope'
 import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
@@ -167,11 +172,9 @@ const columns: ColumnDef[] = [
 
 const extraQuery = computed(() => ({
   projectId: appStore.currentProjectId ?? undefined,
-  versionId: selectedVersionId.value ?? undefined,
 }))
 
 const versionOptions = ref<Array<{ label: string; value: number }>>([])
-const selectedVersionId = ref<number | null>(null)
 
 async function loadVersionOptions(): Promise<void> {
   const pid = appStore.currentProjectId
@@ -185,10 +188,11 @@ async function loadVersionOptions(): Promise<void> {
   } catch { versionOptions.value = [] }
 }
 
-watch(() => appStore.currentProjectId, () => {
-  selectedVersionId.value = null
-  void loadVersionOptions()
-}, { immediate: true })
+useProjectScope({
+  load: () => void loadVersionOptions(),
+  // 旧项目的版本筛选在新项目里不存在，留着会把列表筛成空。
+  resetScopedFilters: () => tableRef.value?.clearFilter('versionId'),
+})
 
 const searchFields = computed<SearchField[]>(() => [
   { prop: 'keyword', label: '标题 / 编号' },
@@ -196,6 +200,7 @@ const searchFields = computed<SearchField[]>(() => [
   { prop: 'status', label: '状态', type: 'select', options: [
     { label: '草稿', value: 'draft' },
     { label: '已发布', value: 'published' },
+    { label: '已归档', value: 'archived' },
   ] },
   { prop: 'versionId', label: '版本', type: 'select', options: versionOptions.value },
 ])
@@ -206,6 +211,22 @@ function fetcher(query: Record<string, unknown>) {
 
 function typeLabel(value: string): string {
   return typeOptions.find((item) => item.value === value)?.label ?? value
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  draft: '草稿',
+  published: '已发布',
+  archived: '已归档',
+}
+
+function statusLabel(value: string): string {
+  return STATUS_LABELS[value] ?? value
+}
+
+function statusTagType(value: string): 'success' | 'info' | 'warning' {
+  if (value === 'published') return 'success'
+  if (value === 'archived') return 'warning'
+  return 'info'
 }
 
 const dialogVisible = ref(false)
@@ -224,7 +245,6 @@ const formVersionOptions = ref<Array<{ label: string; value: number }>>([])
 const formVersionProjectId = ref<number | null>(null)
 
 watch(() => form.projectId, async (pid) => {
-  form.versionId = null
   if (!pid) {
     formVersionOptions.value = []
     formVersionProjectId.value = null
@@ -241,6 +261,11 @@ watch(() => form.projectId, async (pid) => {
     }
   } catch { formVersionOptions.value = [] }
 }, { immediate: true })
+
+/** 表单里换了项目，版本必须跟着换，否则会挂到别的项目的版本上。 */
+function onProjectChange(): void {
+  form.versionId = null
+}
 
 function openCreate(): void {
   const fq = tableRef.value?.filterQuery() ?? {}

@@ -43,5 +43,7 @@ class SqlAnalysisRepository(BaseRepository):
     order_whitelist = {"id", "sql_no", "title", "risk_level", "created_at", "updated_at"}
     searchable = ["sql_no", "title", "sql_text", "analysis", "tags"]
 
-    def next_sql_no(self, project_id: int) -> str:
-        return next_no(self.conn, self.table, "sql_no", "SQL", project_id)
+    def next_sql_no(self) -> str:
+        # sql_no 的唯一索引是全局的（uk_biz_sql_analysis_no 只带 sql_no），
+        # 按项目分段计数会让不同项目撞号，因此这里按全库计数。
+        return next_no(self.conn, self.table, "sql_no", "SQL")

@@ -1,7 +1,17 @@
+import { handleAuthRequired } from './auth'
 import { ApiError, API_BASE, ErrorCode, explainCode, type ApiEnvelope } from './request'
+import type { MaskInfo } from './types'
 
 /** SSE 帧类型，与后端 api/sse.py 的常量一一对应。 */
-export type SseFrameType = 'start' | 'delta' | 'reasoning' | 'usage' | 'degrade' | 'done' | 'error'
+export type SseFrameType =
+  | 'start'
+  | 'mask'
+  | 'delta'
+  | 'reasoning'
+  | 'usage'
+  | 'degrade'
+  | 'done'
+  | 'error'
 
 export interface SseFrame {
   type: SseFrameType
@@ -27,6 +37,8 @@ export interface StreamHandlers {
   onUsage?: (usage: Record<string, unknown>, frame: SseFrame) => void
   /** 首选模型不可用、已按优先级降级时调用。 */
   onDegrade?: (info: DegradeInfo, frame: SseFrame) => void
+  /** 云端模型真正开始出字前告知脱敏结果（本地模型不会触发）。 */
+  onMask?: (info: MaskInfo, frame: SseFrame) => void
   /** 流结束（done 帧）时调用。 */
   onDone?: (output: string, frame: SseFrame) => void
   /** 出错时调用。 */
@@ -87,6 +99,9 @@ export async function streamPost(
       const envelope = JSON.parse(text) as ApiEnvelope
       code = envelope.code
       message = explainCode(envelope.code, envelope.message || message)
+      if (code === ErrorCode.AUTH_REQUIRED) {
+        handleAuthRequired()
+      }
     } catch {
       message = text.slice(0, 200) || message
     }
@@ -135,15 +150,31 @@ function dispatch(frame: SseFrame, handlers: StreamHandlers): void {
     case 'start':
       handlers.onStart?.(frame)
       break
+    case 'mask':
+      handlers.onMask?.(
+        {
+          enabled: Boolean(frame.enabled ?? true),
+          applied: Boolean(frame.applied),
+          types: (frame.types ?? []) as MaskInfo['types'],
+          count: Number(frame.count ?? 0),
+        },
+        frame,
+      )
+      break
     case 'delta':
       handlers.onDelta?.(String(frame.content ?? ''), frame)
       break
     case 'reasoning':
       handlers.onReasoning?.(String(frame.content ?? ''), frame)
       break
-    case 'usage':
-      handlers.onUsage?.((frame.usage ?? {}) as Record<string, unknown>, frame)
+    case 'usage': {
+      const usage = { ...(frame.usage ?? {}) } as Record<string, unknown>
+      if (frame.model) {
+        usage.model = frame.model
+      }
+      handlers.onUsage?.(usage, frame)
       break
+    }
     case 'degrade':
       handlers.onDegrade?.(
         {

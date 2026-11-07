@@ -3,7 +3,7 @@
     <div class="page-header">
       <h2 class="page-title">模块树设置</h2>
       <div class="toolbar" style="margin: 0">
-        <el-select v-model="projectId" placeholder="选择项目" style="width: 200px" @change="loadTree">
+        <el-select v-model="projectId" placeholder="选择项目" style="width: 200px" @change="onProjectChange">
           <el-option v-for="item in appStore.projects" :key="item.id" :label="item.name" :value="item.id" />
         </el-select>
         <el-button type="primary" :icon="Plus" @click="openCreate">新增节点</el-button>
@@ -366,10 +366,18 @@ async function createNode(): Promise<void> {
   }
 }
 
+/** 页面里的项目下拉与顶栏共用同一份选择，两处切换都要互相跟随。 */
+function onProjectChange(value: number | null): void {
+  if (value) {
+    appStore.selectProject(value)
+  }
+  void loadTree()
+}
+
 watch(
   () => appStore.currentProjectId,
   (value) => {
-    if (value && !projectId.value) {
+    if (value && value !== projectId.value) {
       projectId.value = value
       void loadTree()
     }
@@ -403,16 +411,18 @@ async function saveModuleTypes(): Promise<void> {
   }
 }
 
+const activatedOnce = ref(false)
+
 onMounted(() => {
-  if (!projectId.value && appStore.currentProjectId) {
-    projectId.value = appStore.currentProjectId
-  }
-  void loadTree()
   void loadModuleTypes()
 })
 onActivated(() => {
-  void loadTree()
-  void loadModuleTypes()
+  // keep-alive 首次激活与 mount 同时发生，跳过以免重复拉取
+  if (activatedOnce.value) {
+    void loadTree()
+    void loadModuleTypes()
+  }
+  activatedOnce.value = true
 })
 </script>
 

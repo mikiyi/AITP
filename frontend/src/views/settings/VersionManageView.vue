@@ -3,7 +3,7 @@
     <div class="page-header">
       <h2 class="page-title">项目版本管理</h2>
       <div class="toolbar" style="margin: 0">
-        <el-select v-model="projectId" placeholder="选择项目" style="width: 200px" @change="loadVersions">
+        <el-select v-model="projectId" placeholder="选择项目" style="width: 200px" @change="onProjectChange">
           <el-option v-for="item in appStore.projects" :key="item.id" :label="item.name" :value="item.id" />
         </el-select>
         <el-button type="primary" :icon="Plus" @click="openCreate">新建版本</el-button>
@@ -56,7 +56,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onActivated, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type TableExpose } from '@/components/BaseProTable.vue'
@@ -205,10 +205,18 @@ async function removeVersion(row: ProjectVersion): Promise<void> {
   }
 }
 
+/** 页面里的项目下拉与顶栏共用同一份选择，两处切换都要互相跟随。 */
+function onProjectChange(value: number | null): void {
+  if (value) {
+    appStore.selectProject(value)
+  }
+  void loadVersions()
+}
+
 watch(
   () => appStore.currentProjectId,
   (value) => {
-    if (value && !projectId.value) {
+    if (value && value !== projectId.value) {
       projectId.value = value
       void loadVersions()
     }
@@ -216,15 +224,14 @@ watch(
   { immediate: true },
 )
 
-onMounted(() => {
-  if (!projectId.value && appStore.currentProjectId) {
-    projectId.value = appStore.currentProjectId
-  }
-  void loadVersions()
-})
+const activatedOnce = ref(false)
 
 onActivated(() => {
-  void loadVersions()
+  // keep-alive 首次激活与子表格自身的首次加载重合，跳过以免重复请求
+  if (activatedOnce.value) {
+    void loadVersions()
+  }
+  activatedOnce.value = true
 })
 </script>
 

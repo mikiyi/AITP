@@ -1,6 +1,6 @@
 """P7 xlsx 导入导出验收脚本。
 
-断言导出文件严格对齐 D:\\Qoter\\testSKill\\generate_test_cases.py：
+断言导出文件严格对齐参考实现 generate_test_cases.py：
 - 7 张表的顺序与表头逐格一致
 - freeze_panes='A2'、表头填充 DAEEF3、加粗、居中换行、列宽 <= 30
 - 优先级列按表头名上色：P0=FFC7CE、P1=FFEB9C，且不会落到「请求方式」列上

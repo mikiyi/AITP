@@ -6,6 +6,7 @@
         <el-tag v-if="spec" size="small" effect="plain" class="cap-tag">{{ spec.goal }}</el-tag>
       </h2>
       <div class="toolbar" style="margin: 0">
+        <ProjectSwitcher />
         <el-button :icon="Back" @click="router.push('/lab')">返回实验室</el-button>
       </div>
     </div>
@@ -42,6 +43,17 @@
             </el-select>
           </el-form-item>
 
+          <el-form-item label="版本">
+            <el-select v-model="versionId" clearable filterable placeholder="采纳资产时自动带上该版本">
+              <el-option
+                v-for="item in versionOptions"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
+            </el-select>
+          </el-form-item>
+
           <el-form-item v-for="field in fields" :key="field.name">
             <template #label>
               <span class="cap-field-label">
@@ -64,7 +76,7 @@
               :placeholder="field.placeholder ?? '请选择'"
             >
               <el-option
-                v-for="option in visibleOptions(field, values)"
+                v-for="option in visibleOptions(field, formContext)"
                 :key="option.value"
                 :label="option.label"
                 :value="option.value"
@@ -80,7 +92,7 @@
               :placeholder="field.placeholder ?? '可多选'"
             >
               <el-option
-                v-for="option in visibleOptions(field, values)"
+                v-for="option in visibleOptions(field, formContext)"
                 :key="option.value"
                 :label="option.label"
                 :value="option.value"
@@ -212,6 +224,14 @@
               >
                 执行
               </el-button>
+              <el-button
+                v-if="running"
+                :icon="CircleClose"
+                :loading="stopping"
+                @click="stop"
+              >
+                停止
+              </el-button>
               <span class="cap-actions__hint">执行结果在右侧产出区，复制 / 采纳 / 入库都在那边</span>
             </div>
           </el-form-item>
@@ -243,6 +263,10 @@
           </el-radio-group>
 
           <template v-if="outputTab === 'current'">
+            <el-tag v-if="cancelled && !running" type="info" size="small">已取消</el-tag>
+            <el-tag v-if="maskNotice" type="success" effect="plain" size="small">
+              {{ maskNotice }}
+            </el-tag>
             <span v-if="model" class="muted">模型：{{ model }}</span>
             <span v-if="latencyMs" class="muted">耗时 {{ latencyMs }} ms</span>
             <el-button v-if="reasoning" link type="primary" @click="reasoningVisible = true">
@@ -368,7 +392,7 @@
         <template v-if="outputTab === 'current'">
           <div v-if="running" class="cap-output__loading">
             <el-icon class="is-loading"><Loading /></el-icon>
-            <span>模型生成中…</span>
+            <span>{{ stopping ? '正在停止…' : '模型生成中…' }}</span>
           </div>
 
           <template v-if="!running">
@@ -590,8 +614,13 @@
     <el-dialog v-model="adoptVisible" title="采纳为测试用例" width="720px">
       <el-form label-width="80px">
         <el-form-item label="项目" required>
-          <el-select v-model="adoptForm.projectId" placeholder="选择项目">
+          <el-select v-model="adoptForm.projectId" placeholder="选择项目" @change="onAdoptProjectChange">
             <el-option v-for="item in appStore.projects" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="版本">
+          <el-select v-model="adoptForm.versionId" placeholder="选择版本（可选）" clearable filterable>
+            <el-option v-for="item in adoptCaseVersionOptions" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="需求">
@@ -601,7 +630,7 @@
         </el-form-item>
         <el-form-item label="功能点">
           <el-select v-model="adoptForm.moduleId" placeholder="选择功能点（可选）" clearable filterable>
-            <el-option v-for="item in moduleOptions" :key="item.id" :label="item.path" :value="item.id" />
+            <el-option v-for="item in adoptModuleOptions" :key="item.id" :label="item.path" :value="item.id" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -637,8 +666,13 @@
     <el-dialog v-model="reportAdoptVisible" title="采纳为测试报告" width="560px">
       <el-form label-width="90px">
         <el-form-item label="项目" required>
-          <el-select v-model="reportForm.projectId" placeholder="选择项目">
+          <el-select v-model="reportForm.projectId" placeholder="选择项目" @change="onReportProjectChange">
             <el-option v-for="item in appStore.projects" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="版本">
+          <el-select v-model="reportForm.versionId" placeholder="选择版本（可选）" clearable filterable>
+            <el-option v-for="item in reportVersionOptions" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="标题" required>
@@ -675,16 +709,56 @@
         <el-button type="primary" :loading="reportAdopting" @click="confirmAdoptReport">采纳</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="maskPreviewVisible"
+      title="数据脱敏检查"
+      width="480px"
+      :close-on-click-modal="false"
+      @closed="finishMaskPreview"
+    >
+      <div v-loading="maskPreviewLoading">
+        <template v-if="maskPreview">
+          <el-alert
+            v-if="maskPreview.count > 0"
+            type="warning"
+            :closable="false"
+            show-icon
+            :title="`识别到 ${maskPreview.count} 处敏感信息，发送前会替换成占位文本`"
+          />
+          <el-alert
+            v-else
+            type="success"
+            :closable="false"
+            show-icon
+            title="未识别到手机号、身份证、邮箱、银行卡号、API Key 或账号口令"
+          />
+          <div v-if="maskPreview.types.length" class="mask-preview">
+            <div v-for="item in maskPreview.types" :key="item.code" class="mask-preview__row">
+              <span>{{ item.label }}</span>
+              <span class="muted">{{ item.count }} 处</span>
+            </div>
+          </div>
+          <p class="muted mask-preview__note">
+            只检查本次填写的内容；系统提示词与知识检索结果在发送前同样会自动脱敏。关闭本窗口会回到外发确认框。
+          </p>
+        </template>
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="maskPreviewVisible = false">知道了</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import type { UploadRequestOptions } from 'element-plus'
 import {
   Back,
+  CircleClose,
   Collection,
   CopyDocument,
   Document,
@@ -703,9 +777,10 @@ import {
   Warning,
 } from '@element-plus/icons-vue'
 import MarkdownView from '@/components/MarkdownView.vue'
+import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import PromptOptimizer from '@/components/PromptOptimizer.vue'
 import TestDataFilesPanel from './TestDataFilesPanel.vue'
-import { automationApi, caseApi, knowledgeApi, labApi, projectVersionApi, recordApi, reportApi, requirementApi, templateApi } from '@/api'
+import { aiApi, automationApi, caseApi, knowledgeApi, labApi, moduleApi, projectVersionApi, recordApi, reportApi, requirementApi, templateApi } from '@/api'
 import { streamPost, type DegradeInfo } from '@/api/stream'
 import type {
   AdoptCaseItem,
@@ -714,7 +789,9 @@ import type {
   DocumentAttachment,
   ImageAttachment,
   KnowledgeRef,
+  MaskInfo,
   MindNode,
+  ModuleOption,
   Requirement,
 } from '@/api/types'
 import { useAppStore } from '@/stores/app'
@@ -755,11 +832,21 @@ const capSubDesc = computed(() =>
 const values = reactive<Record<string, string>>({})
 /** 多选字段的选中项，单独存一份数组，提交时再拼成字符串。 */
 const multiValues = reactive<Record<string, string[]>>({})
+/** 单选与多选取值合并成联动判断的上下文，候选项的 showFor 要按平台数组收窄。 */
+const formContext = computed<Record<string, string | string[]>>(() => ({ ...values, ...multiValues }))
 const moduleId = ref<number | null>(null)
+/** 本次产出归属的项目版本；采纳为需求/缺陷/用例/报告时自动带上。 */
+const versionId = ref<number | null>(null)
+const versionOptions = ref<Array<{ label: string; value: number }>>([])
 /** 测试数据生成的两条路径：SQL 造数走大模型，测试文件走本机构造。 */
 const dataMode = ref<'sql' | 'files'>('sql')
 
 const running = ref(false)
+/** 本次执行是否由用户主动停止：停止后再收到错误帧不该当成失败弹红条。 */
+const cancelled = ref(false)
+const stopping = ref(false)
+let streamAbort: AbortController | null = null
+let activeTaskId: number | null = null
 const output = ref('')
 const reasoning = ref('')
 const reasoningVisible = ref(false)
@@ -768,6 +855,14 @@ const latencyMs = ref(0)
 const egressWarning = ref('')
 const reviewRequired = ref(false)
 const refs = ref<KnowledgeRef[]>([])
+const maskInfo = ref<MaskInfo | null>(null)
+const maskNotice = computed(() => {
+  const info = maskInfo.value
+  if (!info?.applied || !info.count) {
+    return ''
+  }
+  return `已自动脱敏 ${info.count} 处：${info.types.map((item) => `${item.label}×${item.count}`).join('、')}`
+})
 const parsing = ref(false)
 /** 本次执行是否已正常收尾；流式过程中产出可能还是半个 JSON，不允许采纳。 */
 const finished = ref(false)
@@ -991,6 +1086,8 @@ const adoptAssetForm = reactive({
 /** 采纳弹窗内版本下拉跟随弹窗中选的项目。 */
 const adoptVersionOptions = ref<Array<{ label: string; value: number }>>([])
 const adoptVersionProjectId = ref<number | null>(null)
+/** 左侧选定的版本，作为弹窗里版本的默认值。 */
+const adoptVersionDefault = ref<number | null>(null)
 
 watch(() => adoptAssetForm.projectId, async (pid) => {
   adoptAssetForm.versionId = null
@@ -1007,6 +1104,9 @@ watch(() => adoptAssetForm.projectId, async (pid) => {
         label: v.versionCode,
         value: v.id as number,
       }))
+      if (adoptVersionOptions.value.some((v) => v.value === adoptVersionDefault.value)) {
+        adoptAssetForm.versionId = adoptVersionDefault.value
+      }
     }
   } catch {
     adoptVersionOptions.value = []
@@ -1028,8 +1128,9 @@ function openAdoptAsset(target: AssetTarget): void {
     return
   }
   adoptAssetTarget.value = target
+  adoptVersionDefault.value = versionId.value
   adoptAssetForm.projectId = appStore.currentProjectId
-  adoptAssetForm.versionId = null
+  adoptAssetForm.versionId = versionId.value
   adoptAssetForm.title = defaultAssetTitle()
   adoptAssetVisible.value = true
 }
@@ -1078,9 +1179,11 @@ const historyDetail = ref<AiRecord | null>(null)
 
 /** 本次还没产出时，引导用户去看已有的历史记录。 */
 const emptyDescription = computed(() =>
-  historyTotal.value > 0
-    ? `尚无产出，可切换到「历史产出」查看 ${historyTotal.value} 条记录`
-    : '尚无产出',
+  cancelled.value
+    ? '本次执行已取消，可重新执行'
+    : historyTotal.value > 0
+      ? `尚无产出，可切换到「历史产出」查看 ${historyTotal.value} 条记录`
+      : '尚无产出',
 )
 
 const historyIsJson = computed(() => {
@@ -1412,7 +1515,7 @@ function syncFrameworkOptions(): void {
   if (!frameworkField) {
     return
   }
-  const allowed = visibleOptions(frameworkField, values).map((item) => item.value)
+  const allowed = visibleOptions(frameworkField, formContext.value).map((item) => item.value)
   if (!allowed.length) {
     return
   }
@@ -1474,6 +1577,40 @@ function onDegrade(info: DegradeInfo): void {
   ElMessage({ type: 'warning', message: info.message, duration: 3000, showClose: false })
 }
 
+/* ---- 外发前的站内脱敏检查 ---- */
+
+const maskPreviewVisible = ref(false)
+const maskPreviewLoading = ref(false)
+const maskPreview = ref<MaskInfo | null>(null)
+let maskPreviewResolve: (() => void) | null = null
+
+/**
+ * 打开脱敏预览；返回的 Promise 在窗口关闭后 resolve，
+ * 让外发确认框回到「已确认数据脱敏 / 先检查」的二选一。
+ */
+async function openMaskPreview(): Promise<void> {
+  // 先挂上关闭回调再发请求：用户可能在请求返回前就关掉窗口
+  const closed = new Promise<void>((resolve) => {
+    maskPreviewResolve = resolve
+  })
+  maskPreviewVisible.value = true
+  maskPreviewLoading.value = true
+  maskPreview.value = null
+  try {
+    maskPreview.value = await aiApi.maskPreview(JSON.stringify(buildVariables(), null, 2))
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '脱敏检查失败')
+  } finally {
+    maskPreviewLoading.value = false
+  }
+  await closed
+}
+
+function finishMaskPreview(): void {
+  maskPreviewResolve?.()
+  maskPreviewResolve = null
+}
+
 async function run(): Promise<void> {
   const missing = fields.value
     .filter((field) => {
@@ -1488,10 +1625,15 @@ async function run(): Promise<void> {
     return
   }
   // 云端模型会把输入发到第三方，执行前先让人确认数据已脱敏
-  if (!(await aiGuard.ensureExternalConfirmed())) {
+  if (!(await aiGuard.ensureExternalConfirmed({ onInspect: openMaskPreview }))) {
     return
   }
   running.value = true
+  cancelled.value = false
+  stopping.value = false
+  activeTaskId = null
+  const controller = new AbortController()
+  streamAbort = controller
   output.value = ''
   excelArtifact.value = null
   finished.value = false
@@ -1500,6 +1642,7 @@ async function run(): Promise<void> {
   latencyMs.value = 0
   refs.value = []
   reviewRequired.value = false
+  maskInfo.value = null
   const startedAt = Date.now()
   try {
     await streamPost(
@@ -1512,6 +1655,7 @@ async function run(): Promise<void> {
       },
       {
         onStart: (frame) => {
+          activeTaskId = frame.taskId == null ? null : Number(frame.taskId)
           egressWarning.value = String(frame.egressWarning ?? '')
           const list = frame.refs
           if (Array.isArray(list)) {
@@ -1531,9 +1675,15 @@ async function run(): Promise<void> {
           }
         },
         onDegrade,
+        onMask: (info) => {
+          maskInfo.value = info
+        },
         onDone: (text, frame) => {
           if (text) {
             output.value = text
+          }
+          if (frame.mask && typeof frame.mask === 'object') {
+            maskInfo.value = frame.mask as MaskInfo
           }
           finished.value = true
           reviewRequired.value = frame.reviewRequired === true
@@ -1544,14 +1694,39 @@ async function run(): Promise<void> {
           void loadHistory(1)
         },
         onError: (message) => {
-          ElMessage.error(message)
+          // 用户自己点停止时流会以「用户取消」收尾，这是预期结果，不该再弹红色错误
+          if (!cancelled.value) {
+            ElMessage.error(message)
+          }
         },
       },
+      controller.signal,
     )
   } finally {
     running.value = false
+    stopping.value = false
+    streamAbort = null
     latencyMs.value = latencyMs.value || Date.now() - startedAt
   }
+}
+
+/** 停止执行：先通知后端把任务落成已取消，再断开流，避免模型继续产出。 */
+async function stop(): Promise<void> {
+  if (!running.value || stopping.value) {
+    return
+  }
+  stopping.value = true
+  cancelled.value = true
+  const taskId = activeTaskId
+  streamAbort?.abort()
+  if (taskId) {
+    try {
+      await labApi.cancelTask(taskId)
+    } catch {
+      // 流已断开时后端也会把任务判为已取消，这里不再打断用户
+    }
+  }
+  ElMessage.info('已取消本次执行')
 }
 
 /**
@@ -1643,11 +1818,60 @@ const adoptVisible = ref(false)
 const adopting = ref(false)
 const adoptRows = ref<AdoptCaseItem[]>([])
 const requirementOptions = ref<Requirement[]>([])
+const adoptModuleOptions = ref<ModuleOption[]>([])
+const adoptCaseVersionOptions = ref<Array<{ label: string; value: number }>>([])
 const adoptForm = reactive({
   projectId: null as number | null,
   requirementId: null as number | null,
   moduleId: null as number | null,
+  versionId: null as number | null,
 })
+
+/** 采纳用例弹窗里的需求、功能点、版本都跟随弹窗里选的项目，换项目就重取。 */
+async function loadAdoptScope(): Promise<void> {
+  const pid = adoptForm.projectId
+  adoptForm.requirementId = null
+  adoptForm.moduleId = null
+  adoptForm.versionId = null
+  requirementOptions.value = []
+  adoptModuleOptions.value = []
+  adoptCaseVersionOptions.value = []
+  if (!pid) {
+    return
+  }
+  try {
+    const modules = await moduleApi.options(pid, true)
+    if (adoptForm.projectId === pid) {
+      adoptModuleOptions.value = modules
+    }
+  } catch {
+    adoptModuleOptions.value = []
+  }
+  try {
+    const page = await requirementApi.list({ projectId: pid, pageSize: 100 })
+    if (adoptForm.projectId === pid) {
+      requirementOptions.value = page.list ?? []
+    }
+  } catch {
+    requirementOptions.value = []
+  }
+  try {
+    const result = await projectVersionApi.list(pid)
+    if (adoptForm.projectId === pid) {
+      adoptCaseVersionOptions.value = result.list.map((item) => ({
+        label: item.versionCode,
+        value: item.id as number,
+      }))
+    }
+  } catch {
+    adoptCaseVersionOptions.value = []
+  }
+}
+
+/** 弹窗里换了项目，原来选的需求、功能点、版本都属于上一个项目。 */
+function onAdoptProjectChange(): void {
+  void loadAdoptScope()
+}
 
 /** 把不同能力的 JSON 产出归一成用例草稿结构。 */
 function toAdoptItems(raw: unknown): AdoptCaseItem[] {
@@ -1705,18 +1929,10 @@ async function openAdopt(): Promise<void> {
     return
   }
   adoptForm.projectId = appStore.currentProjectId
-  adoptForm.moduleId = moduleId.value
-  adoptForm.requirementId = null
-  requirementOptions.value = []
-  const projectId = adoptForm.projectId
-  if (projectId) {
-    try {
-      requirementOptions.value = await requirementApi
-        .list({ projectId, pageSize: 100 })
-        .then((page) => page.list)
-    } catch {
-      requirementOptions.value = []
-    }
+  await loadAdoptScope()
+  if (adoptForm.projectId === appStore.currentProjectId) {
+    adoptForm.moduleId = moduleId.value
+    adoptForm.versionId = versionId.value
   }
   adoptVisible.value = true
 }
@@ -1732,6 +1948,7 @@ async function confirmAdopt(): Promise<void> {
       projectId: adoptForm.projectId,
       moduleId: adoptForm.moduleId,
       requirementId: adoptForm.requirementId,
+      versionId: adoptForm.versionId,
       cases: adoptRows.value,
     })
     ElMessage.success(`已采纳 ${result.count} 条用例`)
@@ -1755,12 +1972,43 @@ const reportTypeOptions = [
 ]
 const reportForm = reactive({
   projectId: null as number | null,
+  versionId: null as number | null,
   title: '',
   reportType: 'iteration',
 })
+const reportVersionOptions = ref<Array<{ label: string; value: number }>>([])
 
-function openAdoptReport(): void {
+/** 采纳报告弹窗的版本下拉跟随弹窗里选的项目。 */
+async function loadReportVersionOptions(): Promise<void> {
+  const pid = reportForm.projectId
+  reportForm.versionId = null
+  reportVersionOptions.value = []
+  if (!pid) {
+    return
+  }
+  try {
+    const result = await projectVersionApi.list(pid)
+    if (reportForm.projectId === pid) {
+      reportVersionOptions.value = result.list.map((item) => ({
+        label: item.versionCode,
+        value: item.id as number,
+      }))
+    }
+  } catch {
+    reportVersionOptions.value = []
+  }
+}
+
+function onReportProjectChange(): void {
+  void loadReportVersionOptions()
+}
+
+async function openAdoptReport(): Promise<void> {
   reportForm.projectId = appStore.currentProjectId
+  await loadReportVersionOptions()
+  if (reportVersionOptions.value.some((item) => item.value === versionId.value)) {
+    reportForm.versionId = versionId.value
+  }
   reportForm.title = `${spec.value?.label ?? '测试报告'} ${new Date().toLocaleDateString('zh-CN')}`
   reportForm.reportType = 'iteration'
   reportPeriod.value = null
@@ -1780,6 +2028,7 @@ async function confirmAdoptReport(): Promise<void> {
   try {
     const report = await reportApi.adopt({
       projectId: reportForm.projectId,
+      versionId: reportForm.versionId,
       title: reportForm.title,
       reportType: reportForm.reportType,
       periodStart: reportPeriod.value?.[0] ?? '',
@@ -1863,14 +2112,28 @@ async function importToAutomation(category: AutomationCategory): Promise<void> {
   }
 }
 
+const pageActive = ref(true)
+
 watch(
   () => route.query.text,
   () => {
+    // keep-alive 下其他页面的查询变化也会触发，隐藏时不能清掉本页填好的内容
+    if (!pageActive.value) {
+      return
+    }
     if (route.query.text) {
       resetValues()
     }
   },
 )
+
+onActivated(() => {
+  pageActive.value = true
+})
+
+onDeactivated(() => {
+  pageActive.value = false
+})
 watch(capability, () => {
   resetValues()
   output.value = ''
@@ -1893,7 +2156,14 @@ watch(capability, () => {
 
 onMounted(async () => {
   await labStore.loadAllCapabilities()
+  if (!spec.value) {
+    // 能力已下线的旧书签：留在只有裸编码的空壳页没有意义，退回能力总览
+    ElMessage.warning('该能力已下线，已返回能力总览')
+    void router.replace('/lab')
+    return
+  }
   await labStore.loadModuleOptions(appStore.currentProjectId ?? undefined)
+  await loadVersionOptions()
   resetValues()
   void loadHistory(1)
   void categoryStore.load()
@@ -1904,10 +2174,31 @@ onUnmounted(() => {
   window.removeEventListener('paste', onPaste)
 })
 
+async function loadVersionOptions(): Promise<void> {
+  const projectId = appStore.currentProjectId
+  if (!projectId) {
+    versionOptions.value = []
+    return
+  }
+  try {
+    const result = await projectVersionApi.list(projectId)
+    versionOptions.value = result.list.map((item) => ({
+      label: item.versionCode,
+      value: item.id as number,
+    }))
+  } catch {
+    versionOptions.value = []
+  }
+}
+
 watch(
   () => appStore.currentProjectId,
   (projectId) => {
+    /** 换项目后原来的功能点、版本都属于上一个项目，留着会把资产挂错地方。 */
+    moduleId.value = null
+    versionId.value = null
     void labStore.loadModuleOptions(projectId ?? undefined)
+    void loadVersionOptions()
   },
 )
 
@@ -1918,6 +2209,14 @@ watch(moduleId, () => {
 // 目标类型变化时，框架候选项随之变化，已选框架不再适用就自动切换
 watch(
   () => values.targetType,
+  () => {
+    syncFrameworkOptions()
+  },
+)
+
+// 鸿蒙只能上 Hypium、iOS / Android 上 Appium，平台一改框架候选项就要重算
+watch(
+  () => (multiValues.appPlatforms ?? []).join(','),
   () => {
     syncFrameworkOptions()
   },
@@ -2327,5 +2626,29 @@ watch(
 
 .adopt-alert {
   margin-top: 12px;
+}
+
+.mask-preview {
+  margin-top: 12px;
+  border: 1px solid var(--aitp-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.mask-preview__row {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.mask-preview__row + .mask-preview__row {
+  border-top: 1px solid var(--aitp-border);
+}
+
+.mask-preview__note {
+  margin: 12px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
 }
 </style>

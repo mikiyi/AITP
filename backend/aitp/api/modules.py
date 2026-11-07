@@ -18,7 +18,16 @@ from ..repositories.module_repo import (
 )
 from ..repositories.project_repo import ProjectRepository
 from ..services import audit_service
-from .helpers import audit, body, commit, db, path_int
+from .helpers import (
+    audit,
+    body,
+    commit,
+    db,
+    guard_project_scope,
+    path_int,
+    require_project,
+    scope_arg,
+)
 
 bp = Blueprint("modules", __name__)
 
@@ -84,6 +93,7 @@ def get_module(pk: str) -> Response:
     node = repo.get_node(target)
     if not node:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "模块节点不存在")
+    guard_project_scope(node, scope_arg(), "模块节点")
     chain = repo.path_of(target)
     # 与 tree() 保持同一套层级口径：模块=1、子模块=2、功能=3
     node["depth"] = max(1, len(chain))
@@ -104,8 +114,7 @@ def create_module() -> Response:
         parent_id = None
     else:
         parent_id = require_int(parent_id, "parentId")
-    if not ProjectRepository(conn).get(project_id):
-        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "项目不存在")
+    require_project(conn, project_id)
 
     repo = ModuleRepository(conn)
     new_id = repo.create_node(
