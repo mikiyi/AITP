@@ -237,4 +237,4 @@ python backend/scripts/seed_demo.py      # 写入演示数据到 data/demo.db
 
 ## 许可证
 
-MIT License
+本项目采用 [Apache License 2.0](./LICENSE) 开源。

@@ -237,4 +237,4 @@ Copy `.env.example` to `.env` and adjust as needed (`.env` is never committed).
 
 ## License
 
-MIT License
+Licensed under the [Apache License 2.0](./LICENSE).
