@@ -1,6 +1,5 @@
 <template>
   <div class="page home">
-    <OnboardingTour ref="tourRef" />
     <div class="page-header">
       <ProjectSwitcher />
       <el-button :icon="Grid" style="margin: 0 0 0 auto" @click="router.push('/settings/home-cards')">
@@ -430,7 +429,6 @@ import MetricSparkline from '@/components/MetricSparkline.vue'
 import ModuleTree, { type ModuleTreeExpose } from '@/components/ModuleTree.vue'
 import QuickEntryGrid from '@/components/QuickEntryGrid.vue'
 import KnowledgeAssistant from '@/components/KnowledgeAssistant.vue'
-import OnboardingTour from '@/components/OnboardingTour.vue'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import { caseApi, moduleApi, projectVersionApi, settingsApi, testEnvApi, workbenchApi } from '@/api'
 import type { PagePayload } from '@/api/request'
@@ -465,12 +463,6 @@ const moduleTreeRef = ref<ModuleTreeExpose | null>(null)
 /** 上一次拉树的项目：用来区分「换项目」和「同项目刷新」，前者要整份丢掉钻取缓存。 */
 let treeScopeProjectId: number | null = null
 const moduleLoading = ref(false)
-const tourRef = ref<InstanceType<typeof OnboardingTour> | null>(null)
-
-/** 帮助页等入口可通过事件总线重开引导；这里暴露给 window 自定义事件。 */
-function onReopenTour(): void {
-  tourRef.value?.reopen()
-}
 
 const caseChartEl = ref<HTMLElement | null>(null)
 const bugChartEl = ref<HTMLElement | null>(null)
@@ -1201,7 +1193,6 @@ function onModuleSelect(node: ModuleNode): void {
 }
 
 onMounted(async () => {
-  window.addEventListener('aitp:reopen-tour', onReopenTour)
   void loadCardLayout()
   void loadOverviewVersions()
   void reload()
@@ -1228,7 +1219,6 @@ onActivated(() => {
 onDeactivated(stopEnvTimer)
 onBeforeUnmount(() => {
   stopEnvTimer()
-  window.removeEventListener('aitp:reopen-tour', onReopenTour)
 })
 </script>
 

@@ -173,6 +173,7 @@
       </el-header>
 
       <el-main class="aitp-main">
+        <OnboardingTour ref="tourRef" />
         <router-view v-slot="{ Component }">
           <keep-alive :max="6">
             <component :is="Component" :key="routeKey" />
@@ -192,6 +193,7 @@ import { get } from '@/api/request'
 import { settingsApi } from '@/api'
 import type { AiStatus, HealthStatus } from '@/api/types'
 import GlobalSearch from '@/components/GlobalSearch.vue'
+import OnboardingTour from '@/components/OnboardingTour.vue'
 import BrandName from '@/components/BrandName.vue'
 import { useAppStore } from '@/stores/app'
 import { useThemeStore, type ThemeKey } from '@/stores/theme'
@@ -389,6 +391,12 @@ const groupPath = computed(() => {
 })
 
 const routeKey = computed(() => route.path)
+
+/** 帮助页等入口通过事件总线重开首启引导（引导组件现挂在布局层，跨页存活）。 */
+const tourRef = ref<InstanceType<typeof OnboardingTour> | null>(null)
+function onReopenTour(): void {
+  tourRef.value?.reopen()
+}
 
 /** 切换皮肤：写入 <html data-theme>，并持久化到本地存储。 */
 function onThemeChange(key: ThemeKey): void {
@@ -734,6 +742,7 @@ onMounted(async () => {
   void loadAiStatus()
   updateVisibleSize()
   window.addEventListener('resize', updateVisibleSize)
+  window.addEventListener('aitp:reopen-tour', onReopenTour)
   timer = window.setInterval(() => {
     void ping()
     void loadAiStatus()
@@ -764,6 +773,7 @@ onUnmounted(() => {
   document.removeEventListener('mouseover', onMenuHover, true)
   document.removeEventListener('focusin', onMenuHover, true)
   window.removeEventListener('resize', updateVisibleSize)
+  window.removeEventListener('aitp:reopen-tour', onReopenTour)
 })
 </script>
 
