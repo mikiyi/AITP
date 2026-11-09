@@ -72,16 +72,16 @@ const STEPS = computed<Step[]>(() => [
   },
   {
     title: '第二步：载入示例项目',
-    body: '一键注入示例电商项目 DEMO-EC：需求 / 用例 / 缺陷 / 知识 / 报告，外加一个可直接执行的接口断言脚本。<br>只追加示例自身，绝不动你已有的数据。也可以在「项目」列表空态一键载入。',
+    body: '一键注入示例电商项目 DEMO-EC：需求 / 用例 / 缺陷 / 知识 / 报告，外加一个可直接执行的接口断言脚本。<br>只追加示例自身，绝不动你已有的数据。库里已有项目时，「项目」页同样可以载入。',
     route: '/projects',
-    target: '.project-empty',
+    target: '.page-header',
     action: { label: demoLoaded.value ? '示例已载入（点此重建）' : '载入示例项目', run: injectDemo, type: 'primary', loading: 'injecting' },
   },
   {
     title: '第三步：跑一次 AI 生成',
     body: '进入「AI 实验室」，点下面的「用例生成」能力卡，填一段需求原文再点「执行」，就能看到 AI 产出的结构化用例；<br>产出点「采纳为用例」才会进正式用例库，采纳时会自动标出疑似重复。',
     route: '/lab',
-    target: '.lab-card',
+    target: '.page-header',
     action: { label: '已了解，下一步', run: () => next() },
   },
   {
@@ -100,7 +100,7 @@ function next(): void {
 }
 
 function finish(): void {
-  open.value = false
+  void settle('complete')
 }
 
 /** 步骤变化时推进 current，再跳路由等目标元素出现，让高亮框落在正确的页面上。 */
