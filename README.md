@@ -81,7 +81,7 @@ stop.bat          :: Windows
 
 ## 功能地图
 
-前端 45 条路由 / 46 个页面组件，后端 33 个蓝图 / 313 个接口统一挂在 `/api/v1` 下。
+前端 46 条路由 / 47 个页面组件，后端 34 个蓝图 / 337 个接口统一挂在 `/api/v1` 下。
 
 ### 首启引导与示例项目
 
@@ -328,7 +328,7 @@ cd frontend && npm run build                                              # 前�
 ```
 backend/
   aitp/
-    api/          33 个蓝图 / 313 个接口
+    api/          34 个蓝图 / 337 个接口
     ai/           resolver、client、masking、adapters
     common/       常量、校验、分页、密钥库、安全工具
     db/           连接与迁移
@@ -342,7 +342,7 @@ frontend/
   src/
     api/          统一请求层
     components/   通用组件
-    views/        46 个页面组件
+    views/        47 个页面组件
 data/             运行时数据（SQLite、日志、密钥）
 knowledge/        知识库 Markdown 落盘目录
 ```

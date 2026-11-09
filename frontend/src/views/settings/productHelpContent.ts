@@ -11,7 +11,7 @@
  * - 测试文档模板：backend/aitp/services/doc_template_service.py（可上传格式、
  *   正文与列名与版式的提取口径、原件留存与未保存清理）
  * - 后台任务种类：backend/aitp/services/job_queue.py 的 KIND_LABELS 与各服务的 register 调用点
- * - 规模数字：45 路由 / 46 视图、33 蓝图 310 接口、44 个迁移、406 种测试文件格式
+ * - 规模数字：46 路由 / 47 视图、34 蓝图 337 接口、49 个迁移、406 种测试文件格式
  * 页面里的按钮名、弹窗名、列名一律按界面原文写，方便读者照着走通。
  */
 
@@ -110,12 +110,12 @@ export const RUNTIME_FACTS: string[] = [
 
 /** 产品规模：能在代码里数出来的数字，不写「业界领先」。 */
 export const PRODUCT_STATS = [
-  { label: '页面路由 / 组件', value: '45 / 46', note: '侧栏每个入口都对应独立页面' },
-  { label: '后端接口', value: '310 个 / 33 蓝图', note: '统一挂在 /api/v1 下' },
+  { label: '页面路由 / 组件', value: '46 / 47', note: '侧栏每个入口都对应独立页面' },
+  { label: '后端接口', value: '337 个 / 34 蓝图', note: '统一挂在 /api/v1 下' },
   { label: 'AI 能力', value: '19 项（19 张卡片）', note: '知识库问答统一走问答助手面板' },
   { label: '提示词模板', value: '23 份', note: '能力卡片与变量清单的来源' },
   { label: '测试文件格式', value: '406 种', note: '本地构造，不调模型' },
-  { label: '数据库迁移', value: '44 次', note: '启动时按序自动执行' },
+  { label: '数据库迁移', value: '49 次', note: '启动时按序自动执行' },
   { label: '内置主题', value: '10 套', note: '含黑 / 科技 / 工业 3 套深色' },
   { label: '门禁脚本', value: '27 个', note: '类型、接口、隔离矩阵、安全回归与冒烟' },
 ]

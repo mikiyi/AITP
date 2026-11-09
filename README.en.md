@@ -81,7 +81,7 @@ The launcher checks the port first: if AITP is already running it just opens the
 
 ## Feature map
 
-Frontend: 45 routes / 46 page components. Backend: 33 blueprints / 313 endpoints, all under `/api/v1`.
+Frontend: 46 routes / 47 page components. Backend: 34 blueprints / 337 endpoints, all under `/api/v1`.
 
 ### First-launch tour and demo project
 
@@ -340,7 +340,7 @@ run as the source of truth. On CI `check_isolation_matrix` is excluded via `--sk
 ```
 backend/
   aitp/
-    api/          33 blueprints / 313 endpoints
+    api/          34 blueprints / 337 endpoints
     ai/           resolver, client, masking, adapters
     common/       constants, validation, pagination, keystore, security utilities
     db/           connections and migrations
@@ -354,7 +354,7 @@ frontend/
   src/
     api/          unified request layer
     components/   shared components
-    views/        46 page components
+    views/        47 page components
 data/             runtime data (SQLite, logs, keystore)
 knowledge/        Markdown knowledge base storage
 ```
