@@ -37,7 +37,7 @@ from ..repositories.test_run_repo import (
     TestRunCaseRepository,
     TestRunRepository,
 )
-from . import test_run_service
+from . import assertion_schema, execution_protocol, test_run_service
 
 DEFAULT_TIMEOUT = 10
 MAX_TIMEOUT = 60
@@ -49,6 +49,8 @@ SENSITIVE_HEADERS = ("authorization", "cookie", "set-cookie", "x-api-key", "prox
 
 Assertion = dict[str, Any]
 Detail = dict[str, Any]
+#: 单条断言的判定结果：是否通过 + 不通过时要贴给用户看的原因
+AssertionPair = tuple[bool, str]
 
 
 # ---------------------------------------------------------------- 文本与映射
@@ -396,11 +398,17 @@ def _status_matches(
 
 
 def _parse_rule(line: str) -> tuple[str, str, str]:
-    """解析一行断言：目标 + 比较符 + 期望值。解析失败按「响应体包含」处理。"""
+    """解析一行断言：目标 + 比较符 + 期望值。解析失败按「响应体包含」处理。
+
+    GAP-34 扩了比较符（大小比较 / 空值 / 枚举 / 类型）与 ``schema:`` 目标；
+    ``lib:`` 断言库引用在进入这里之前已被 ``assertion_schema.expand_rules`` 展开。
+    """
     pattern = re.compile(
-        r"^(json:[^\s]+|json\s+[^\s]+|header:[^\s:]+|header\s+[^\s:]+|body|status)"
-        r"\s*(==|=|!=|not_contains|contains|not_exists|exists|regex|~|"
-        r"等于|包含|不包含|正则|存在|不存在)\s*(.*)$",
+        r"^(json:[^\s]+|json\s+[^\s]+|header:[^\s:]+|header\s+[^\s:]+|body|status"
+        r"|schema:[^\s]+|schema\s+[^\s]+)"
+        r"\s*(>=|<=|==|!=|~>|>|<|=|not_contains|contains|not_exists|exists|one_of|not_empty"
+        r"|is_empty|regex|type|~|等于|不等于|包含|不包含|正则|存在|不存在|大于等于|小于等于"
+        r"|大于|小于|不为空|为空|类型|属于)\s*(.*)$",
         re.I,
     )
     matched = pattern.match(line.strip())
@@ -412,12 +420,22 @@ def _parse_rule(line: str) -> tuple[str, str, str]:
     ops = {
         "==": "=",
         "等于": "=",
+        "不等于": "!=",
         "包含": "contains",
         "不包含": "not_contains",
         "正则": "regex",
         "~": "regex",
+        "~>": "regex",
         "存在": "exists",
         "不存在": "not_exists",
+        "大于等于": ">=",
+        "小于等于": "<=",
+        "大于": ">",
+        "小于": "<",
+        "不为空": "not_empty",
+        "为空": "is_empty",
+        "类型": "type",
+        "属于": "one_of",
     }
     return target, ops.get(op, op), expected
 
@@ -438,6 +456,92 @@ def _make_assertion(
     }
 
 
+def _numeric(actual: Any) -> float | None:
+    if isinstance(actual, bool) or actual is None:
+        return None
+    if isinstance(actual, (int, float)):
+        return float(actual)
+    text = str(actual).strip()
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _compare(actual: Any, expected_text: str, op: str) -> AssertionPair:
+    """大小比较：两边都得是数值，比不了就直接说明为什么比不了。"""
+    left = _numeric(actual)
+    right = _numeric(_scalar(expected_text))
+    name = {">": "大于", ">=": "大于等于", "<": "小于", "<=": "小于等于"}[op]
+    if left is None or right is None:
+        return False, f"{name}比较要求两边都是数值：实际 {_format_value(actual)}，" \
+                      f"期望 {expected_text}；请把期望写成数字"
+    return (left >= right if op == ">=" else left > right if op == ">"
+            else left <= right if op == "<=" else left < right), f"期望 {name} {expected_text}，实际 {_format_value(actual)}"
+
+
+def _one_of(actual: Any, expected_text: str) -> AssertionPair:
+    options = _option_list(expected_text)
+    if not options:
+        return False, f"期望值清单为空：请写成 {' / '.join(['A', 'B'])} 或 JSON 数组"
+    hit = any(_equals(actual, option) for option in options)
+    return hit, f"实际 {_format_value(actual)} 不在允许清单 {' / '.join(_format_value(item) for item in options)} 里"
+
+
+def _option_list(text: str) -> list[Any]:
+    raw = text.strip()
+    if raw.startswith("["):
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            data = None
+        if isinstance(data, list):
+            return list(data)
+    return [_scalar(part) for part in re.split(r"[,/，|]+", raw) if part.strip()]
+
+
+def _eval_schema_rule(
+    line: str,
+    status: int,
+    headers: dict[str, str],
+    body: str,
+    parsed_json: Any,
+    json_ok: bool,
+) -> Assertion:
+    """GAP-34：JSON Schema 断言，失败给出逐路径差异而不是「不匹配」。"""
+    head, schema_text = assertion_schema.split_schema_rule(line)
+    path = assertion_schema.schema_target(head)
+    name = f"Schema 校验 {path}"
+    try:
+        schema = assertion_schema.parse_schema(schema_text, field=f"schema 断言 {path}")
+    except AppError:
+        raise
+    if path.lower() in ("$", "$.", "body", "响应体"):
+        if not json_ok:
+            return _make_assertion(name, False, schema_text, "非 JSON 响应", "响应体不是合法 JSON")
+        value = parsed_json
+    elif path.lower().startswith("header:"):
+        header_name = path.split(":", 1)[1].strip()
+        value = {key.lower(): item for key, item in headers.items()}.get(header_name.lower())
+        name = f"Schema 校验 响应头 {header_name}"
+    elif path.lower() in ("status", "状态码"):
+        value = status
+        name = "Schema 校验 状态码"
+    else:
+        if not json_ok:
+            return _make_assertion(name, False, schema_text, "非 JSON 响应", "响应体不是合法 JSON")
+        exists, value = _json_path_get(parsed_json, path)
+        if not exists:
+            return _make_assertion(name, False, schema_text, "字段不存在", f"{path} 在响应里不存在")
+    errors = assertion_schema.validate_schema(value, schema)
+    first = errors[0] if errors else {}
+    return _make_assertion(
+        name, not errors, schema_text,
+        first.get("path") if errors else _format_value(value),
+        assertion_schema.format_schema_errors(errors),
+    )
+
+
 def _eval_rule(
     line: str,
     status: int,
@@ -446,6 +550,14 @@ def _eval_rule(
     parsed_json: Any,
     json_ok: bool,
 ) -> Assertion:
+    if line.strip().lower().startswith(("schema:", "schema ")):
+        return _eval_schema_rule(line, status, headers, body, parsed_json, json_ok)
+    if line.strip().lower().startswith(assertion_schema.LIBRARY_PREFIX):
+        return _make_assertion(
+            f"断言库引用 {line.strip()}", False, line.strip(), "未展开",
+            "断言库引用没被展开：请确认用例已绑定项目且编号存在于断言库，"
+            "或在断言规则里直接写具体规则",
+        )
     target, op, expected = _parse_rule(line)
     lower = target.lower()
     actual: Any = None
@@ -478,8 +590,35 @@ def _eval_rule(
             message = f"字段存在，实际值 {_format_value(actual)}"
         return _make_assertion(name, passed, "存在" if op == "exists" else "不存在", actual, message)
 
+    if op in ("not_empty", "is_empty"):
+        empty = assertion_schema.is_empty_value(actual) if exists else True
+        passed = (not empty) if op == "not_empty" else empty
+        want = "不为空" if op == "not_empty" else "为空"
+        message = "" if passed else (
+            "字段为空，不满足「不为空」" if op == "not_empty"
+            else f"字段不为空，实际 {_format_value(actual)}"
+        )
+        return _make_assertion(name, passed, want, actual, message)
+
+    if op == "type":
+        if not exists:
+            return _make_assertion(name, False, expected, "字段不存在", "字段不存在")
+        actual_type = assertion_schema.type_name(actual)
+        return _make_assertion(
+            name, actual_type == expected.lower(), expected, actual_type,
+            f"类型应为 {expected}，实际是 {actual_type}",
+        )
+
     if not exists:
         return _make_assertion(name, False, expected, "字段不存在", "字段不存在")
+
+    if op in (">", ">=", "<", "<="):
+        passed, message = _compare(actual, expected, op)
+        return _make_assertion(name, passed, expected, actual, message)
+
+    if op == "one_of":
+        passed, message = _one_of(actual, expected)
+        return _make_assertion(name, passed, expected, actual, message)
 
     if op == "contains":
         passed = expected in str(actual)
@@ -517,6 +656,10 @@ def _evaluate(
     status: int,
     headers: dict[str, str],
     body: str,
+    *,
+    conn: sqlite3.Connection | None = None,
+    project_id: int | None = None,
+    module_id: int | None = None,
 ) -> list[Assertion]:
     parsed_json: Any = None
     json_ok = False
@@ -576,10 +719,14 @@ def _evaluate(
 
     rules = _text(extra, "断言规则")
     if rules:
-        for line in re.split(r"[\n;]+", rules):
-            rule = line.strip()
-            if rule:
-                assertions.append(_eval_rule(rule, status, headers, body, parsed_json, json_ok))
+        if conn is not None:
+            # GAP-34：``lib:<规则编号>`` 在这里展开成断言库里的真实规则；
+            # 没有 conn（纯离线算断言）时保持一期的逐行文本口径。
+            lines = assertion_schema.expand_rules(conn, project_id, module_id, rules)
+        else:
+            lines = [item.strip() for item in re.split(r"[\n;]+", rules) if item.strip()]
+        for rule in lines:
+            assertions.append(_eval_rule(rule, status, headers, body, parsed_json, json_ok))
     return assertions
 
 
@@ -590,8 +737,15 @@ def execute(
     env: dict[str, Any],
     *,
     timeout: int = DEFAULT_TIMEOUT,
+    conn: sqlite3.Connection | None = None,
+    project_id: int | None = None,
+    module_id: int | None = None,
 ) -> Detail:
-    """按接口用例扩展字段发一次真实请求，返回请求、响应与断言明细。"""
+    """按接口用例扩展字段发一次真实请求，返回请求、响应与断言明细。
+
+    ``conn`` + ``project_id`` / ``module_id`` 只在需要展开 ``lib:`` 断言库引用时传；
+    不传则断言规则按原文逐行执行（一期口径不变）。
+    """
     timeout = max(1, min(MAX_TIMEOUT, int(timeout or DEFAULT_TIMEOUT)))
     method = (_text(extra, "请求方式", "请求方法", "method") or "GET").upper()
     if method not in SUPPORTED_METHODS:
@@ -631,7 +785,10 @@ def execute(
 
     assertions: list[Assertion] = []
     if status_code is not None:
-        assertions = _evaluate(extra, status_code, response["headers"], body_text)
+        assertions = _evaluate(
+            extra, status_code, response["headers"], body_text,
+            conn=conn, project_id=project_id, module_id=module_id,
+        )
     failed = [item for item in assertions if not item["passed"]]
     passed = not response["error"] and bool(assertions) and not failed
 
@@ -724,7 +881,20 @@ def record_detail(
             utcnow_iso(),
         ),
     )
-    return int(cursor.lastrowid or 0)
+    execution_id = int(cursor.lastrowid or 0)
+    # GAP-32：在同一条收口链路上补一份统一证据快照（同一次执行 = 同一份证据 id）
+    detail["executionId"] = execution_id
+    detail["evidenceId"] = execution_protocol.capture_interface_execution(
+        conn,
+        execution_id=execution_id,
+        case_id=case_id,
+        run_id=run_id,
+        run_case_id=run_case_id,
+        env_id=env_id,
+        detail=detail,
+        executed_by=executed_by,
+    )
+    return execution_id
 
 
 def _load_env(conn: sqlite3.Connection, env_id: int | None) -> dict[str, Any]:
@@ -734,6 +904,11 @@ def _load_env(conn: sqlite3.Connection, env_id: int | None) -> dict[str, Any]:
     if env is None:
         raise AppError(ErrorCode.PARAM_ERROR, "执行环境不存在或已删除")
     return env
+
+
+def load_env(conn: sqlite3.Connection, env_id: int | None) -> dict[str, Any]:
+    """给回归真跑（GAP-33）等外部链路取环境用：口径与内部执行完全一致。"""
+    return _load_env(conn, env_id)
 
 
 def run_case(
@@ -751,7 +926,10 @@ def run_case(
     if str(case.get("case_type") or "") != "interface":
         raise AppError(ErrorCode.ILLEGAL_OPERATION, "只有「接口测试」类型的用例可以自动执行")
     env = _load_env(conn, env_id)
-    detail = execute(case.get("extra") or {}, env, timeout=timeout)
+    detail = execute(
+        case.get("extra") or {}, env, timeout=timeout,
+        conn=conn, project_id=case.get("project_id"), module_id=case.get("module_id"),
+    )
 
     execution_id = record_detail(
         conn,
@@ -789,7 +967,10 @@ def _run_run_case(
     extra = row.get("extra")
     if not isinstance(extra, dict):
         extra = loads(row.get("extra_json"), {}) or {}
-    detail = execute(extra, env, timeout=timeout)
+    detail = execute(
+        extra, env, timeout=timeout,
+        conn=conn, project_id=run.get("project_id"), module_id=row.get("module_id"),
+    )
     record_detail(
         conn,
         case_id=int(row["case_id"]),

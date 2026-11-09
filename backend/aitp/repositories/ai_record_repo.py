@@ -20,6 +20,33 @@ def mask_of(raw: Any) -> dict[str, Any]:
     }
 
 
+#: 1 元 = 1_000_000 微元；金额一律用微元整数存，避免浮点误差
+MICROS_PER_YUAN = 1_000_000
+
+
+def _cost_of(row: dict[str, Any]) -> dict[str, Any]:
+    """把成本列拼成前端直接用的结构：没配单价时只给 token，金额字段为 null。
+
+    `cost_micros` 用 NULL 而不是 0 表示「未配价」——写 0 会被日/月汇总当成免费计入。
+    老库（047 之前）没有这两列，`row.get` 取不到就是未配价，不需要区分。
+    详情页会先把 `usage_json` 拆成 `usage` 再交给 decorate，所以两处都要认。
+    """
+    usage = row.get("usage") or loads(row.get("usage_json"), {}) or {}
+    micros = row.get("cost_micros")
+    prompt = int(usage.get("promptTokens") or 0)
+    completion = int(usage.get("completionTokens") or 0)
+    return {
+        "priced": micros is not None,
+        "costMicros": int(micros) if micros is not None else None,
+        "costYuan": round(int(micros) / MICROS_PER_YUAN, 6) if micros is not None else None,
+        "currency": str(row.get("cost_currency") or "") or "CNY",
+        "promptTokens": prompt,
+        "completionTokens": completion,
+        "totalTokens": int(usage.get("totalTokens") or prompt + completion),
+        "estimated": bool(usage.get("estimated")),
+    }
+
+
 class AIRecordRepository(BaseRepository):
     table = "biz_ai_record"
     default_order = "created_at"
@@ -105,6 +132,11 @@ class AIRecordRepository(BaseRepository):
             "promptCode": row.get("prompt_code"),
             "latencyMs": row.get("latency_ms"),
             "mask": mask_of(row.get("mask") or loads(row.get("mask_json"), {})),
+            # GAP-27/28/29/30 四份结论；老记录这三列是空串，loads 回落成 {}
+            "context": row.get("context") or loads(row.get("context_json"), {}) or {},
+            "schema": row.get("schema") or loads(row.get("schema_json"), {}) or {},
+            "dedup": row.get("dedup") or loads(row.get("dedup_json"), {}) or {},
+            "cost": _cost_of(row),
             "createdAt": row.get("created_at"),
             "updatedAt": row.get("updated_at"),
         }

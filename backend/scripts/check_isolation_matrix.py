@@ -1315,6 +1315,8 @@ def main() -> int:
 
     print("\n=== 汇总 ===")
     print(f"断言：{_passed + _failed} 条，通过 {_passed}，失败 {_failed}")
+    # run_all_checks.py 靠这一行汇总结果，换成别的格式会让本只门禁在报表里显示成「没跑」
+    print(f"PASS={_passed} FAIL={_failed}")
     print(f"数据前缀：ISOAUDIT-{ctx['tag']}（已 best-effort 清理）")
     if _failures:
         print("\n--- 失败清单（按严重度） ---")

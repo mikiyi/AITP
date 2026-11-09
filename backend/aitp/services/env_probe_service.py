@@ -15,7 +15,6 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from ..common.validators import optional_str
 from ..repositories.test_env_repo import DB_DEFAULT_PORTS
 from . import server_metrics_service
 
@@ -91,24 +90,72 @@ def _probe_tcp(host: str, port: int) -> dict[str, Any]:
 
 def probe_env(
     *,
-    app_base_url: str,
-    app_health_path: str,
+    app_servers: list[dict[str, str]] | None = None,
     db_type: str,
     db_host: str,
     db_port: int | None,
-    app_metrics_url: str = "",
     db_metrics_url: str = "",
 ) -> dict[str, Any]:
-    """对一套环境的两组服务器各做一次探测，返回结构化结果与资源指标。"""
-    app_result = _probe_http(app_base_url, optional_str(app_health_path, "healthPath", 200))
-    app_result["metrics"] = (
-        server_metrics_service.collect_metrics(
-            host=server_metrics_service.host_of_url(app_base_url),
-            metrics_url=app_metrics_url,
-        )
-        if app_base_url.strip()
-        else server_metrics_service.unavailable_metrics("未配置应用服务器")
-    )
+    """对一套环境的多台应用服务器与数据库各探一次，返回结构化结果与资源指标。
+
+    应用侧 ok 是「全部配置的服务器都可达」；单台时消息原样返回，
+    多台时给出 N/M 汇总与异常地址，首页再按 servers 逐台展示。
+    """
+    servers: list[dict[str, Any]] = []
+    for item in app_servers or []:
+        base_url = str(item.get("base_url") or "").strip()
+        health_path = str(item.get("health_path") or "")
+        metrics_url = str(item.get("metrics_url") or "")
+        if base_url:
+            result = _probe_http(base_url, health_path)
+            result["metrics"] = server_metrics_service.collect_metrics(
+                host=server_metrics_service.host_of_url(base_url),
+                metrics_url=metrics_url,
+            )
+        else:
+            result = {
+                "ok": False,
+                "status": "unconfigured",
+                "latencyMs": 0,
+                "message": "未配置应用服务器地址",
+                "metrics": server_metrics_service.unavailable_metrics("未配置应用服务器"),
+            }
+        result["baseUrl"] = base_url
+        servers.append(result)
+
+    if not servers:
+        app_result: dict[str, Any] = {
+            "ok": False,
+            "status": "unconfigured",
+            "latencyMs": 0,
+            "message": "未配置应用服务器",
+            "metrics": server_metrics_service.unavailable_metrics("未配置应用服务器"),
+            "servers": [],
+        }
+    else:
+        up = sum(1 for server in servers if server.get("ok"))
+        ok = up == len(servers)
+        if len(servers) == 1:
+            message = str(servers[0].get("message") or "")
+        elif ok:
+            message = f"{len(servers)} 台应用服务器全部可达"
+        else:
+            down = "；".join(
+                f"{server.get('baseUrl') or '未配置'}（{server.get('message')}）"
+                for server in servers if not server.get("ok")
+            )
+            message = f"{up}/{len(servers)} 台可达；异常：{down}"
+        app_result = {
+            "ok": ok,
+            "status": "up" if ok else "down",
+            "latencyMs": max(int(server.get("latencyMs") or 0) for server in servers),
+            "message": message,
+            # 首台指标保留兼容；首页按 servers 逐台取
+            "metrics": servers[0].get("metrics"),
+            "servers": servers,
+        }
+        if servers[0].get("httpStatus") is not None:
+            app_result["httpStatus"] = servers[0].get("httpStatus")
 
     port = int(db_port) if db_port is not None and str(db_port) != "" else DB_DEFAULT_PORTS.get(db_type, 0)
     if db_type == "sqlite":

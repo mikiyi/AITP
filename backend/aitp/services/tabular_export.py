@@ -37,22 +37,108 @@ def _cell(value: Any) -> Any:
 
 def render_csv(columns: Sequence[Column], rows: Sequence[dict[str, Any]]) -> bytes:
     buffer = io.StringIO(newline="")
-    writer = csv.writer(buffer)
-    writer.writerow([label for _, label in columns])
-    for row in rows:
-        writer.writerow([_cell(row.get(key)) for key, _ in columns])
-    return (BOM + buffer.getvalue()).encode("utf-8")
+    CsvStreamWriter(buffer, columns).write(rows)
+    return buffer.getvalue().encode("utf-8")
 
 
 def render_json(columns: Sequence[Column], rows: Sequence[dict[str, Any]]) -> bytes:
-    labels = [label for _, label in columns]
-    payload = {
-        "exportedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "count": len(rows),
-        "columns": labels,
-        "list": [{key: row.get(key) for key, _ in columns} for row in rows],
-    }
-    return json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    buffer = io.StringIO(newline="")
+    writer = JsonStreamWriter(buffer, columns, len(rows))
+    writer.write(rows)
+    writer.close()
+    return buffer.getvalue().encode("utf-8")
+
+
+class CsvStreamWriter:
+    """按批落盘的 CSV 写入器：导出万级数据时内存里只留当前这一批。
+
+    与 render_csv 共用同一套单元格规则与 BOM，边写与一次写完的字节完全一致。
+    """
+
+    def __init__(self, handle: Any, columns: Sequence[Column]) -> None:
+        self._columns = columns
+        self._handle = handle
+        handle.write(BOM)
+        self._writer = csv.writer(handle)
+        self._writer.writerow([label for _, label in columns])
+        self._count = 0
+
+    def write(self, rows: Sequence[dict[str, Any]]) -> int:
+        for row in rows:
+            self._writer.writerow([_cell(row.get(key)) for key, _ in self._columns])
+        self._count += len(rows)
+        return len(rows)
+
+    def close(self) -> int:
+        # csv.writer 自己没有 flush：缓冲在底层 handle 上，只落一次盘
+        self._handle.flush()
+        return self._count
+
+    @property
+    def count(self) -> int:
+        return self._count
+
+
+class JsonStreamWriter:
+    """按批落盘的 JSON 写入器，输出与 render_json 逐字节一致。
+
+    count 在文件头，所以调用方要先给出总数（导出前先 COUNT 一次，
+    超过扫描上限直接失败，不写半截文件）。
+    """
+
+    def __init__(self, handle: Any, columns: Sequence[Column], count: int) -> None:
+        self._handle = handle
+        self._columns = columns
+        self._total = int(count)
+        self._written = 0
+        self._opened = False
+        labels = [label for _, label in columns]
+        handle.write("{\n")
+        handle.write(f'  "exportedAt": {json.dumps(_exported_at())},\n')
+        handle.write(f'  "count": {json.dumps(self._total)},\n')
+        handle.write(
+            f'  "columns": {_indent(json.dumps(labels, ensure_ascii=False, indent=2), 2, pad_first=False)},\n'
+        )
+        handle.write('  "list": ')
+
+    def write(self, rows: Sequence[dict[str, Any]]) -> int:
+        for row in rows:
+            if not self._opened:
+                self._handle.write("[\n")
+                self._opened = True
+            elif self._written:
+                self._handle.write(",\n")
+            item = {key: row.get(key) for key, _ in self._columns}
+            self._handle.write(_indent(json.dumps(item, ensure_ascii=False, indent=2), 4))
+            self._written += 1
+        return len(rows)
+
+    def close(self) -> int:
+        if self._opened:
+            self._handle.write("\n  ]\n}")
+        else:
+            self._handle.write("[]\n}")
+        return self._written
+
+    @property
+    def count(self) -> int:
+        return self._written
+
+
+def _exported_at() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _indent(text: str, spaces: int, pad_first: bool = True) -> str:
+    """把 json.dumps(indent=2) 的整段结果按层级缩进，复刻整包 dumps 的排版。
+
+    值紧跟在键名后面时（如 "columns": [...]）首行不能再补空格，用 pad_first=False。
+    """
+    pad = " " * spaces
+    lines = text.split("\n")
+    if not pad_first:
+        return lines[0] + "".join(f"\n{pad}{line}" for line in lines[1:])
+    return "\n".join(pad + line for line in lines)
 
 
 def render(fmt: str, columns: Sequence[Column], rows: Sequence[dict[str, Any]]) -> tuple[bytes, str, str]:

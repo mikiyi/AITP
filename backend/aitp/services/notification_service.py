@@ -58,8 +58,6 @@ KIND = "notification.webhook"
 MAX_RESPONSE_CHARS = 500
 DEFAULT_TIMEOUT = 10
 
-job_queue.KIND_LABELS[KIND] = "Webhook 通知"
-
 
 def base_url() -> str:
     host = os.environ.get("AITP_HOST", "127.0.0.1")

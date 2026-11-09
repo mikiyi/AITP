@@ -83,23 +83,30 @@ def run_migrations(
         if version in done:
             continue
         sql = path.read_text(encoding="utf-8")
-        with conn:
+        # 不用 `with conn:`：它的事务收尾在 C 层完成，绕开 AitpConnection 的写串行化；
+        # 迁移是纯写路径，这里显式提交，保证与别的写者按序排队、busy 时按上限重试
+        try:
             conn.executescript(sql)
             conn.execute(
                 "INSERT INTO sys_schema_version (version, applied_at, checksum, app_version) VALUES (?, ?, ?, ?)",
                 (version, utcnow_iso(), _checksum(sql), APP_VERSION),
             )
+        except sqlite3.Error:
+            conn.rollback()
+            raise
+        conn.commit()
         applied.append(version)
     return applied
 
 
 def init_db(db_path: Path, migrations_dir: Path | None = None) -> list[int]:
     """新建空库并应用全部迁移。"""
+    from .connection import WRITER_BUSY_TIMEOUT_MS, get_standalone_conn
+
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path, timeout=5.0)
-    conn.row_factory = sqlite3.Row
+    conn = get_standalone_conn(db_path, busy_timeout_ms=WRITER_BUSY_TIMEOUT_MS)
     try:
-        conn.execute("PRAGMA foreign_keys = ON")
+        # foreign_keys / WAL / busy_timeout 由 get_standalone_conn 统一施加
         return run_migrations(conn, migrations_dir)
     finally:
         conn.close()

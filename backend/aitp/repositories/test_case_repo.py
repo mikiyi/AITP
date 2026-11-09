@@ -47,6 +47,26 @@ class TestCaseRepository(BaseRepository):
             row.pop("extra_json", None)
         return page
 
+    def tree_counts(self, filters: dict[str, Any] | None = None) -> dict[str, Any]:
+        """用例树的节点数字：按「功能点 × 执行状态」一次汇总。
+
+        万级用例下不能再把整表读进内存数数（原 list_all(limit=20000) 的读放大就在这里），
+        SQL 汇总出来的行数只跟「功能点数 × 状态数」有关。
+        """
+        rows = self.group_counts(("module_id", "status"), filters)
+        by_module: dict[int, dict[str, int]] = {}
+        orphans: dict[str, int] = {}
+        total = 0
+        for row in rows:
+            count = int(row["row_count"] or 0)
+            status = str(row["status"] or "")
+            module_id = row["module_id"]
+            bucket = orphans if module_id is None else by_module.setdefault(int(module_id), {})
+            bucket["total"] = bucket.get("total", 0) + count
+            bucket[status] = bucket.get(status, 0) + count
+            total += count
+        return {"byModule": by_module, "orphans": orphans, "total": total}
+
     def coverage_matrix(self, project_id: int, version_id: int | None = None) -> dict[str, Any]:
         """覆盖矩阵：需求 -> 用例数量与状态分布。
 

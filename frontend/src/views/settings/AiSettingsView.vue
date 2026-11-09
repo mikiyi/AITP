@@ -12,9 +12,89 @@
       type="info"
       :closable="false"
       show-icon
-      title="优先级数值越大越优先；首选模型不可用时按优先级自动降级，页面只弹 3 秒提示，不阻塞主流程"
+      title="优先级数值越大越优先"
       class="page-alert"
-    />
+    >
+      首选模型不可用时按优先级自动降级，页面只弹 3 秒提示，不阻塞主流程。
+    </el-alert>
+
+    <el-alert
+      v-if="!status.configured"
+      type="warning"
+      show-icon
+      class="page-alert"
+      title="还没有可用的 AI 模型"
+    >
+      <template #default>
+        AI 生成 / 分析类能力需要先配置模型：点右上角「新增档案」填供应商与 Key，或装本地 Ollama 后选本地模型（无需 Key）。
+        浏览示例项目不依赖模型，可先到「项目」页载入示例。
+      </template>
+    </el-alert>
+
+    <div class="panel panel-pad ai-cost-panel">
+      <div class="section-head">
+        <h3>成本与预算</h3>
+        <div class="toolbar" style="margin: 0">
+          <el-button size="small" :icon="Refresh" @click="loadCost">重载</el-button>
+          <el-button type="primary" size="small" :loading="savingCost" @click="saveCost">保存预算</el-button>
+        </div>
+      </div>
+      <div class="ai-cost-summary">
+        <span>今日花费 <b>{{ yuanText(costStatus?.today?.costMicros) }}</b>（{{ costStatus?.today?.calls ?? 0 }} 次）</span>
+        <span>本月花费 <b>{{ yuanText(costStatus?.month?.costMicros) }}</b>（{{ costStatus?.month?.calls ?? 0 }} 次）</span>
+        <span v-if="(costStatus?.month?.unpricedCalls ?? 0) > 0">
+          其中 {{ costStatus?.month?.unpricedCalls }} 次未配单价，只报 token 不报钱
+        </span>
+      </div>
+      <el-alert
+        v-for="(text, index) in costStatus?.warnings ?? []"
+        :key="index"
+        type="warning"
+        show-icon
+        :closable="false"
+        class="page-alert"
+      >
+        {{ text }}
+      </el-alert>
+      <el-form label-width="160px">
+        <el-form-item label="每日软阈值（元）">
+          <el-input-number v-model="dailyYuan" :min="0" :step="1" :precision="6" />
+        </el-form-item>
+        <el-form-item label="每月软阈值（元）">
+          <el-input-number v-model="monthlyYuan" :min="0" :step="1" :precision="6" />
+        </el-form-item>
+        <el-form-item label="提前告警比例（%）">
+          <el-input-number v-model="warnRatio" :min="1" :max="100" />
+        </el-form-item>
+        <el-form-item label="单次调用 token 上限">
+          <el-input-number v-model="callTokens" :min="0" :step="500" />
+          <div class="ai-config-hint">
+            <el-icon class="ai-config-hint__icon"><InfoFilled /></el-icon>
+            <span class="ai-config-hint__text">
+              阈值都是软阈值：0 表示不设限，达到告警比例或超出只会在这里与调用结果里提示，
+              不拦截调用、不自动降级。单价填「每 1000 token 的微元数」（1 元 = 1000000 微元），
+              两个都留 0 就是未配价，此时只统计 token 不统计钱。
+            </span>
+          </div>
+        </el-form-item>
+      </el-form>
+      <div class="ai-cost-price-title">模型档案单价</div>
+      <div v-for="row in priceRows" :key="row.profileId" class="ai-cost-price-row">
+        <span class="ai-cost-price-name">
+          {{ row.profileName }}
+          <small>{{ row.model }}</small>
+        </span>
+        <el-input-number v-model="row.priceInputMicros" :min="0" :step="100" size="small" controls-position="right" />
+        <el-input-number v-model="row.priceOutputMicros" :min="0" :step="100" size="small" controls-position="right" />
+        <el-select v-model="row.priceCurrency" size="small" class="ai-cost-price-currency">
+          <el-option label="CNY" value="CNY" />
+          <el-option label="USD" value="USD" />
+          <el-option label="EUR" value="EUR" />
+        </el-select>
+        <span class="ai-cost-price-spent">累计 {{ yuanText(row.costMicros) }} / {{ row.calls }} 次</span>
+        <el-button size="small" :loading="savingPriceId === row.profileId" @click="savePrice(row)">保存单价</el-button>
+      </div>
+    </div>
 
     <div class="panel panel-pad ai-config-panel">
       <div class="section-head">
@@ -369,8 +449,15 @@
 import { computed, onActivated, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Connection, InfoFilled, Plus, Refresh } from '@element-plus/icons-vue'
-import { settingsApi } from '@/api'
-import type { AiModelInfo, AiProfile, AiStatus, SelfCheckResult } from '@/api/types'
+import { labApi, settingsApi } from '@/api'
+import type {
+  AiBudgetStatus,
+  AiModelInfo,
+  AiProfile,
+  AiProfilePrice,
+  AiStatus,
+  SelfCheckResult,
+} from '@/api/types'
 
 interface ProviderSpec {
   name: string
@@ -487,6 +574,8 @@ async function load(): Promise<void> {
   loading.value = true
   try {
     profiles.value = await settingsApi.profiles()
+    // 单价现值就在档案列表里（GAP-30 收口），列表刷新即成本面板的单价刷新
+    rebuildPriceRows()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载失败')
   } finally {
@@ -542,11 +631,139 @@ async function saveAiConfig(): Promise<void> {
   }
 }
 
+// ---------------- GAP-30 成本与预算 ----------------
+
+/** 金额接口口径是「微元」整数（1 元 = 1000000 微元）；界面按元填写，收发在这里换算。 */
+const MICROS_PER_YUAN = 1_000_000
+const DEFAULT_WARN_RATIO = 80
+
+/** 预算软阈值的当前状态（今日/本月花费 + 告警文案），来自 `GET /lab/cost/budget`。 */
+const costStatus = ref<AiBudgetStatus | null>(null)
+const savingCost = ref(false)
+const dailyYuan = ref(0)
+const monthlyYuan = ref(0)
+const warnRatio = ref(DEFAULT_WARN_RATIO)
+const callTokens = ref(0)
+
+/**
+ * 单价行：单价现值只认「档案列表」这一个数据源（写也走档案接口），
+ * 累计花费只有成本接口能给，所以按档案 id 拼上去，两者对不上时以档案为准。
+ */
+interface CostPriceRow {
+  profileId: number
+  profileName: string
+  model: string
+  priceInputMicros: number
+  priceOutputMicros: number
+  priceCurrency: string
+  calls: number
+  costMicros: number
+}
+
+const priceRows = ref<CostPriceRow[]>([])
+const priceSpend = ref<AiProfilePrice[]>([])
+const savingPriceId = ref<number | null>(null)
+
+/** 微元金额转界面文案；null 是「未配价」，0 是「确实没花钱」，两者不能混为一谈。 */
+function yuanText(micros: number | null | undefined): string {
+  if (micros === null || micros === undefined) {
+    return '未配价'
+  }
+  return `${(micros / MICROS_PER_YUAN).toFixed(6)} 元`
+}
+
+function toMicros(yuan: number | null | undefined): number {
+  const value = Number(yuan ?? 0)
+  return Number.isFinite(value) ? Math.max(0, Math.round(value * MICROS_PER_YUAN)) : 0
+}
+
+function rebuildPriceRows(): void {
+  const spend = new Map<number, AiProfilePrice>()
+  for (const item of priceSpend.value) {
+    spend.set(Number(item.profileId), item)
+  }
+  priceRows.value = profiles.value.map((row) => {
+    const used = spend.get(Number(row.id))
+    return {
+      profileId: Number(row.id),
+      profileName: row.name,
+      model: row.model,
+      priceInputMicros: Number(row.priceInputMicros ?? 0),
+      priceOutputMicros: Number(row.priceOutputMicros ?? 0),
+      priceCurrency: row.priceCurrency || 'CNY',
+      calls: used?.calls ?? 0,
+      costMicros: used?.costMicros ?? 0,
+    }
+  })
+}
+
+/** 拉预算状态与各档案累计花费；单价现值随档案列表一起回来。 */
+async function loadCost(): Promise<void> {
+  try {
+    const [budget, prices] = await Promise.all([labApi.costBudget(), labApi.costPrices()])
+    costStatus.value = budget
+    dailyYuan.value = Number(budget.budget?.dailyYuan ?? 0)
+    monthlyYuan.value = Number(budget.budget?.monthlyYuan ?? 0)
+    warnRatio.value = Number(budget.budget?.warnRatio ?? DEFAULT_WARN_RATIO)
+    callTokens.value = Number(budget.budget?.callTokens ?? 0)
+    priceSpend.value = prices.profiles ?? []
+    rebuildPriceRows()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '成本数据加载失败')
+  }
+}
+
+/** 保存预算软阈值：0 表示不设限，超出只提示，后端不会拦截任何调用。 */
+async function saveCost(): Promise<void> {
+  if (warnRatio.value < 1 || warnRatio.value > 100) {
+    ElMessage.warning('提前告警比例只能填 1~100')
+    return
+  }
+  savingCost.value = true
+  try {
+    await labApi.costBudgetUpdate({
+      dailyMicros: toMicros(dailyYuan.value),
+      monthlyMicros: toMicros(monthlyYuan.value),
+      warnRatio: Math.round(warnRatio.value),
+      callTokens: Math.round(callTokens.value),
+    })
+    ElMessage.success('预算软阈值已保存：只提示，不拦截调用')
+    await loadCost()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '保存失败')
+  } finally {
+    savingCost.value = false
+  }
+}
+
+/**
+ * 保存档案单价：写入口统一在档案接口（`PUT /settings/ai/profiles/<id>`），
+ * 与档案列表读回来的现值是同一批列，避免同一份单价有两个去处。
+ */
+async function savePrice(row: CostPriceRow): Promise<void> {
+  savingPriceId.value = row.profileId
+  try {
+    await settingsApi.updateProfile(row.profileId, {
+      priceInputMicros: Math.max(0, Math.round(Number(row.priceInputMicros) || 0)),
+      priceOutputMicros: Math.max(0, Math.round(Number(row.priceOutputMicros) || 0)),
+      priceCurrency: row.priceCurrency,
+    })
+    ElMessage.success('单价已保存，之后的调用按新单价折算')
+    await load()
+    await loadCost()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '单价保存失败')
+  } finally {
+    savingPriceId.value = null
+  }
+}
+
 function loadAll(): void {
   void loadProviders()
   void load()
   void loadStatus()
   void loadAiConfig()
+  void loadCost()
 }
 
 function onProviderChange(name: string): void {
@@ -800,11 +1017,12 @@ onMounted(loadAll)
 
 /**
  * 页面被 keep-alive 缓存，切走再回来时不会重新加载。
- * 这里在每次激活时重新拉已保存的配置，避免把未保存的改动
+ * 这里在每次激活时重新拉已保存的配置与成本数据，避免把未保存的改动
  * 留在表单里，让人误以为不点保存也生效了。
  */
 onActivated(() => {
   void loadAiConfig()
+  void loadCost()
 })
 </script>
 
@@ -815,6 +1033,64 @@ onActivated(() => {
 
 .ai-config-panel {
   margin-bottom: 14px;
+}
+
+/* 成本与预算：汇总行 + 单价行，单价行按档案一行，右侧带累计花费 */
+.ai-cost-panel {
+  margin-bottom: 14px;
+}
+
+.ai-cost-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: var(--aitp-text-weak);
+}
+
+.ai-cost-summary b {
+  color: var(--aitp-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.ai-cost-price-title {
+  margin: 4px 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ai-cost-price-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--aitp-border);
+}
+
+.ai-cost-price-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  font-size: 13px;
+}
+
+.ai-cost-price-name small {
+  font-size: 12px;
+  color: var(--aitp-text-weak);
+}
+
+.ai-cost-price-currency {
+  width: 92px;
+}
+
+.ai-cost-price-spent {
+  /* 靠右对齐，长档案名不会把花费挤走 */
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--aitp-text-weak);
+  font-variant-numeric: tabular-nums;
 }
 
 .ai-config-hint {

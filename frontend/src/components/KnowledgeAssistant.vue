@@ -450,12 +450,12 @@ async function addToKnowledge(index: number, item: ChatItem): Promise<void> {
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
-  border: 1px solid var(--aitp-border);
+  border: 1px solid color-mix(in srgb, var(--mode-tone) 16%, transparent);
   border-left: 3px solid var(--mode-tone);
   border-radius: 8px;
   background: var(--aitp-subtle);
   /* 用面板色混出淡色底：浅色皮肤接近白底轻染，深色皮肤保持暗底，不出现白块 */
-  background: color-mix(in srgb, var(--mode-tone) 9%, var(--aitp-panel));
+  background: color-mix(in srgb, var(--mode-tone) 5%, var(--aitp-panel));
   font-size: 13px;
   line-height: 1.5;
   animation: assistant-mode-in 0.32s ease;

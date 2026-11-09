@@ -16,6 +16,7 @@ import pathlib
 import sqlite3
 import sys
 import tempfile
+import time
 from typing import Any, Callable, cast
 from urllib.parse import quote
 
@@ -99,6 +100,20 @@ class Api:
 
     def remove(self, path: str) -> None:
         self.call("DELETE", path)
+
+    def wait_task(self, task_id: int, timeout: float = 90.0) -> JsonDict:
+        """等队列任务跑到终态，返回任务快照。
+
+        全量验证这类逐条调模型的长任务已改成只回 taskId，汇总要从任务结果里取。
+        """
+        deadline = time.monotonic() + timeout
+        task: JsonDict = {}
+        while time.monotonic() < deadline:
+            task = cast(JsonDict, self.data("GET", f"{V1}/tasks/{task_id}"))
+            if str(task.get("status")) in ("success", "failed", "cancelled"):
+                return task
+            time.sleep(0.2)
+        return task
 
 
 def build_app(workdir: pathlib.Path) -> Flask:
@@ -634,12 +649,20 @@ def section_regressions(api: Api, ctx: dict[str, int]) -> None:
                       {"title": "检查支付回调", "sourceType": "manual"})
     api.expect("回归项挂到不存在的清单被拒绝", "POST", f"{V1}/regressions/424242/items",
                ErrorCode.RESOURCE_NOT_FOUND, {"title": "x"})
-    api.data("PUT", f"{V1}/regressions/{reg['id']}/items/{item['id']}", {"result": "passed"})
+    # GAP-32 决策 4：手工回归点无证据不得标记「通过」，备注不算证据
+    api.expect("无证据标记通过被拒绝", "PUT",
+               f"{V1}/regressions/{reg['id']}/items/{item['id']}", ErrorCode.PARAM_ERROR,
+               {"result": "passed", "remark": "看一眼觉得没问题"})
+    evidenced = api.data("PUT", f"{V1}/regressions/{reg['id']}/items/{item['id']}",
+                         {"result": "passed", "logSummary": "回调重放三次只入账一次，日志已截存"})
+    check("带日志摘要可标记通过", str(evidenced.get("result")) == "passed",
+          str(evidenced)[:200])
     api.expect("回归项结果非法被拒绝", "PUT",
                f"{V1}/regressions/{reg['id']}/items/{item['id']}", ErrorCode.PARAM_ERROR,
                {"result": "maybe"})
     executed = api.data("POST", f"{V1}/regressions/{reg['id']}/execute",
-                        {"results": [{"itemId": item["id"], "result": "passed", "remark": "ok"},
+                        {"results": [{"itemId": item["id"], "result": "passed", "remark": "ok",
+                                      "responseSummary": "HTTP 200 body.code=200000"},
                                      {"itemId": 424242, "result": "failed"}]})
     check("回归执行只更新存在的项",
           item["id"] in (executed.get("updated") or []) and
@@ -805,9 +828,13 @@ def section_validation(api: Api, ctx: dict[str, int]) -> None:
                              "expectedMissing": ["projectId"]})
     result = api.data("POST", f"{V1}/validation/cases/{case['id']}/run", {})
     check("单条验证案例可跑", isinstance(result, dict), str(result)[:200])
-    allresult = api.data("POST", f"{V1}/validation/run-all", {})
-    check("全量验证可跑并汇总", isinstance(allresult, dict) and "total" in allresult,
-          str(allresult)[:200])
+    queued = api.data("POST", f"{V1}/validation/run-all", {})
+    check("全量验证只排队不占请求线程",
+          bool(queued.get("queued")) and int(queued.get("taskId") or 0) > 0, str(queued)[:200])
+    alltask = api.wait_task(int(queued.get("taskId") or 0))
+    allresult = cast(JsonDict, alltask.get("result") or {})
+    check("全量验证可跑并汇总", alltask.get("status") == "success" and "total" in allresult,
+          f"status={alltask.get('status')} err={alltask.get('errorMessage')} {str(allresult)[:160]}")
     api.remove(f"{V1}/validation/cases/{case['id']}")
 
 

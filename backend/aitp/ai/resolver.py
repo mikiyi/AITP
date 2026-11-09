@@ -3,10 +3,20 @@
 sources 字段记录每一项最终来自哪一层，设置页据此展示「当前生效配置来源」。
 候选档案按 priority 降序排列（数据越大越优先），本地模型与云端模型一起排序；
 首选不可用时由 client 按顺序降级到下一个候选。
+
+密钥读取顺序（GAP-22 双读期）：档案「本地 Key」（use_env_key）> 引用 api_key_ref（密钥库）
+> 旧密文 api_key_enc 兜底 > 进程环境变量。引用优先、旧密文兜底。
+兜底分支的删除条件（下一版本移除）：
+  1) 正式库与全部开发副本上 `python backend/scripts/migrate_secrets.py --dry-run`
+     输出「命中行数：0 / 残留行数：0」，并执行 --apply 收口；
+  2) 门禁 `python backend/scripts/check_secret_residue.py` 持续通过至少一个版本；
+  3) 一个版本内未再出现「检测到残留 api_key_enc」WARNING（见 _warn_residual）。
+满足后删除本文件的 api_key_enc 兜底分支与 migrate/rollback 脚本的兼容说明。
 """
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any, Callable
@@ -27,11 +37,30 @@ from ..common.constants import (
     ProviderSpec,
 )
 from ..common.security import decrypt
+from .cost import normalize_currency, normalize_price_micros
 from .errors import AICredentialMissing
 from .types import ResolvedAIConfig
 
 _PROFILE_LOADER: Callable[[], list[dict[str, Any]] | None] | None = None
 _SETTING_LOADER: Callable[[str, str], str] | None = None
+
+_LOGGER = logging.getLogger(__name__)
+# 残留密文告警去重：同一档案一个进程只提醒一次（低频），绝不记录密钥内容
+_warned_residual_ids: set[str] = set()
+
+
+def _warn_residual(profile: dict[str, Any]) -> None:
+    """双读兜底命中时的一次性 WARNING：提示运行迁移脚本；不打印任何密钥材料。"""
+    pid = str(profile.get("id") if profile.get("id") is not None else "（无 id，环境变量档案）")
+    if pid in _warned_residual_ids:
+        return
+    _warned_residual_ids.add(pid)
+    _LOGGER.warning(
+        "检测到残留 api_key_enc（AI 档案 id=%s）：历史密钥仍以可解密形态留在库里，"
+        "请停服后运行 python backend/scripts/migrate_secrets.py --apply 完成收口。"
+        "该兜底分支将在下一版本删除。",
+        pid,
+    )
 
 
 def set_profile_loader(loader: Callable[[], list[dict[str, Any]] | None]) -> None:
@@ -176,6 +205,17 @@ def _locality(provider: str, is_local: bool) -> str:
     return LOCALITY_CLOUD if spec.name != "custom" else LOCALITY_CUSTOM
 
 
+def _price_of(profile: dict[str, Any] | None, column: str) -> int:
+    """GAP-30 档案 token 单价（微元 / 1000 token）。
+
+    脏值（手改库、047 之前的老列）退化成 0=未配价：成本是增强项，不该让调用失败。
+    """
+    try:
+        return normalize_price_micros((profile or {}).get(column), column)
+    except ValueError:
+        return 0
+
+
 def _build_config(
     profile: dict[str, Any] | None,
     *,
@@ -238,7 +278,9 @@ def _build_config(
         api_key = _load_secret(str(profile["api_key_ref"]))
         sources["apiKey"] = SOURCE_DB if from_db else SOURCE_ENV
     elif profile and (profile.get("api_key_enc") or "").strip():
-        # 兼容旧数据：历史密文仍在库里时按原逻辑解密
+        # 兼容旧数据（双读期兜底）：历史密文仍在库里时按原逻辑解密。
+        # 删除条件见模块 docstring（GAP-22：migrate_secrets 收口一个版本后移除）。
+        _warn_residual(profile)
         if key_path is not None:
             api_key = decrypt(profile["api_key_enc"], key_path)
         sources["apiKey"] = SOURCE_DB if from_db else SOURCE_ENV
@@ -303,6 +345,10 @@ def _build_config(
         is_local=is_local,
         locality=_locality(provider, is_local),
         credential_hint=env_hint,
+        # GAP-30：单价跟着档案走，成本折算才能发生在调用当场且不额外查库
+        price_input_micros=_price_of(profile, "price_input_micros"),
+        price_output_micros=_price_of(profile, "price_output_micros"),
+        price_currency=normalize_currency((profile or {}).get("price_currency")),
     )
     if require_key:
         ensure_credential(config)

@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 import sqlite3
@@ -17,13 +18,16 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from ..db import write_guard
 from ..db.connection import get_standalone_conn
 from ..errors import AppError, ErrorCode
+from ..logging_setup import log_event
 from ..repositories.sys_config_repo import SysConfigRepository
 from . import audit_service, backup_service, job_queue, notification_service
 
+logger = logging.getLogger(__name__)
+
 KIND = "backup.auto"
-job_queue.KIND_LABELS[KIND] = "定时整包备份"
 
 AUTO_PREFIX = backup_service.AUTO_PREFIX
 
@@ -503,8 +507,11 @@ def _scheduler_loop(db_path: Path, stop: threading.Event) -> None:
     while not stop.is_set():
         try:
             run_due_once(db_path)
-        except Exception:  # noqa: BLE001 - 调度线程不能因一次失败退出
-            pass
+        except Exception as exc:  # noqa: BLE001 - 调度线程不能因一次失败退出，但必须留痕
+            log_event(logger, "backup_scheduler_failed", level=logging.WARNING,
+                      traceId=write_guard.log_trace_id(), db=str(db_path.name),
+                      error=f"{type(exc).__name__}: {exc}",
+                      impact="本轮自动备份跳过，下一轮照常")
         if stop.wait(SCHEDULER_INTERVAL):
             return
 

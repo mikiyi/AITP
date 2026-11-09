@@ -297,6 +297,11 @@ html[data-theme='industry'] {
   --el-box-shadow: var(--aitp-shadow-lg);
   --el-box-shadow-light: var(--aitp-shadow-md);
   --el-box-shadow-lighter: var(--aitp-shadow-sm);
+
+  /* 深色底上状态色要提亮，否则 5% 混合底纹和描边几乎看不见 */
+  --aitp-note-warning: #f0b24a;
+  --aitp-note-success: #4ecf95;
+  --aitp-note-error: #ff8a8a;
 }
 
 /* 深色皮肤下，Element Plus 的表格与输入框默认还是白底，这里统一压暗 */

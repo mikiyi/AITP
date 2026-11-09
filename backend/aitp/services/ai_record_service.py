@@ -7,6 +7,13 @@
   编号对不上就是编造，直接标成未验证，并计入风险点。
 - **缺项**：模型自述的信息不足处，以及本次请求里没填的可选变量。
 - **复核结论**：是否需要人工复核，以及人工复核后的结论（采纳 / 驳回 + 备注）。
+
+GAP-27~30 之后，同一条记录还要回答四个新问题，各自占一列 JSON：
+
+- `context_json`：本次往提示词里装了哪些项目内事实、什么档位、裁掉了多少；
+- `schema_json`：产出物按字段规范校验的结论（通过 / 拦下多少条、是否自动修正过）；
+- `dedup_json`：与已有条目 / 本批次内部的撞车判定，增量模式摘走了哪些；
+- `cost_micros` + `cost_currency`：按档案单价折算的本次花费（微元整数，未配价为 NULL）。
 """
 
 from __future__ import annotations
@@ -77,6 +84,12 @@ _RECORD_COLUMNS = (
     "latency_ms",
     "steps_json",
     "mask_json",
+    # GAP-27/28/29/30：装配结论、字段校验结论、去重判定、本次折算成本
+    "context_json",
+    "schema_json",
+    "dedup_json",
+    "cost_micros",
+    "cost_currency",
     "created_at",
     "updated_at",
 )
@@ -294,6 +307,10 @@ def build_record(
     latency_ms: int | None = None,
     steps: list[dict[str, Any]] | None = None,
     mask: dict[str, Any] | None = None,
+    context: dict[str, Any] | None = None,
+    schema: dict[str, Any] | None = None,
+    dedup: dict[str, Any] | None = None,
+    cost: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """组装一条结构化执行记录（尚未落库）。"""
     evidence = extract_evidence(conn, output, refs)
@@ -324,6 +341,12 @@ def build_record(
         "latencyMs": latency_ms,
         # 只记类型与数量，绝不落原始输入，避免脱敏前的敏感内容随记录再次扩散
         "mask": dict(mask or {}),
+        # GAP-27/28/29/30 四份结论：事后能回答「模型当时看到什么、字段是否合规、
+        # 有没有和已有条目撞车、这一次花了多少钱」
+        "context": dict(context or {}),
+        "schema": dict(schema or {}),
+        "dedup": dict(dedup or {}),
+        "cost": dict(cost or {}),
     }
 
 
@@ -349,6 +372,10 @@ def create_record(conn: sqlite3.Connection, record: dict[str, Any]) -> int:
         "usage_json": _dump(record.get("usage") or {}),
         "prompt_code": str(record.get("promptCode") or ""),
         "mask_json": _dump(record.get("mask") or {}),
+        "context_json": _dump(record.get("context") or {}),
+        "schema_json": _dump(record.get("schema") or {}),
+        "dedup_json": _dump(record.get("dedup") or {}),
+        "cost_currency": str((record.get("cost") or {}).get("currency") or ""),
         "created_at": now,
         "updated_at": now,
     }
@@ -358,6 +385,10 @@ def create_record(conn: sqlite3.Connection, record: dict[str, Any]) -> int:
     steps = record.get("steps")
     if steps:
         payload["steps_json"] = _dump(steps)
+    # 没配单价时 cost_micros 留 NULL，而不是写 0——0 会被汇总统计当成「免费」计入
+    cost_micros = (record.get("cost") or {}).get("costMicros")
+    if cost_micros is not None:
+        payload["cost_micros"] = int(cost_micros)
     # 只落库有值的字段：列名走白名单，值走命名参数，不拼 SQL 片段
     columns = [name for name in _RECORD_COLUMNS if name in payload]
     if not columns:

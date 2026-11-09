@@ -1,0 +1,209 @@
+{
+  "version": 1,
+  "说明": "GAP-31 提示词效果回归集的离线样例集。fixture 是「录制下来的模型产出」，跑批时由本机 mock 服务按 model 名回吐，因此整条链路（提示词渲染 → 上下文装配 → 解析 → schema 校验 → 去重）都是真实代码，只有模型换成确定性回放：不联网、不消耗额度。新增样例只要在 samples 数组里追加一条，再跑 --update-baseline 记录基线。",
+  "samples": [
+    {
+      "id": "case_login_typical",
+      "capability": "case_generation",
+      "title": "验证码登录 · 典型产出",
+      "variables": {
+        "requirement": "手机号 + 验证码登录：验证码 5 分钟有效，同一手机号 60 秒内只能发送一次，连续 5 次错误锁定 10 分钟",
+        "projectName": "示例电商项目",
+        "caseTypes": "functional,boundary,exception",
+        "count": "4"
+      },
+      "fixture": [
+        {
+          "title": "正确的手机号和验证码可以登录成功",
+          "caseType": "functional",
+          "priority": "P0",
+          "preconditions": "用户已注册且未锁定",
+          "steps": [
+            { "action": "输入已注册手机号", "expected": "格式校验通过" },
+            { "action": "获取并输入有效验证码", "expected": "验证码在 5 分钟内可用" },
+            { "action": "点击登录", "expected": "登录成功并返回 token" }
+          ],
+          "expectedResult": "登录成功，跳转首页",
+          "tags": "登录/正向"
+        },
+        {
+          "title": "验证码超过 5 分钟后提交被拒绝",
+          "caseType": "boundary",
+          "priority": "P1",
+          "preconditions": "验证码已获取满 5 分钟",
+          "steps": [{ "action": "输入过期验证码并点击登录", "expected": "提示验证码已失效" }],
+          "expectedResult": "登录失败，提示重新获取",
+          "tags": "登录/边界"
+        },
+        {
+          "title": "60 秒内重复发送验证码被限流",
+          "caseType": "boundary",
+          "priority": "P1",
+          "preconditions": "刚发送过一次验证码",
+          "steps": [{ "action": "再次点击发送验证码", "expected": "提示发送过于频繁" }],
+          "expectedResult": "不重复下发短信",
+          "tags": "登录/边界"
+        },
+        {
+          "title": "连续 5 次验证码错误后账号锁定 10 分钟",
+          "caseType": "exception",
+          "priority": "P0",
+          "preconditions": "同一手机号已连续输错 4 次",
+          "steps": [
+            { "action": "第 5 次输入错误验证码", "expected": "提示账号已锁定" },
+            { "action": "锁定期内再次登录", "expected": "仍然拒绝并提示剩余时间" }
+          ],
+          "expectedResult": "锁定生效且提示剩余分钟数",
+          "tags": "登录/异常"
+        }
+      ]
+    },
+    {
+      "id": "case_login_defective",
+      "capability": "case_generation",
+      "title": "验证码登录 · 缺陷产出（应被 schema 拦住）",
+      "variables": {
+        "requirement": "手机号 + 验证码登录：验证码 5 分钟有效，同一手机号 60 秒内只能发送一次，连续 5 次错误锁定 10 分钟",
+        "projectName": "示例电商项目",
+        "caseTypes": "functional,boundary,exception",
+        "count": "4"
+      },
+      "fixture": [
+        {
+          "caseType": "functional",
+          "steps": [{ "action": "点击登录", "expected": "登录成功" }],
+          "expectedResult": "登录成功"
+        },
+        {
+          "title": "类型写错的用例",
+          "caseType": "性能测试",
+          "priority": "P9",
+          "steps": [{ "action": "输入手机号", "expected": "校验通过" }]
+        },
+        {
+          "title": "前置条件写成数组的用例",
+          "caseType": "functional",
+          "preconditions": ["用户已注册", "未锁定"],
+          "steps": "点击登录"
+        },
+        {
+          "title": "完全没有步骤的用例",
+          "caseType": "functional",
+          "expectedResult": "什么都不填也能通过"
+        }
+      ]
+    },
+    {
+      "id": "xmind_order_tree",
+      "capability": "xmind_to_case",
+      "title": "订单 XMind 大纲转用例",
+      "variables": {
+        "xmindOutline": "订单中心\n  下单\n    库存不足拦截\n    优惠券叠加\n  支付\n    支付超时关单\n  退款\n    部分退款金额校验",
+        "projectName": "示例电商项目",
+        "caseTypes": "functional"
+      },
+      "fixture": [
+        {
+          "title": "库存不足时下单被拦截",
+          "caseType": "functional",
+          "priority": "P0",
+          "preconditions": "商品库存为 0",
+          "steps": [{ "action": "提交订单", "expected": "提示库存不足" }],
+          "expectedResult": "订单未创建",
+          "tags": "订单/下单"
+        },
+        {
+          "title": "两张可叠加优惠券同时生效",
+          "caseType": "functional",
+          "priority": "P1",
+          "preconditions": "账户持有平台券与店铺券",
+          "steps": [{ "action": "结算页选择两张券", "expected": "优惠金额累加正确" }],
+          "expectedResult": "实付金额与优惠明细一致",
+          "tags": "订单/下单"
+        },
+        {
+          "title": "支付超时自动关单",
+          "caseType": "functional",
+          "priority": "P1",
+          "preconditions": "订单待支付",
+          "steps": [{ "action": "等待超过支付时限", "expected": "订单状态变为已关闭" }],
+          "expectedResult": "库存回滚",
+          "tags": "订单/支付"
+        }
+      ]
+    },
+    {
+      "id": "testpoint_login_tree",
+      "capability": "testpoint_generation",
+      "title": "登录需求测试点树",
+      "variables": {
+        "requirement": "手机号 + 验证码登录：验证码 5 分钟有效，60 秒限流，连续 5 次错误锁定 10 分钟",
+        "projectName": "示例电商项目",
+        "moduleCount": "3"
+      },
+      "fixture": {
+        "name": "登录",
+        "children": [
+          {
+            "name": "验证码有效期",
+            "children": [
+              { "name": "5 分钟内可用" },
+              { "name": "超过 5 分钟失效" }
+            ]
+          },
+          {
+            "name": "发送限流",
+            "children": [{ "name": "60 秒内重复发送被拒" }]
+          },
+          {
+            "name": "错误锁定",
+            "children": [{ "name": "连续 5 次错误锁定 10 分钟" }]
+          }
+        ]
+      }
+    },
+    {
+      "id": "regression_release_scope",
+      "capability": "regression_generation",
+      "title": "按变更范围生成回归点",
+      "variables": {
+        "projectName": "示例电商项目",
+        "changeScope": "v1.4 修改了登录限流与优惠券叠加规则",
+        "affectedModules": "登录, 订单中心"
+      },
+      "fixture": [
+        {
+          "title": "登录限流窗口边界",
+          "module": "登录",
+          "priority": "P0",
+          "reason": "限流逻辑本次被修改",
+          "verifyTarget": "60 秒内重复发送被拒且不影响正常发送"
+        },
+        {
+          "title": "优惠券叠加后金额回算",
+          "module": "订单中心",
+          "priority": "P1",
+          "reason": "叠加规则调整，实付金额易错",
+          "verifyTarget": "两张券叠加后实付与明细一致"
+        },
+        {
+          "title": "验证码登录主链路",
+          "module": "登录",
+          "priority": "P0",
+          "reason": "登录为入口链路，改动需回归",
+          "verifyTarget": "正确验证码可登录成功"
+        }
+      ]
+    },
+    {
+      "id": "confirm_requirement_markdown",
+      "capability": "requirement_confirm",
+      "title": "需求确认结论（Markdown 产出，无 schema）",
+      "variables": {
+        "requirement": "手机号 + 验证码登录：验证码 5 分钟有效，60 秒限流，连续 5 次错误锁定 10 分钟",
+        "projectName": "示例电商项目"
+      },
+      "fixture": "## 需求确认\n- 已确认：验证码有效期 5 分钟；60 秒发送限流；连续 5 次错误锁定 10 分钟。\n- 待澄清：锁定是否对同一设备生效；短信通道失败是否计入错误次数。\n- 验收要点：过期/限流/锁定三种失败均有用户可读提示。"
+    }
+  ]
+}

@@ -477,8 +477,9 @@ onActivated(() => {
 }
 
 .selfcheck__item--bad {
-  border-color: var(--el-color-warning-light-5);
-  background: var(--el-color-warning-light-9);
+  border-color: color-mix(in srgb, var(--aitp-note-warning) 16%, transparent);
+  border-left: 3px solid var(--aitp-note-warning);
+  background: color-mix(in srgb, var(--aitp-note-warning) 5%, var(--aitp-panel));
 }
 
 .selfcheck__head {

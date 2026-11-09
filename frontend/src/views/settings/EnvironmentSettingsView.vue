@@ -32,11 +32,18 @@
           </template>
         </el-table-column>
         <el-table-column label="应用服务器" min-width="200">
-          <template #default="{ row }">{{ row.app.baseUrl || '—' }}</template>
+          <template #default="{ row }">
+            <div class="app-targets">
+              <span>{{ row.app.servers?.[0]?.baseUrl || row.app.baseUrl || '—' }}</span>
+              <el-tag v-if="(row.app.servers?.length ?? 0) > 1" size="small" effect="plain">
+                共 {{ row.app.servers?.length }} 台
+              </el-tag>
+            </div>
+          </template>
         </el-table-column>
         <el-table-column label="数据库" min-width="200">
           <template #default="{ row }">
-            {{ row.db.type }} · {{ row.db.host || '—' }}{{ row.db.port ? ':' + row.db.port : '' }}
+            {{ dbTypeLabel(row.db.type) }} · {{ row.db.host || '—' }}{{ row.db.port ? ':' + row.db.port : '' }}
             <el-icon v-if="row.db.hasPassword" class="env-lock"><Lock /></el-icon>
           </template>
         </el-table-column>
@@ -65,6 +72,15 @@
             {{ probeResult.app.ok ? '可达' : '不可达' }}
           </el-tag>
           {{ probeResult.app.message }}
+          <div v-if="(probeResult.app.servers?.length ?? 0) > 1" class="probe-servers">
+            <div v-for="(server, index) in probeResult.app.servers" :key="index" class="probe-server">
+              <span class="text-mono">{{ server.baseUrl || '未配置' }}</span>
+              <el-tag :type="server.ok ? 'success' : 'danger'" size="small" effect="plain">
+                {{ server.ok ? '可达' : '不可达' }}
+              </el-tag>
+              <span class="muted">{{ server.message }}</span>
+            </div>
+          </div>
         </el-descriptions-item>
         <el-descriptions-item label="数据库服务器">
           <el-tag :type="probeResult.db.ok ? 'success' : 'danger'" size="small" effect="plain">
@@ -97,16 +113,33 @@
           <span class="muted form-hint">首页健康监测默认监测这套环境</span>
         </el-form-item>
 
-        <el-divider content-position="left">应用服务器</el-divider>
-        <el-form-item label="访问地址">
-          <el-input v-model="form.app.baseUrl" placeholder="例如 http://192.168.1.10:8080" />
-        </el-form-item>
-        <el-form-item label="健康检查路径">
-          <el-input v-model="form.app.healthPath" placeholder="例如 /actuator/health，留空则探测根路径" />
-        </el-form-item>
-        <el-form-item label="资源监控地址">
-          <el-input v-model="form.app.metricsUrl" placeholder="选填，例如 http://192.168.1.10:9100/metrics" />
-          <span class="muted form-hint">远程服务器填 node_exporter 的 /metrics 或 JSON 指标接口；本机地址留空即自动采集</span>
+        <el-divider content-position="left">应用服务器（可多台）</el-divider>
+        <div v-for="(server, index) in form.app.servers" :key="index" class="app-server">
+          <div class="app-server__head">
+            <span>应用服务器 {{ index + 1 }}</span>
+            <el-button
+              link
+              type="danger"
+              size="small"
+              :disabled="form.app.servers.length === 1"
+              @click="removeAppServer(index)"
+            >
+              删除
+            </el-button>
+          </div>
+          <el-form-item label="访问地址">
+            <el-input v-model="server.baseUrl" placeholder="例如 http://192.168.1.10:8080" />
+          </el-form-item>
+          <el-form-item label="健康检查路径">
+            <el-input v-model="server.healthPath" placeholder="例如 /actuator/health，留空则探测根路径" />
+          </el-form-item>
+          <el-form-item label="资源监控地址">
+            <el-input v-model="server.metricsUrl" placeholder="选填，例如 http://192.168.1.10:9100/metrics" />
+          </el-form-item>
+        </div>
+        <el-form-item>
+          <el-button link type="primary" :icon="Plus" @click="addAppServer">新增一台</el-button>
+          <span class="muted form-hint">网关 / 多节点 / 前后端分离时可分别登记；整体健康要求全部可达</span>
         </el-form-item>
 
         <el-divider content-position="left">数据库服务器</el-divider>
@@ -161,6 +194,7 @@ const router = useRouter()
 
 const envs = ref<TestEnv[]>([])
 const dbTypes = ref<string[]>([])
+const dbTypeLabels = ref<Record<string, string>>({})
 const dbDefaultPorts = ref<Record<string, number>>({})
 const dialogVisible = ref(false)
 const saving = ref(false)
@@ -168,17 +202,8 @@ const probingDraft = ref(false)
 const probeResult = ref<TestEnvProbe | null>(null)
 const probeTargetName = ref('')
 
-const DB_TYPE_LABELS: Record<string, string> = {
-  mysql: 'MySQL',
-  postgresql: 'PostgreSQL',
-  sqlserver: 'SQL Server',
-  oracle: 'Oracle',
-  sqlite: 'SQLite（本地文件）',
-  other: '其他',
-}
-
 function dbTypeLabel(type: string): string {
-  return DB_TYPE_LABELS[type] ?? type
+  return dbTypeLabels.value[type] ?? type
 }
 
 const envKinds = [
@@ -195,13 +220,17 @@ function kindTagType(kind: string): 'success' | 'warning' | 'danger' | 'info' {
   return 'success'
 }
 
+function emptyAppServer() {
+  return { baseUrl: '', healthPath: '', metricsUrl: '' }
+}
+
 const emptyForm = () => ({
   id: null as number | null,
   name: '',
   description: '',
   kind: 'test',
   isDefault: false,
-  app: { baseUrl: '', healthPath: '', metricsUrl: '' },
+  app: { servers: [emptyAppServer()] },
   db: { type: 'mysql', host: '', port: null as number | null, name: '', username: '', password: '', hasPassword: false, passwordMasked: '', metricsUrl: '' },
 })
 
@@ -212,6 +241,7 @@ async function load(): Promise<void> {
     const result: TestEnvListResult = await testEnvApi.list()
     envs.value = result.list
     dbTypes.value = result.dbTypes
+    dbTypeLabels.value = result.dbTypeLabels ?? {}
     dbDefaultPorts.value = result.dbDefaultPorts
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载环境配置失败')
@@ -235,9 +265,11 @@ function openEdit(row: TestEnv): void {
   form.description = row.description
   form.kind = row.kind || 'test'
   form.isDefault = row.isDefault
-  form.app.baseUrl = row.app.baseUrl
-  form.app.healthPath = row.app.healthPath
-  form.app.metricsUrl = row.app.metricsUrl ?? ''
+  form.app.servers = (row.app.servers?.length ? row.app.servers : [row.app]).map((server) => ({
+    baseUrl: server.baseUrl ?? '',
+    healthPath: server.healthPath ?? '',
+    metricsUrl: server.metricsUrl ?? '',
+  }))
   form.db.type = row.db.type
   form.db.host = row.db.host
   form.db.port = row.db.port
@@ -256,13 +288,27 @@ function onDbTypeChange(): void {
   if (preset) form.db.port = preset
 }
 
+function addAppServer(): void {
+  form.app.servers.push(emptyAppServer())
+}
+
+function removeAppServer(index: number): void {
+  if (form.app.servers.length > 1) form.app.servers.splice(index, 1)
+}
+
 function payload(): Record<string, unknown> {
   return {
     name: form.name,
     description: form.description,
     kind: form.kind,
     isDefault: form.isDefault,
-    app: { baseUrl: form.app.baseUrl, healthPath: form.app.healthPath, metricsUrl: form.app.metricsUrl },
+    app: {
+      servers: form.app.servers.map((server) => ({
+        baseUrl: server.baseUrl,
+        healthPath: server.healthPath,
+        metricsUrl: server.metricsUrl,
+      })),
+    },
     db: {
       type: form.db.type,
       host: form.db.host,
@@ -420,6 +466,47 @@ onActivated(() => {
 
 .form-hint {
   margin-left: 10px;
+  font-size: 12px;
+}
+
+/* 多台应用服务器：每台一块，边界清楚但不抢表单主线 */
+.app-server {
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 10px 12px 0;
+  border: 1px solid var(--aitp-border);
+  border-radius: 10px;
+  background: var(--aitp-subtle);
+}
+
+.app-server__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--aitp-text-weak);
+}
+
+.app-targets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.probe-servers {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.probe-server {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
   font-size: 12px;
 }
 </style>

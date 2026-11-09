@@ -258,6 +258,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: 'CI 与通知', hidden: true },
   },
   {
+    path: '/settings/assertions',
+    name: 'settings-assertions',
+    component: () => import('@/views/settings/AssertionRuleSettingsView.vue'),
+    meta: { title: '断言库', hidden: true },
+  },
+  {
     path: '/settings/home-cards',
     name: 'settings-home-cards',
     component: () => import('@/views/settings/HomeCardSettingsView.vue'),

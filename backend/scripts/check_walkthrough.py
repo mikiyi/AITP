@@ -15,6 +15,7 @@ import socket
 import sys
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, cast
 
@@ -246,6 +247,18 @@ def data_of(client: Any, method: str, path: str, payload: Any = None) -> Any:
     if body.get("code") != ErrorCode.SUCCESS:
         raise AssertionError(f"{method} {path} 期望成功，实际 {body.get('code')} {body.get('message')}")
     return body.get("data")
+
+
+def wait_task(client: Any, task_id: int, timeout: float = 90.0) -> dict[str, Any]:
+    """等一条队列任务跑到终态，返回任务快照（全量验证这类长任务已任务化）。"""
+    deadline = time.monotonic() + timeout
+    task: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        task = data_of(client, "GET", f"/api/v1/tasks/{task_id}")
+        if str(task.get("status")) in ("success", "failed", "cancelled"):
+            return task
+        time.sleep(0.2)
+    return task
 
 
 # ---------------- 走查步骤 ----------------
@@ -583,7 +596,14 @@ def check_validation(client: Any) -> None:
     check("不通过时给出差异清单", bool(mismatch_result.get("errors")),
           str(mismatch_result.get("errors"))[:240])
 
-    summary = data_of(client, "POST", "/api/v1/validation/run-all", {})
+    # 全量验证逐条案例可能调模型，已改成队列任务：接口只回 taskId，汇总看任务结果
+    queued = data_of(client, "POST", "/api/v1/validation/run-all", {})
+    task_id = int(queued.get("taskId") or 0)
+    check("全量验证走任务队列", bool(queued.get("queued")) and task_id > 0, str(queued)[:200])
+    task = wait_task(client, task_id)
+    summary = task.get("result") or {}
+    check("全量验证任务跑完", task.get("status") == "success",
+          f"status={task.get('status')} err={task.get('errorMessage')}")
     check("全量验证给出总数", int(summary.get("total") or 0) >= 2, str(summary)[:240])
     check("全量验证给出通过率", "passRate" in summary, str(summary)[:240])
 
@@ -611,9 +631,17 @@ def check_regression_ai(client: Any) -> None:
     check("生成后清单来源标为 AI", detail.get("source") == "ai", str(detail)[:240])
     check("生成后清单状态就绪", detail.get("status") == "ready", str(detail.get("status")))
 
+    # GAP-32：手工「通过」必须配证据，只有备注不算证据，要判为参数错误
+    no_evidence = call(client, "POST", f"/api/v1/regressions/{reg_id}/execute", {
+        "results": [{"itemId": items[0]["id"], "result": "passed", "remark": "手工验证通过"}],
+    })
+    check("无证据的手工通过被拒绝", no_evidence.get("code") == ErrorCode.PARAM_ERROR,
+          f"{no_evidence.get('code')} {str(no_evidence.get('message'))[:160]}")
+
     executed = data_of(client, "POST", f"/api/v1/regressions/{reg_id}/execute", {
         "results": [
-            {"itemId": items[0]["id"], "result": "passed", "remark": "手工验证通过"},
+            {"itemId": items[0]["id"], "result": "passed", "remark": "手工验证通过",
+             "logSummary": "回调重放三次只入账一次，日志已截存"},
             {"itemId": items[1]["id"], "result": "failed", "remark": "金额对不上"},
         ],
     })

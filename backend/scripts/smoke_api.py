@@ -16,6 +16,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+import time
 from typing import Any, cast
 
 # TextIO 协议没有 reconfigure，只有具体 TextIOWrapper 才有
@@ -814,27 +815,34 @@ class MockAI:
         return f"http://127.0.0.1:{self.port}/v1"
 
 
-def _sse_frames(iterator: Any) -> list[JsonDict]:
-    """把 SSE 字节流解析成帧列表。"""
-    import json
+def _poll_stream_frames(
+    api: Api, task_id: int, *, rounds: int = 120
+) -> tuple[list[JsonDict], bool]:
+    """按 GAP-26 的承载方式取帧：POST 只给任务号，帧由 ``/lab/stream/<id>/frames`` 增量轮询。
 
+    返回 ``(帧列表, 是否拿到终态)``。终态必须是服务端说 finished，不能靠帧数猜。
+    """
     frames: list[JsonDict] = []
-    buffer = ""
-    for chunk in iterator:
-        text = chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
-        buffer += text
-        while "\n\n" in buffer:
-            raw, buffer = buffer.split("\n\n", 1)
-            for line in raw.splitlines():
-                if line.startswith("data: "):
-                    frames.append(cast(JsonDict, json.loads(line[6:])))
-    return frames
+    after = 0
+    for _ in range(rounds):
+        payload = api.data("GET", f"/api/v1/lab/stream/{task_id}/frames?after={after}")
+        frames.extend(cast("list[JsonDict]", payload.get("frames") or []))
+        after = int(payload.get("lastSeq") or after)
+        if payload.get("finished"):
+            return frames, True
+        time.sleep(0.1)
+    return frames, False
 
 
-def _chained_stream(head: Any, rest: Any) -> Any:
-    """把已经取出的第一帧放回流头部，供 _sse_frames 完整解析。"""
-    yield head
-    yield from rest
+def _wait_task_finished(api: Api, task_id: int, *, rounds: int = 120) -> JsonDict:
+    """不取帧、只看任务终态：用来证明「客户端停取帧」不影响服务端把任务跑完。"""
+    detail: JsonDict = {}
+    for _ in range(rounds):
+        detail = api.data("GET", f"/api/v1/lab/tasks/{task_id}")
+        if str(detail.get("status")) not in ("pending", "running"):
+            return detail
+        time.sleep(0.1)
+    return detail
 
 
 def check_lab(api: Api, project_id: int, feature_id: int) -> None:
@@ -939,59 +947,66 @@ def _check_lab_inner(api: Api, project_id: int, feature_id: int) -> None:
           any(item["role"] == "assistant" for item in detail.get("messages", [])),
           str(detail.get("messages"))[:200])
 
-    # 流式：start → delta → usage → done，seq 单调
-    resp = api.client.post("/api/v1/lab/requirement_confirm/stream", json={
+    # 流式：start → delta → usage → done，seq 单调。
+    # GAP-26 后 POST 不再挂长连接，只回任务号，帧由 frames 接口增量轮询取。
+    started = api.data("POST", "/api/v1/lab/requirement_confirm/stream", {
         "variables": LAB_SAMPLES["requirement_confirm"],
     })
-    check("流式响应类型为 text/event-stream",
-          "text/event-stream" in (resp.headers.get("Content-Type") or ""),
-          str(resp.headers.get("Content-Type")))
-    frames = _sse_frames(resp.response)
+    stream_task_id = int(started.get("taskId") or 0)
+    check("流式接口先回任务号并下发轮询地址",
+          stream_task_id > 0 and str(started.get("mode")) == "poll"
+          and str(started.get("framesUrl") or "") == f"/api/v1/lab/stream/{stream_task_id}/frames"
+          and int(started.get("intervalMs") or 0) > 0,
+          str(started)[:200])
+    frames, finished = _poll_stream_frames(api, stream_task_id)
+    check("轮询能取到流式终态", finished, str(frames)[-160:])
     types = [str(frame.get("type")) for frame in frames]
     check("流式帧顺序为 start→delta→done",
           bool(types) and types[0] == "start" and "delta" in types and types[-1] == "done",
           str(types))
     seqs = [int(frame.get("seq", 0)) for frame in frames]
     check("流式帧 seq 单调递增", seqs == sorted(seqs) and len(set(seqs)) == len(seqs), str(seqs))
-    check("流式 done 帧带产出", bool(frames[-1].get("output")), str(frames[-1])[:200])
+    check("流式 done 帧带产出", bool(frames and frames[-1].get("output")), str(frames[-1:])[:200])
 
-    # 客户端中断 → 任务落库为 cancelled
-    resp2 = api.client.post("/api/v1/lab/requirement_confirm/stream", json={
+    # 客户端停取帧 ≠ 取消：长连接不再占 worker，任务照样自己跑完并落库
+    started2 = api.data("POST", "/api/v1/lab/requirement_confirm/stream", {
         "variables": LAB_SAMPLES["requirement_confirm"],
     })
-    stream = cast(Any, resp2.response)
-    next(stream)
-    stream.close()
-    cancelled = api.data("GET", "/api/v1/lab/tasks?status=cancelled&pageSize=100")
-    check("客户端中断后任务落库 cancelled", cancelled["total"] >= 1, str(cancelled["total"]))
+    task2 = int(started2.get("taskId") or 0)
+    first = api.data("GET", f"/api/v1/lab/stream/{task2}/frames?after=0")
+    check("发起后立刻轮询就有帧或终态",
+          bool(first.get("frames")) or bool(first.get("finished")), str(first)[:200])
+    running_detail = _wait_task_finished(api, task2)
+    check("停止轮询后任务仍自行跑到 success",
+          str(running_detail.get("status")) == "success", str(running_detail)[:200])
 
-    # 显式取消：先取出 start 帧让生成器进入事件循环，再打取消接口，
-    # 验证进程内注册表真的叫停了模型输出（而不是只改库、模型继续计费）。
-    resp_cancel = api.client.post("/api/v1/lab/requirement_confirm/stream", json={
+    # 显式取消：验证进程内注册表真的叫停了模型输出（而不是只改库、模型继续计费）。
+    started_cancel = api.data("POST", "/api/v1/lab/requirement_confirm/stream", {
         "variables": LAB_SAMPLES["requirement_confirm"],
     })
-    cancel_task_id = int(resp_cancel.headers.get("X-AITP-Task-Id") or 0)
-    cancel_stream = cast(Any, resp_cancel.response)
-    cancel_head = next(cancel_stream)
+    cancel_task_id = int(started_cancel.get("taskId") or 0)
     cancel_result = api.data("POST", f"/api/v1/lab/tasks/{cancel_task_id}/cancel", {})
-    cancel_frames = _sse_frames(_chained_stream(cancel_head, cancel_stream))
-    cancel_detail = api.data("GET", f"/api/v1/lab/tasks/{cancel_task_id}")
     check("取消接口命中正在跑的流", bool(cancel_result.get("interrupted")), str(cancel_result)[:200])
+    cancel_frames, _ = _poll_stream_frames(api, cancel_task_id)
     check("取消后流以用户取消的错误帧收尾",
           bool(cancel_frames) and str(cancel_frames[-1].get("type")) == "error"
           and "取消" in str(cancel_frames[-1].get("errorMessage")),
-          str(cancel_frames[-1])[:200])
+          str(cancel_frames[-1:])[:200])
+    cancel_detail = api.data("GET", f"/api/v1/lab/tasks/{cancel_task_id}")
     check("取消后任务落库为 cancelled", str(cancel_detail.get("status")) == "cancelled",
           str(cancel_detail.get("status")))
+    cancelled = api.data("GET", "/api/v1/lab/tasks?status=cancelled&pageSize=100")
+    check("被取消的任务可按状态筛出", cancelled["total"] >= 1, str(cancelled["total"]))
 
     # 错密钥 → 只有一个 error 帧
     os.environ["AITP_AI_API_KEY"] = "sk-wrong-key"
-    resp3 = api.client.post("/api/v1/lab/requirement_confirm/stream", json={
+    started3 = api.data("POST", "/api/v1/lab/requirement_confirm/stream", {
         "variables": LAB_SAMPLES["requirement_confirm"],
     })
-    error_frames = [f for f in _sse_frames(resp3.response) if f.get("type") == "error"]
-    check("错密钥只产出 1 个 error 帧", len(error_frames) == 1, str(len(error_frames)))
-    check("error 帧带错误码", bool(error_frames and error_frames[0].get("errorCode")), str(error_frames[:1]))
+    error_frames, _ = _poll_stream_frames(api, int(started3.get("taskId") or 0))
+    only_error = [f for f in error_frames if f.get("type") == "error"]
+    check("错密钥只产出 1 个 error 帧", len(only_error) == 1, str(len(only_error)))
+    check("error 帧带错误码", bool(only_error and only_error[0].get("errorCode")), str(only_error[:1]))
     os.environ["AITP_AI_API_KEY"] = "sk-test"
 
     # 智能路由
@@ -1454,13 +1469,23 @@ def check_regression(api: Api, project_id: int) -> None:
     items = api.data("GET", f"/api/v1/regressions/{reg_id}/items")
     check("回归明细可查", len(items.get("list") or []) == 1, str(items)[:200])
 
+    # GAP-33（决策 4）：手工条目允许批量回写，但标「通过」必须有证据，无证据直接拒。
+    api.expect("手工回归点无证据标通过被拒绝", "POST", f"/api/v1/regressions/{reg_id}/execute",
+               ErrorCode.PARAM_ERROR,
+               {"results": [{"itemId": item_id, "result": "passed", "remark": "手工验证通过"}]})
     executed = api.data("POST", f"/api/v1/regressions/{reg_id}/execute", {
-        "results": [{"itemId": item_id, "result": "passed", "remark": "手工验证通过"}],
+        "results": [{
+            "itemId": item_id, "result": "passed", "remark": "手工验证通过",
+            "logSummary": "并发回放 20 次同一报文，入账仅 1 条",
+        }],
     })
     check("回归执行回写成功", item_id in (executed.get("updated") or []), str(executed)[:200])
     detail = api.data("GET", f"/api/v1/regressions/{reg_id}")
     check("回归明细结果已落库",
           (detail.get("items") or [{}])[0].get("result") == "passed", str(detail)[:240])
+    check("带证据的手工回写留下证据号",
+          int((detail.get("items") or [{}])[0].get("evidenceId") or 0) > 0,
+          str((detail.get("items") or [{}])[0])[:240])
     check("回归清单状态按明细回推", detail.get("status") != "draft", str(detail.get("status")))
 
     api.expect("回归执行结果非法被跳过", "POST", f"/api/v1/regressions/{reg_id}/execute",

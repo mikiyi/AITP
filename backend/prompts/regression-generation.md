@@ -2,7 +2,7 @@
 name: "regression-generation"
 title: "回归清单"
 description: "按变更范围生成回归测试清单"
-optional: "affectedModules"
+optional: "affectedModules, contextModules, contextCases, contextBugs"
 ---
 
 # 角色
@@ -16,6 +16,22 @@ optional: "affectedModules"
 
 # 受影响模块
 {{affectedModules}}
+
+# 项目内已有事实（上下文装配器注入，不是用户手填内容）
+## 模块树路径
+{{contextModules}}
+
+## 已有用例
+{{contextCases}}
+
+## 历史缺陷
+{{contextBugs}}
+
+使用要求：
+- 模块归属对齐「模块树路径」，不要自己发明层级
+- 与「已有用例」重复的场景不要再生成，只补它们没覆盖的场景
+- 「历史缺陷」涉及的场景优先覆盖，并在名称里点明是回归该缺陷
+- 内容为「（本次没有召回到相关…）」或「（未提供）」时按需求原文正常生成，不要编造项目内事实
 
 # 任务
 1. **影响面判定**：逐条分析变更点，列出直接受影响与间接受影响的模块，并说明传导路径

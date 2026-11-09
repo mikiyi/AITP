@@ -25,23 +25,45 @@ from aitp.services import prompt_usage  # noqa: E402
 
 PROMPTS_DIR = ROOT / "backend" / "prompts"
 
+#: GAP-27 上下文占位的样例取值：模拟装配器注入的条目文本（门禁只验渲染链路，不查库）
+CTX_MODULES = "- moduleId=12｜支付回调：完整路径：交易/支付/回调"
+CTX_CASES = "- TC-0007｜验证码超时-重发-成功：类型：functional｜优先级：P1"
+CTX_BUGS = "- BUG-0031｜支付回调金额翻倍：严重级：major｜状态：fixed"
+CTX_KNOWLEDGE = "- K:5｜支付回调幂等要点：分类：踩坑记录｜重复推送需按订单号幂等"
+
+
+def _ctx(*kinds: str) -> dict[str, str]:
+    mapping = {
+        "modules": CTX_MODULES,
+        "cases": CTX_CASES,
+        "bugs": CTX_BUGS,
+        "knowledge": CTX_KNOWLEDGE,
+    }
+    return {f"context{name.capitalize()}": mapping[name] for name in kinds}
+
+
 #: 每个能力的样例变量，用于验证渲染链路
 SAMPLES: dict[str, dict[str, Any]] = {
-    "requirement-confirm": {"requirement": "手机号+验证码登录，验证码 5 分钟有效", "projectName": "示例电商"},
+    "requirement-confirm": {"requirement": "手机号+验证码登录，验证码 5 分钟有效", "projectName": "示例电商",
+                            **_ctx("modules", "knowledge")},
     "testpoint-generation": {"requirement": "手机号+验证码登录", "projectName": "示例电商", "moduleCount": "3",
-                            "outputTemplate": "{\"name\": \"登录\", \"children\": []}"},
+                            "outputTemplate": "{\"name\": \"登录\", \"children\": []}",
+                            **_ctx("modules", "cases", "knowledge")},
     "case-generation": {"requirement": "手机号+验证码登录", "projectName": "示例电商", "caseTypes": "functional", "count": "5",
-                      "outputTemplate": "| 用例编号 | 用例标题 | 优先级 |"},
+                      "outputTemplate": "| 用例编号 | 用例标题 | 优先级 |",
+                      **_ctx("modules", "cases", "bugs", "knowledge")},
     "xmind-to-case": {"xmindOutline": "登录\n  验证码\n    超时", "projectName": "示例电商", "caseTypes": "functional",
-                      "outputTemplate": "| 用例编号 | 用例标题 | 优先级 |"},
+                      "outputTemplate": "| 用例编号 | 用例标题 | 优先级 |", **_ctx("modules", "cases")},
     "bug-analysis": {
         "bugTitle": "支付回调金额翻倍", "bugDescription": "重复推送导致金额翻倍",
         "reproSteps": "1. 下单 2. 重复回调", "expectedResult": "金额只扣一次",
         "actualResult": "金额扣两次", "env": "测试环境", "version": "v1.2.0",
+        **_ctx("modules", "bugs", "knowledge"),
     },
     "log-analysis": {"logContent": "NullPointerException at OrderService:88", "errorType": "NPE", "context": "支付"},
     "sql-analysis": {"sqlContent": "SELECT * FROM orders", "schemaDesc": "orders(id, amount)", "intent": "查订单"},
-    "regression-generation": {"changeScope": "支付回调改造", "affectedModules": "交易/支付", "projectName": "示例电商"},
+    "regression-generation": {"changeScope": "支付回调改造", "affectedModules": "交易/支付", "projectName": "示例电商",
+                              **_ctx("modules", "cases", "bugs")},
     "report-generation": {
         "projectName": "示例电商", "reportType": "迭代", "periodStart": "2026-10-01",
         "periodEnd": "2026-10-31", "metricsJson": "{}", "caseSummary": "10 条", "bugSummary": "2 个",

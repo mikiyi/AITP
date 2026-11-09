@@ -2,7 +2,7 @@
 name: "testpoint-generation"
 title: "测试点脑图"
 description: "从需求拆解测试点，输出 JSON 树用于渲染脑图"
-optional: "moduleCount, outputTemplate"
+optional: "moduleCount, outputTemplate, contextModules, contextCases, contextKnowledge"
 ---
 
 # 角色
@@ -14,6 +14,21 @@ optional: "moduleCount, outputTemplate"
 
 # 需求原文
 {{requirement}}
+
+# 项目内已有事实（上下文装配器注入，不是用户手填内容）
+## 模块树路径
+{{contextModules}}
+
+## 已有用例
+{{contextCases}}
+
+## 知识条目
+{{contextKnowledge}}
+
+使用要求：
+- 模块归属对齐「模块树路径」，不要自己发明层级
+- 与「已有用例」重复的场景不要再生成，只补它们没覆盖的场景
+- 内容为「（本次没有召回到相关…）」或「（未提供）」时按需求原文正常生成，不要编造项目内事实
 
 # 任务
 围绕该需求，按「功能流程 / 业务规则 / 数据与校验 / 异常与容错 / 权限与安全 / 兼容与易用」等维度拆出测试点。

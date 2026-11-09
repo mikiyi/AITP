@@ -105,6 +105,11 @@ class AIProfileRepository(BaseRepository):
             "temperature": row.get("temperature"),
             "maxTokens": row.get("max_tokens"),
             "timeout": row.get("timeout"),
+            # GAP-30：档案列表就带回单价现值，前端不必再单独查成本接口
+            # （列来自迁移 047；老库缺列时按「未配价」呈现，不报错）
+            "priceInputMicros": int(row.get("price_input_micros") or 0),
+            "priceOutputMicros": int(row.get("price_output_micros") or 0),
+            "priceCurrency": str(row.get("price_currency") or "CNY"),
             "isDefault": bool(row.get("is_default")),
             "isActive": bool(row.get("is_active")),
             "sortOrder": row.get("sort_order"),

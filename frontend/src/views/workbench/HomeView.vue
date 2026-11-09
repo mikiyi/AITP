@@ -1,5 +1,6 @@
 <template>
   <div class="page home">
+    <OnboardingTour ref="tourRef" />
     <div class="page-header">
       <ProjectSwitcher />
       <el-button :icon="Grid" style="margin: 0 0 0 auto" @click="router.push('/settings/home-cards')">
@@ -211,7 +212,15 @@
           模块结构
           <span class="home__section-hint">点击节点直达模块管理</span>
         </div>
-        <ModuleTree :nodes="moduleTree" :loading="moduleLoading" @select="onModuleSelect" />
+        <ModuleTree
+          ref="moduleTreeRef"
+          :nodes="moduleTree"
+          :loading="moduleLoading"
+          :max-height="360"
+          :load-cases="loadNodeCases"
+          @select="onModuleSelect"
+          @open-case="openCaseDetail"
+        />
       </div>
 
       <div
@@ -320,7 +329,7 @@
             </div>
 
             <div class="home__env-servers">
-              <div v-for="server in card.servers" :key="server.side" class="home__env-server">
+              <div v-for="server in card.servers" :key="server.key" class="home__env-server">
                 <div class="home__env-server-head">
                   <span class="home__env-server-name">{{ server.title }}</span>
                   <el-tag
@@ -418,11 +427,14 @@ import type { EChartsOption } from 'echarts'
 import { dateTimeText } from '@/utils/format'
 import MetricCard from '@/components/MetricCard.vue'
 import MetricSparkline from '@/components/MetricSparkline.vue'
-import ModuleTree from '@/components/ModuleTree.vue'
+import ModuleTree, { type ModuleTreeExpose } from '@/components/ModuleTree.vue'
 import QuickEntryGrid from '@/components/QuickEntryGrid.vue'
 import KnowledgeAssistant from '@/components/KnowledgeAssistant.vue'
+import OnboardingTour from '@/components/OnboardingTour.vue'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
-import { moduleApi, projectVersionApi, settingsApi, testEnvApi, workbenchApi } from '@/api'
+import { caseApi, moduleApi, projectVersionApi, settingsApi, testEnvApi, workbenchApi } from '@/api'
+import type { PagePayload } from '@/api/request'
+import { NODE_CASE_PAGE_SIZE } from '@/composables/useNodeCases'
 import type {
   EnvHealthHistoryResult,
   EnvHealthSide,
@@ -431,8 +443,10 @@ import type {
   ModuleNode,
   QuickEntry,
   ServerMetrics,
+  TestCase,
   TestEnv,
   TestEnvProbe,
+  TestEnvProbeItem,
   WorkbenchOverview,
 } from '@/api/types'
 import { useEchart } from '@/composables/useEchart'
@@ -447,7 +461,16 @@ const loading = ref(false)
 const errorMessage = ref('')
 const overview = ref<WorkbenchOverview | null>(null)
 const moduleTree = ref<ModuleNode[]>([])
+const moduleTreeRef = ref<ModuleTreeExpose | null>(null)
+/** 上一次拉树的项目：用来区分「换项目」和「同项目刷新」，前者要整份丢掉钻取缓存。 */
+let treeScopeProjectId: number | null = null
 const moduleLoading = ref(false)
+const tourRef = ref<InstanceType<typeof OnboardingTour> | null>(null)
+
+/** 帮助页等入口可通过事件总线重开引导；这里暴露给 window 自定义事件。 */
+function onReopenTour(): void {
+  tourRef.value?.reopen()
+}
 
 const caseChartEl = ref<HTMLElement | null>(null)
 const bugChartEl = ref<HTMLElement | null>(null)
@@ -601,7 +624,6 @@ watch(() => appStore.currentProjectId, () => {
 
 // ---- 测试环境健康监测 ----
 type EnvSide = 'app' | 'db'
-const envSides: EnvSide[] = ['app', 'db']
 
 interface EnvProbeRow {
   env: TestEnv
@@ -611,6 +633,8 @@ interface EnvProbeRow {
 }
 
 interface EnvServerView {
+  /** 曲线键：应用为 app:0 / app:1，数据库为 db */
+  key: string
   side: EnvSide
   title: string
   target: string
@@ -704,7 +728,7 @@ function pushPoint(key: string, value: number | null | undefined, ts: number): v
   }
 }
 
-function recordMetrics(envId: number, side: EnvSide, metrics: ServerMetrics | undefined): void {
+function recordMetrics(envId: number, side: string, metrics: ServerMetrics | undefined): void {
   if (!metrics?.available) {
     return
   }
@@ -717,7 +741,7 @@ function recordMetrics(envId: number, side: EnvSide, metrics: ServerMetrics | un
   }
 }
 
-function historyOf(envId: number, side: EnvSide, metric: string): MetricSample[] {
+function historyOf(envId: number, side: string, metric: string): MetricSample[] {
   return metricHistory[`${envId}:${side}:${metric}`] ?? []
 }
 
@@ -726,7 +750,7 @@ function toSamples(series: EnvMetricSeries): MetricSample[] {
 }
 
 /** 用服务端历史覆盖本地曲线，进页面就能直接画出来。 */
-function applySideHistory(envId: number, side: EnvSide, data: EnvHealthSide): void {
+function applySideHistory(envId: number, side: string, data: EnvHealthSide): void {
   const prefix = `${envId}:${side}:`
   for (const key of Object.keys(metricHistory)) {
     if (key.startsWith(prefix)) {
@@ -756,8 +780,9 @@ function applyEnvHistory(payload: EnvHealthHistoryResult): boolean {
         : ''
       hasData = true
     }
-    applySideHistory(row.env.id, 'app', item.app)
     applySideHistory(row.env.id, 'db', item.db)
+    const appSides = item.appServers?.length ? item.appServers : [item.app]
+    appSides.forEach((side, index) => applySideHistory(row.env.id, `app:${index}`, side))
   }
   return hasData
 }
@@ -771,47 +796,75 @@ async function loadEnvHistory(): Promise<boolean> {
   }
 }
 
-const envCards = computed<EnvCardView[]>(() =>
-  envRows.value.map((row) => ({
-    id: row.env.id,
-    name: row.env.name,
-    isDefault: row.env.isDefault,
-    kindLabel: row.env.kindLabel,
-    overall: row.probe?.overall ?? null,
-    probedAt: row.probedAt,
-    probing: row.probing,
-    servers: envSides.map((side) => {
-      const item = row.probe?.[side]
-      const raw = item?.metrics
-      const metrics = raw?.available ? raw : null
-      const cpuSamples = historyOf(row.env.id, side, 'cpu')
-      const memSamples = historyOf(row.env.id, side, 'mem')
+function buildServerView(
+  envId: number,
+  key: string,
+  side: EnvSide,
+  title: string,
+  target: string,
+  item: TestEnvProbeItem | null,
+): EnvServerView {
+  const raw = item?.metrics
+  const metrics = raw?.available ? raw : null
+  const cpuSamples = historyOf(envId, key, 'cpu')
+  const memSamples = historyOf(envId, key, 'mem')
+  return {
+    key,
+    side,
+    title,
+    target,
+    ok: item?.ok ?? null,
+    latencyMs: item?.latencyMs ?? null,
+    metrics,
+    metricsMessage: raw?.message || (item ? '未接入资源指标' : '待探测'),
+    cpuPoints: cpuSamples.map((sample) => sample.value),
+    cpuTimes: cpuSamples.map((sample) => sample.ts),
+    memPoints: memSamples.map((sample) => sample.value),
+    memTimes: memSamples.map((sample) => sample.ts),
+    memText: usageText(metrics?.memory.usedBytes, metrics?.memory.totalBytes),
+    disks: (metrics?.disks ?? []).map((disk) => {
+      const samples = historyOf(envId, key, `disk:${disk.name}`)
       return {
-        side,
-        title: side === 'app' ? '应用服务器' : '数据库服务器',
-        target: serverTarget(row.env, side),
-        ok: item?.ok ?? null,
-        latencyMs: item?.latencyMs ?? null,
-        metrics,
-        metricsMessage: raw?.message || (item ? '未接入资源指标' : '待探测'),
-        cpuPoints: cpuSamples.map((sample) => sample.value),
-        cpuTimes: cpuSamples.map((sample) => sample.ts),
-        memPoints: memSamples.map((sample) => sample.value),
-        memTimes: memSamples.map((sample) => sample.ts),
-        memText: usageText(metrics?.memory.usedBytes, metrics?.memory.totalBytes),
-        disks: (metrics?.disks ?? []).map((disk) => {
-          const samples = historyOf(row.env.id, side, `disk:${disk.name}`)
-          return {
-            name: disk.name,
-            percent: disk.percent,
-            text: usageText(disk.usedBytes, disk.totalBytes),
-            points: samples.map((sample) => sample.value),
-            times: samples.map((sample) => sample.ts),
-          }
-        }),
+        name: disk.name,
+        percent: disk.percent,
+        text: usageText(disk.usedBytes, disk.totalBytes),
+        points: samples.map((sample) => sample.value),
+        times: samples.map((sample) => sample.ts),
       }
     }),
-  })),
+  }
+}
+
+const envCards = computed<EnvCardView[]>(() =>
+  envRows.value.map((row) => {
+    const env = row.env
+    const appServers = env.app.servers?.length ? env.app.servers : [env.app]
+    const appProbe = row.probe?.app
+    const probeItems = appProbe?.servers?.length ? appProbe.servers : (appProbe ? [appProbe] : [])
+    const servers = appServers.map((server, index) =>
+      buildServerView(
+        env.id,
+        `app:${index}`,
+        'app',
+        appServers.length > 1 ? `应用服务器 ${index + 1}` : '应用服务器',
+        server.baseUrl || '未配置应用地址',
+        probeItems[index] ?? null,
+      ),
+    )
+    servers.push(
+      buildServerView(env.id, 'db', 'db', '数据库服务器', serverTarget(env, 'db'), row.probe?.db ?? null),
+    )
+    return {
+      id: env.id,
+      name: env.name,
+      isDefault: env.isDefault,
+      kindLabel: env.kindLabel,
+      overall: row.probe?.overall ?? null,
+      probedAt: row.probedAt,
+      probing: row.probing,
+      servers,
+    }
+  }),
 )
 
 /** 拉环境清单；有多套时全部展示，每套可单独探测。 */
@@ -839,8 +892,9 @@ async function probeEnv(row: EnvProbeRow, quiet = false): Promise<void> {
     const result = await testEnvApi.probe(row.env.id, quiet ? { quiet: true } : undefined)
     row.probe = result
     row.probedAt = new Date().toLocaleTimeString('zh-CN', { hour12: false })
-    recordMetrics(row.env.id, 'app', result.app.metrics)
     recordMetrics(row.env.id, 'db', result.db.metrics)
+    const appServers = result.app.servers?.length ? result.app.servers : [result.app]
+    appServers.forEach((server, index) => recordMetrics(row.env.id, `app:${index}`, server.metrics))
   } catch {
     row.probe = null
     if (!quiet) {
@@ -1107,12 +1161,20 @@ async function loadModuleTree(): Promise<void> {
   const projectId = appStore.currentProjectId
   if (!projectId) {
     moduleTree.value = []
+    moduleTreeRef.value?.resetDrilldown()
     return
   }
   moduleLoading.value = true
   try {
     const payload = await moduleApi.tree(projectId)
     moduleTree.value = payload.tree
+    // 换项目：整份钻取缓存作废（同名展开会留着别的项目的用例）；同项目刷新只清缓存、保住展开位置
+    if (treeScopeProjectId !== projectId) {
+      treeScopeProjectId = projectId
+      moduleTreeRef.value?.resetDrilldown()
+    } else {
+      moduleTreeRef.value?.invalidateCases()
+    }
   } catch {
     moduleTree.value = []
   } finally {
@@ -1120,11 +1182,26 @@ async function loadModuleTree(): Promise<void> {
   }
 }
 
+/** 模块卡片的用例钻取：moduleId 只取本级，和节点上的「用例 N」引用数同口径。 */
+function loadNodeCases(node: ModuleNode, pageNum: number): Promise<PagePayload<TestCase>> {
+  return caseApi.list({
+    projectId: appStore.currentProjectId ?? undefined,
+    moduleId: String(node.id),
+    pageNum,
+    pageSize: NODE_CASE_PAGE_SIZE,
+  })
+}
+
+function openCaseDetail(item: TestCase): void {
+  void router.push(`/test-cases/${item.id}`)
+}
+
 function onModuleSelect(node: ModuleNode): void {
   void router.push({ path: '/settings/modules', query: { moduleId: String(node.id) } })
 }
 
 onMounted(async () => {
+  window.addEventListener('aitp:reopen-tour', onReopenTour)
   void loadCardLayout()
   void loadOverviewVersions()
   void reload()
@@ -1149,7 +1226,10 @@ onActivated(() => {
 })
 
 onDeactivated(stopEnvTimer)
-onBeforeUnmount(stopEnvTimer)
+onBeforeUnmount(() => {
+  stopEnvTimer()
+  window.removeEventListener('aitp:reopen-tour', onReopenTour)
+})
 </script>
 
 <style scoped>

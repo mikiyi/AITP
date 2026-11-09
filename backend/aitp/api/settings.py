@@ -5,13 +5,16 @@ from __future__ import annotations
 import hashlib
 import re
 import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlparse
 
 from flask import Blueprint, Response, current_app, request, send_file
 
+from ..ai import cost as ai_cost
 from ..common.constants import AI_DEFAULT_TIMEOUT, PROVIDERS
 from ..common.env_scope import normalize_scope
+from ..common.time_utils import utcnow_iso
 from ..common.validators import (
     optional_int,
     optional_str,
@@ -31,6 +34,7 @@ from ..repositories.ci_repo import (
     channel_summary,
     events_json,
     log_summary,
+    token_summary,
 )
 from ..repositories.sys_config_repo import SysConfigRepository
 from ..services import ai_check, audit_service, backup_schedule, backup_service, home_card_service, notification_service
@@ -123,10 +127,13 @@ CONFIG_HINTS: dict[str, str] = {
 }
 
 
+#: 档案可写字段白名单。GAP-30 的三档单价随档案一起维护（列来自迁移 047），
+#: 这样「档案接口」与「/lab/cost/prices」读的是同一列，不存在第二套口径。
 PROFILE_WRITE_FIELDS = {
     "name", "provider", "protocol", "base_url", "model", "temperature",
     "max_tokens", "timeout", "is_default", "is_active", "sort_order", "priority",
     "is_local", "extra",
+    "price_input_micros", "price_output_micros", "price_currency",
 }
 
 
@@ -173,6 +180,19 @@ def _camel_of(snake: str) -> str:
     """下划线转驼峰，用于兼容两种入参写法。"""
     head, *rest = snake.split("_")
     return head + "".join(part.capitalize() for part in rest)
+
+
+def _price_micros(value: Any, field: str, default: int = 0) -> int:
+    """档案 token 单价：非负整数微元 / 1000 token（GAP-30 口径，0 = 未配价）。"""
+    micros = require_int(value, field, default)
+    if micros < 0:
+        raise AppError(ErrorCode.PARAM_ERROR, f"参数 {field} 不能为负数；0 表示未配价")
+    return micros
+
+
+def _price_currency(value: Any) -> str:
+    """币种归一：白名单外一律回落 CNY，与 ai.cost 的折算口径同源。"""
+    return ai_cost.normalize_currency(value)
 
 
 def _default_timeout(conn: Any) -> float:
@@ -245,6 +265,10 @@ def create_profile() -> Response:
         "extra_json": dumps(data.get("extra") or {}),
         "temperature": require_float(data.get("temperature"), "temperature", 0.7),
         "max_tokens": require_int(data.get("maxTokens"), "maxTokens", 4096),
+        # GAP-30：单价随档案维护，没填就是未配价（0）——成本只报 token 不报钱
+        "price_input_micros": _price_micros(data.get("priceInputMicros"), "priceInputMicros"),
+        "price_output_micros": _price_micros(data.get("priceOutputMicros"), "priceOutputMicros"),
+        "price_currency": _price_currency(data.get("priceCurrency")),
         "timeout": require_float(data.get("timeout"), "timeout", _default_timeout(conn)),
         "is_default": 1 if data.get("isDefault") else 0,
         "is_active": 1 if data.get("isActive", True) else 0,
@@ -289,6 +313,17 @@ def update_profile(pk: str) -> Response:
         payload["max_tokens"] = require_int(data["max_tokens"], "max_tokens")
     elif "maxTokens" in data:
         payload["max_tokens"] = require_int(data["maxTokens"], "maxTokens")
+    # GAP-30 档案单价：没传就保持现值，传了就必须是非负整数微元（口径同 /lab/cost/prices）
+    for key in ("price_input_micros", "price_output_micros"):
+        camel = _camel_of(key)
+        if key in data:
+            payload[key] = _price_micros(data[key], key)
+        elif camel in data:
+            payload[key] = _price_micros(data[camel], camel)
+    if "price_currency" in data:
+        payload["price_currency"] = _price_currency(data["price_currency"])
+    elif "priceCurrency" in data:
+        payload["price_currency"] = _price_currency(data["priceCurrency"])
     for key in ("sort_order", "priority"):
         if key in payload:
             payload[key] = require_int(payload[key], key)
@@ -496,8 +531,37 @@ def list_audit_resources() -> Response:
 
 # ---------------- CI 令牌 ----------------
 
+def _iso_utc(moment: datetime) -> str:
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _expires_at_of(data: dict[str, Any]) -> str | None:
+    """把 expiresInDays / expiresAt 归一成 UTC ISO 到期时间；都没给就是不过期。
+
+    优先级：显式 expiresAt > expiresInDays。空或非法一律 PARAM_ERROR。
+    """
+    raw_days = optional_int(data.get("expiresInDays"), "expiresInDays")
+    raw_at = optional_str(data.get("expiresAt"), "expiresAt", 40)
+    if raw_at:
+        try:
+            parsed = datetime.fromisoformat(raw_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise AppError(ErrorCode.PARAM_ERROR, "expiresAt 必须是合法的 ISO8601 时间") from None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        if parsed.astimezone(timezone.utc) <= datetime.now(timezone.utc):
+            raise AppError(ErrorCode.PARAM_ERROR, "expiresAt 必须晚于当前时间")
+        return _iso_utc(parsed)
+    if raw_days is not None:
+        if raw_days <= 0 or raw_days > 3650:
+            raise AppError(ErrorCode.PARAM_ERROR, "expiresInDays 需在 1~3650 之间")
+        return _iso_utc(datetime.now(timezone.utc) + timedelta(days=raw_days))
+    return None
+
+
 def _ci_status(row: dict[str, Any] | None) -> dict[str, Any]:
     endpoint = f"{notification_service.base_url()}/api/v1/ci/runs"
+    summary = token_summary(row) if row else {}
     return {
         "enabled": bool(row),
         "name": (row or {}).get("name") or "",
@@ -505,6 +569,10 @@ def _ci_status(row: dict[str, Any] | None) -> dict[str, Any]:
         "projectId": (row or {}).get("project_id"),
         "lastUsedAt": (row or {}).get("last_used_at"),
         "createdAt": (row or {}).get("created_at"),
+        "expiresAt": summary.get("expiresAt"),
+        "revokedAt": summary.get("revokedAt"),
+        "expired": summary.get("expired", False),
+        "status": summary.get("status") or ("active" if row else "inactive"),
         "baseUrl": notification_service.base_url(),
         "endpoint": endpoint,
         "events": [
@@ -520,13 +588,24 @@ def get_ci_settings() -> Response:
     return ok(_ci_status(CiTokenRepository(db()).get_active()))
 
 
+@bp.get("/ci/tokens")
+def list_ci_tokens() -> Response:
+    """近期令牌列表：显示有效期与吊销状态，供设置页排障（不回传任何明文/哈希）。"""
+    rows = CiTokenRepository(db()).list_recent(limit=20)
+    return ok({"list": [token_summary(row) for row in rows]})
+
+
 @bp.post("/ci/token")
 def issue_ci_token() -> Response:
-    """生成 CI 令牌；明文只在本次响应里返回一次，库里只留哈希与前缀。"""
+    """生成 CI 令牌；明文只在本次响应里返回一次，库里只留哈希与前缀。
+
+    可选有效期：expiresInDays（1~3650 天）或 expiresAt（ISO8601）；都不传则不过期。
+    """
     conn = db()
     data = body()
     name = optional_str(data.get("name"), "name", 100) or "CI 触发令牌"
     project_id = optional_int(data.get("projectId"), "projectId")
+    expires_at = _expires_at_of(data)
     if project_id is not None:
         exists = conn.execute(
             "SELECT 1 FROM biz_project WHERE id = ? AND is_deleted = 0", (project_id,)
@@ -536,26 +615,43 @@ def issue_ci_token() -> Response:
 
     token = "aitp_" + secrets.token_urlsafe(32)
     repo = CiTokenRepository(conn)
-    repo.revoke_all()
+    repo.revoke_all(utcnow_iso())
     new_id = repo.insert({
         "name": name,
         "token_prefix": token[:12],
         "token_hash": hashlib.sha256(token.encode("utf-8")).hexdigest(),
         "project_id": project_id,
         "enabled": 1,
+        "expires_at": expires_at,
     })
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_GENERATE, audit_service.RESOURCE_CI_TOKEN, new_id,
-          name, {"projectId": project_id})
+          name, {"projectId": project_id, "expiresAt": expires_at})
     payload = _ci_status(repo.get_active())
     payload["token"] = token
     return ok(payload)
 
 
+@bp.post("/ci/token/<pk>/revoke")
+def revoke_ci_token_one(pk: str) -> Response:
+    """按 id 吊销单个令牌；吊销后同一 Token 立即失效（校验会查 revoked_at/enabled）。"""
+    conn = db()
+    target = path_int(pk)
+    repo = CiTokenRepository(conn)
+    if repo.get(target) is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "CI 令牌不存在")
+    revoked = repo.revoke_one(target, utcnow_iso())
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_REVOKE, audit_service.RESOURCE_CI_TOKEN, target,
+          "", {"revoked": revoked})
+    return ok({"id": target, "revoked": revoked, "enabled": False})
+
+
 @bp.delete("/ci/token")
 def revoke_ci_token() -> Response:
+    """一键吊销所有启用中的令牌；enabled 置 0 同时补记 revoked_at，立即生效。"""
     conn = db()
-    revoked = CiTokenRepository(conn).revoke_all()
+    revoked = CiTokenRepository(conn).revoke_all(utcnow_iso())
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_REVOKE, audit_service.RESOURCE_CI_TOKEN, None, "",
           {"revoked": revoked})

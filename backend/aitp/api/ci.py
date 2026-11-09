@@ -1,12 +1,13 @@
 """CI 触发 API：用令牌从命令行或流水线发起一轮测试。
 
 令牌只在设置页生成一次，库里存 SHA-256 哈希；请求带 ``X-AITP-CI-Token``。
-这一组接口是唯一绕过本地访问口令的业务路由，鉴权完全由令牌承担。
+这一组接口是唯一绕过本地访问口令的业务路由。自 GAP-24 起，绕过口令前必须先过
+「路由白名单 + 哈希 + 有效期 + 吊销」四道关（判定在 services.ci_service），令牌
+泄露不再等于全权访问；本层再按 projectId 做项目范围校验。
 """
 
 from __future__ import annotations
 
-import hashlib
 from datetime import datetime
 from typing import Any
 
@@ -24,7 +25,7 @@ from ..repositories.automation_repo import (
 )
 from ..repositories.ci_repo import CiTokenRepository
 from ..repositories.test_run_repo import TestRunRepository, run_summary
-from ..services import audit_service, automation_service, job_queue, test_run_service
+from ..services import audit_service, automation_service, ci_service, job_queue, test_run_service
 from .helpers import attach_version_codes, body, commit, db, path_int
 
 bp = Blueprint("ci", __name__)
@@ -52,11 +53,11 @@ def _token_row(conn: Any) -> dict[str, Any]:
     raw = (request.headers.get("X-AITP-CI-Token") or "").strip()
     if not raw:
         raise AppError(ErrorCode.AUTH_REQUIRED, "缺少 X-AITP-CI-Token 请求头")
-    repo = CiTokenRepository(conn)
-    row = repo.find_by_hash(hashlib.sha256(raw.encode("utf-8")).hexdigest())
-    if row is None:
-        raise AppError(ErrorCode.AUTH_REQUIRED, "CI 令牌无效或已停用")
-    repo.touch(int(row["id"]), utcnow_iso())
+    result = ci_service.verify_token(conn, raw)
+    if not result.allowed or result.row is None:
+        raise AppError(result.code or ErrorCode.AUTH_REQUIRED, result.message or "CI 令牌无效")
+    row = result.row
+    CiTokenRepository(conn).touch(int(row["id"]), utcnow_iso())
     conn.commit()
     return row
 

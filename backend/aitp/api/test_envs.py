@@ -15,6 +15,7 @@ from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.test_env_repo import (
     DB_DEFAULT_PORTS,
+    DB_TYPE_LABELS,
     DB_TYPES,
     ENV_KIND_LABELS,
     ENV_KINDS,
@@ -43,6 +44,7 @@ def list_envs() -> Response:
     return ok({
         "list": _repo(conn).list_public(),
         "dbTypes": list(DB_TYPES),
+        "dbTypeLabels": DB_TYPE_LABELS,
         "dbDefaultPorts": DB_DEFAULT_PORTS,
         "kinds": [{"value": key, "label": ENV_KIND_LABELS[key]} for key in ENV_KINDS],
     })
@@ -71,7 +73,9 @@ def create_env() -> Response:
     repo = _repo(conn)
     data = body()
     name = require_str(data.get("name"), "name", 100)
-    app = _app_of(data)
+    app_servers = _app_servers_of(data)
+    first_app = app_servers[0] if app_servers else {
+        "base_url": "", "health_path": "", "metrics_url": ""}
     dbinfo = _db_of(data)
     if dbinfo["db_type"] not in DB_TYPES:
         raise AppError(ErrorCode.PARAM_ERROR, f"数据库类型只能是：{'、'.join(DB_TYPES)}")
@@ -79,9 +83,9 @@ def create_env() -> Response:
         "name": name,
         "env_kind": _kind_of(data),
         "description": optional_str(data.get("description"), "description", 500),
-        "app_base_url": app["app_base_url"],
-        "app_health_path": app["app_health_path"],
-        "app_metrics_url": app["app_metrics_url"],
+        "app_base_url": first_app["base_url"],
+        "app_health_path": first_app["health_path"],
+        "app_metrics_url": first_app["metrics_url"],
         "db_type": dbinfo["db_type"],
         "db_host": dbinfo["db_host"],
         "db_port": dbinfo["db_port"],
@@ -93,6 +97,7 @@ def create_env() -> Response:
         "is_default": 1 if data.get("isDefault") else 0,
         "sort_order": optional_int(data.get("sortOrder"), "sortOrder") or 0,
     })
+    repo.replace_app_servers(new_id, app_servers)
     if data.get("isDefault"):
         repo.clear_other_defaults(new_id)
     # 口令单独走密钥库，不入业务表；兼容嵌套 db.password 与顶层 dbPassword
@@ -113,17 +118,20 @@ def update_env(pk: str) -> Response:
     row = _require_env(repo, target)
     data = body()
     payload: dict[str, Any] = {}
+    app_servers: list[dict[str, str]] | None = None
     if "name" in data:
         payload["name"] = require_str(data["name"], "name", 100)
     if "kind" in data:
         payload["env_kind"] = _kind_of(data)
     if "description" in data:
-        payload["description"] = optional_str(data["description"], "description", 500)
+        payload["description"] = optional_str(data.get("description"), "description", 500)
     if "app" in data and isinstance(data["app"], dict):
-        app = _app_of(data["app"])
-        payload["app_base_url"] = app["app_base_url"]
-        payload["app_health_path"] = app["app_health_path"]
-        payload["app_metrics_url"] = app["app_metrics_url"]
+        app_servers = _app_servers_of(data)
+        first_app = app_servers[0] if app_servers else {
+            "base_url": "", "health_path": "", "metrics_url": ""}
+        payload["app_base_url"] = first_app["base_url"]
+        payload["app_health_path"] = first_app["health_path"]
+        payload["app_metrics_url"] = first_app["metrics_url"]
     if "db" in data and isinstance(data["db"], dict):
         dbinfo = _db_of(data["db"])
         if dbinfo["db_type"] not in DB_TYPES:
@@ -138,6 +146,8 @@ def update_env(pk: str) -> Response:
         payload["sort_order"] = optional_int(data["sortOrder"], "sortOrder") or 0
     if payload:
         repo.update(target, payload)
+    if app_servers is not None:
+        repo.replace_app_servers(target, app_servers)
     if "isDefault" in data and data["isDefault"]:
         repo.clear_other_defaults(target)
     if "dbPassword" in data or (isinstance(data.get("db"), dict) and "password" in data["db"]):
@@ -196,13 +206,16 @@ def probe_env(pk: str) -> Response:
     row = _require_env(repo, target)
     data = body()
     quiet = bool(data.get("quiet"))
+    servers = repo.app_servers_public(target, row)
     result = env_probe_service.probe_env(
-        app_base_url=str(row.get("app_base_url") or ""),
-        app_health_path=str(row.get("app_health_path") or ""),
+        app_servers=[
+            {"base_url": server["baseUrl"], "health_path": server["healthPath"],
+             "metrics_url": server["metricsUrl"]}
+            for server in servers
+        ],
         db_type=str(row.get("db_type") or ""),
         db_host=str(row.get("db_host") or ""),
         db_port=row.get("db_port"),
-        app_metrics_url=str(row.get("app_metrics_url") or ""),
         db_metrics_url=str(row.get("db_metrics_url") or ""),
     )
     # 手动探测也进历史，曲线里能看到这一次的采样点
@@ -218,17 +231,13 @@ def probe_env(pk: str) -> Response:
 def probe_draft() -> Response:
     """对「未保存」的草稿配置探测：保存前先试连，避免存一堆连不上的目标。"""
     data = body()
-    raw_app = data.get("app")
-    app: dict[str, Any] = raw_app if isinstance(raw_app, dict) else {}
     raw_db = data.get("db")
     dbinfo: dict[str, Any] = raw_db if isinstance(raw_db, dict) else {}
     result = env_probe_service.probe_env(
-        app_base_url=str(app.get("baseUrl") or ""),
-        app_health_path=str(app.get("healthPath") or ""),
+        app_servers=_app_servers_of(data),
         db_type=str(dbinfo.get("type") or "mysql"),
         db_host=str(dbinfo.get("host") or ""),
         db_port=dbinfo.get("port"),
-        app_metrics_url=str(app.get("metricsUrl") or ""),
         db_metrics_url=str(dbinfo.get("metricsUrl") or ""),
     )
     return ok(result)
@@ -264,15 +273,29 @@ def _require_not_referenced(conn: Any, env_id: int) -> None:
         )
 
 
-def _app_of(data: dict[str, Any]) -> dict[str, str]:
+def _app_servers_of(data: dict[str, Any]) -> list[dict[str, str]]:
+    """兼容两种入参：app.servers 数组为多台，app 单对象按一台处理。
+
+    三个字段全空的行直接丢弃，前端「新增一台」留下的空行不会落库。
+    """
     raw = data.get("app")
     app: dict[str, Any] = raw if isinstance(raw, dict) else data
-    return {
-        "app_base_url": optional_str(app.get("baseUrl") or app.get("app_base_url"), "app.baseUrl", 300),
-        "app_health_path": optional_str(app.get("healthPath") or app.get("app_health_path"), "app.healthPath", 200),
-        "app_metrics_url": optional_str(
-            app.get("metricsUrl") or app.get("app_metrics_url"), "app.metricsUrl", 500),
-    }
+    raw_servers = app.get("servers")
+    items: list[Any] = raw_servers if isinstance(raw_servers, list) else [app]
+    servers: list[dict[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        base = optional_str(
+            item.get("baseUrl") or item.get("app_base_url"), "app.baseUrl", 300)
+        health = optional_str(
+            item.get("healthPath") or item.get("app_health_path"), "app.healthPath", 200)
+        metrics = optional_str(
+            item.get("metricsUrl") or item.get("app_metrics_url"), "app.metricsUrl", 500)
+        if not (base or health or metrics):
+            continue
+        servers.append({"base_url": base, "health_path": health, "metrics_url": metrics})
+    return servers
 
 
 def _db_of(data: dict[str, Any]) -> dict[str, Any]:

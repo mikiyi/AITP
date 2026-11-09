@@ -1,0 +1,58 @@
+# Gitee Go 门禁流水线（GAP-21），与 .github/workflows/gates.yml 等价。
+#
+# 注意：
+# - 本文件需在 Gitee 仓库设置中启用 Gitee Go 后才生效；
+#   字段结构按 Gitee Go 官方文档常见写法组织，具体键名以官方文档为准，
+#   启用后如解析报错请在 Gitee 侧按报错微调（本地无法验证 Gitee Go 真实执行）。
+# - check_ai_live 由 run_all_checks.py 内部永久排除（真实模型、非确定性）。
+# - check_isolation_matrix 为长时审计门禁，与 GitHub 侧一致用 --skip-name 排除。
+name: gates
+displayName: 门禁流水线
+triggers:
+  push:
+    branches:
+      - feature
+      - main
+  pull_request:
+    branches:
+      - main
+stages:
+  - stage: gates
+    displayName: 门禁
+    strategy:
+      timeout: 3600
+    jobs:
+      # 保护分支 needed check 的名称即此 job 的 displayName/identifier：gates
+      - job: gates
+        displayName: gates
+        runsOn: public/jammy
+        steps:
+          - step: clone
+            displayName: 拉取代码
+          - step: command
+            displayName: 安装依赖与构建
+            with:
+              run: |
+                python3 -m pip install -r requirements.txt
+                cd frontend && npm ci && npm run build && cd ..
+          - step: command
+            displayName: 启动服务并跑门禁
+            with:
+              run: |
+                export AITP_BASE_URL=http://127.0.0.1:8760
+                mkdir -p logs
+                nohup python3 backend/run.py > logs/server.log 2>&1 &
+                for i in $(seq 1 60); do
+                  curl -fsS "$AITP_BASE_URL/api/v1/health" > /dev/null && break
+                  sleep 2
+                done
+                python3 backend/scripts/check_types.py --require-frontend
+                python3 backend/scripts/run_all_checks.py \
+                  --timeout 600 \
+                  --skip-name check_isolation_matrix \
+                  --json gates-report.json
+          - step: artifactor
+            displayName: 上传门禁报告
+            with:
+              basedir: .
+              name: gates-report

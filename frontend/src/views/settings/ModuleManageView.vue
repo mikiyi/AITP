@@ -25,7 +25,14 @@
 
     <div class="module-layout">
       <div class="panel panel-pad module-tree-panel">
-        <ModuleTree :nodes="tree" :loading="loading" @select="onSelect" />
+        <ModuleTree
+          ref="moduleTreeRef"
+          :nodes="tree"
+          :loading="loading"
+          :load-cases="loadNodeCases"
+          @select="onSelect"
+          @open-case="openCaseDetail"
+        />
       </div>
 
       <div class="panel panel-pad module-detail">
@@ -120,11 +127,14 @@
 
 <script setup lang="ts">
 import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
-import ModuleTree from '@/components/ModuleTree.vue'
-import { labApi, moduleApi, settingsApi } from '@/api'
-import type { CapabilitySpec, ModuleNode } from '@/api/types'
+import ModuleTree, { type ModuleTreeExpose } from '@/components/ModuleTree.vue'
+import { caseApi, labApi, moduleApi, settingsApi } from '@/api'
+import type { PagePayload } from '@/api/request'
+import { NODE_CASE_PAGE_SIZE } from '@/composables/useNodeCases'
+import type { CapabilitySpec, ModuleNode, TestCase } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 
 interface CapabilityRow {
@@ -135,9 +145,11 @@ interface CapabilityRow {
 }
 
 const appStore = useAppStore()
+const router = useRouter()
 
 const projectId = ref<number | null>(null)
 const tree = ref<ModuleNode[]>([])
+const moduleTreeRef = ref<ModuleTreeExpose | null>(null)
 const loading = ref(false)
 const current = ref<ModuleNode | null>(null)
 
@@ -191,18 +203,36 @@ function typeLabel(nodeType: string): string {
 async function loadTree(): Promise<void> {
   if (!projectId.value) {
     tree.value = []
+    moduleTreeRef.value?.resetDrilldown()
     return
   }
   loading.value = true
   try {
     const payload = await moduleApi.tree(projectId.value)
     tree.value = payload.tree ?? []
+    // 节点增删改后重拉树：旧钻取缓存的页码不再可信
+    moduleTreeRef.value?.invalidateCases()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载模块树失败')
     tree.value = []
   } finally {
     loading.value = false
   }
+}
+
+/** 节点用例钻取：moduleId 取本级，与节点上的「用例 N」引用数同口径；一页 100 条按 pageNum 续取。 */
+function loadNodeCases(node: ModuleNode, pageNum: number): Promise<PagePayload<TestCase>> {
+  return caseApi.list({
+    projectId: projectId.value ?? undefined,
+    moduleId: String(node.id),
+    pageNum,
+    pageSize: NODE_CASE_PAGE_SIZE,
+  })
+}
+
+/** 面板里的用例行：点标题进用例详情，与用例列表的行点击同一条路径。 */
+function openCaseDetail(item: TestCase): void {
+  void router.push(`/test-cases/${item.id}`)
 }
 
 async function onSelect(node: ModuleNode): Promise<void> {

@@ -28,31 +28,20 @@
           clearable
           class="case-nav__filter"
         />
-        <div v-loading="moduleNavLoading" class="case-nav__tree">
-          <el-tree
-            ref="moduleNavRef"
-            :data="moduleNavTree"
-            :props="{ label: 'name', children: 'children' }"
-            node-key="key"
-            highlight-current
-            :expand-on-click-node="false"
-            default-expand-all
-            :filter-node-method="filterModuleNode"
-            @node-click="onModuleNodeClick"
-          >
-            <template #default="{ data }">
-              <span class="case-nav__node">
-                <span class="case-nav__node-name" :title="data.path || data.name">{{ data.name }}</span>
-                <span class="case-nav__node-count">{{ data.total }}</span>
-              </span>
-            </template>
-          </el-tree>
-          <el-empty
-            v-if="!moduleNavLoading && !hasModuleNodes"
-            description="该项目还没有功能点"
-            :image-size="60"
-          />
-        </div>
+        <ModuleTree
+          ref="moduleNavRef"
+          v-loading="moduleNavLoading"
+          :nodes="moduleNavNodes"
+          :max-height="420"
+          :keyword="moduleKeyword"
+          :active-query="activeModuleQuery"
+          :count-of="navCountOf"
+          :query-of="navQueryOf"
+          :load-cases="loadNodeCases"
+          :empty-text="hasModuleNodes ? '没有匹配的功能点' : '该项目还没有功能点'"
+          @select="onModuleNodeClick"
+          @open-case="openCaseDetail"
+        />
         <p class="case-nav__hint muted">节点数字含下级功能点的用例数，点击筛选，再点一次取消</p>
       </div>
 
@@ -246,13 +235,17 @@ import type { UploadFile, UploadFiles } from 'element-plus'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
+import ModuleTree, { type ModuleTreeExpose } from '@/components/ModuleTree.vue'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import { caseApi, moduleApi, projectVersionApi, requirementApi } from '@/api'
+import type { PagePayload } from '@/api/request'
+import { NODE_CASE_PAGE_SIZE } from '@/composables/useNodeCases'
 import type {
   CaseStep,
   CaseTreeNode,
   ModuleCoverage,
   ModuleCoverageStat,
+  ModuleNode,
   ModuleOption,
   Requirement,
   TestCase,
@@ -396,61 +389,97 @@ async function loadVersionOptions(): Promise<void> {
  * 功能点筛选面板（原「用例树」独立页并入这里）。
  * 节点数字按「本级 + 下级」汇总，点一下写进 moduleId 筛选，与列表看到的结果一致。
  */
-interface ModuleNavNode {
-  key: string
-  name: string
-  path: string
-  total: number
+interface ModuleNavMeta {
   /** 写进 moduleId 筛选的值：功能点为子树 id 列表，未关联为 'none'，全部为空。 */
   query: string
-  children: ModuleNavNode[]
+  /** 本级 + 下级的用例数，与列表按该节点筛出来的条数同口径。 */
+  total: number
 }
 
-const NAV_ALL_KEY = 'all'
-const NAV_NONE_KEY = 'none'
+/** 「全部用例」「未关联功能点」是前端合成的节点，接口里没有；负 id 占位避免和真实模块撞键。 */
+const NAV_ALL_ID = -1
+const NAV_NONE_ID = -2
 
-const moduleNavRef = ref<{ filter: (value: string) => void; setCurrentKey: (key: string | null) => void } | null>(null)
-const moduleNavTree = ref<ModuleNavNode[]>([])
+const moduleNavRef = ref<ModuleTreeExpose | null>(null)
+const moduleNavNodes = ref<CaseTreeNode[]>([])
+const moduleNavMeta = ref<Map<string, ModuleNavMeta>>(new Map())
 const moduleNavLoading = ref(false)
 const moduleKeyword = ref('')
 const caseTotal = ref(0)
-const hasModuleNodes = computed(() => moduleNavTree.value.some((node) => node.query !== '' && node.key !== NAV_NONE_KEY))
+/** 当前写进列表 moduleId 的筛选串：面板高亮与「再点一次取消」都以它为准。 */
+const activeModuleQuery = ref('')
+const hasModuleNodes = computed(() => moduleNavNodes.value.some((node) => Number(node.id) > 0))
 
-function toNavNode(node: CaseTreeNode): ModuleNavNode {
-  const children = ((node.children ?? []) as CaseTreeNode[]).map(toNavNode)
-  const ids = [Number(node.id), ...children.flatMap((child) => childIds(child))]
+function navCountOf(node: ModuleNode): number {
+  return moduleNavMeta.value.get(String(node.id))?.total ?? 0
+}
+
+function navQueryOf(node: ModuleNode): string {
+  return moduleNavMeta.value.get(String(node.id))?.query ?? String(node.id)
+}
+
+function syntheticNavNode(id: number, name: string, count: number): CaseTreeNode {
   return {
-    key: String(node.id),
-    name: node.name,
-    path: node.path ?? '',
-    total: Number(node.caseCount ?? 0) + children.reduce((sum, child) => sum + child.total, 0),
-    query: ids.join(','),
-    children,
+    id,
+    projectId: appStore.currentProjectId ?? 0,
+    parentId: null,
+    nodeType: 'feature',
+    name,
+    code: '',
+    description: '',
+    sortOrder: 0,
+    status: 'active',
+    depth: 0,
+    path: name,
+    references: {},
+    cases: [],
+    caseCount: count,
+    passCount: 0,
+    failCount: 0,
+    children: [],
   }
 }
 
-function childIds(node: ModuleNavNode): number[] {
-  return node.query.split(',').filter(Boolean).map(Number)
+/**
+ * 一次递归把「子树 id 串 + 子树用例数」登记进 meta。
+ * 节点数字、moduleId 筛选、用例续取三个口径都来自这里，面板和列表才对得上。
+ */
+function collectNavMeta(
+  list: CaseTreeNode[],
+  meta: Map<string, ModuleNavMeta>,
+): { ids: string[]; total: number } {
+  const ids: string[] = []
+  let total = 0
+  list.forEach((node) => {
+    const child = collectNavMeta((node.children ?? []) as CaseTreeNode[], meta)
+    const own = [String(node.id), ...child.ids]
+    const count = Number(node.caseCount ?? 0) + child.total
+    meta.set(String(node.id), { query: own.join(','), total: count })
+    ids.push(...own)
+    total += count
+  })
+  return { ids, total }
 }
 
-function findNavNode(list: ModuleNavNode[], query: string): ModuleNavNode | null {
-  for (const node of list) {
-    if (node.query === query) {
-      return node
-    }
-    const hit = findNavNode(node.children, query)
-    if (hit) {
-      return hit
-    }
-  }
-  return null
+/** 节点用例续取：筛选口径与「点这个节点筛列表」完全一致，一页 100 条（后端 MAX_PAGE_SIZE）。 */
+function loadNodeCases(node: ModuleNode, pageNum: number): Promise<PagePayload<TestCase>> {
+  const query = navQueryOf(node)
+  return caseApi.list({
+    projectId: appStore.currentProjectId ?? undefined,
+    versionId: Number(route.query.versionId) || undefined,
+    moduleId: query || undefined,
+    pageNum,
+    pageSize: NODE_CASE_PAGE_SIZE,
+  })
 }
 
 async function loadModuleNav(): Promise<void> {
   const pid = appStore.currentProjectId
   if (!pid) {
-    moduleNavTree.value = []
+    moduleNavNodes.value = []
+    moduleNavMeta.value = new Map()
     caseTotal.value = 0
+    moduleNavRef.value?.resetDrilldown()
     return
   }
   moduleNavLoading.value = true
@@ -458,21 +487,27 @@ async function loadModuleNav(): Promise<void> {
     // 节点数字跟着版本筛选走，否则和列表里的条数对不上
     const versionId = Number(route.query.versionId) || null
     const data = await caseApi.tree(pid, versionId)
-    const nodes = (data.list ?? []).map(toNavNode)
-    const tree: ModuleNavNode[] = [
-      { key: NAV_ALL_KEY, name: '全部用例', path: '', total: data.total ?? 0, query: '', children: [] },
-      ...nodes,
-    ]
-    const orphanCount = (data.orphans ?? []).length
-    if (orphanCount) {
-      tree.push({ key: NAV_NONE_KEY, name: '未关联功能点', path: '', total: orphanCount, query: 'none', children: [] })
+    const meta = new Map<string, ModuleNavMeta>()
+    collectNavMeta((data.list ?? []) as CaseTreeNode[], meta)
+    // orphans 只是单批回传（后端默认 200 条一批），条数要以 orphanCount 为准
+    const orphanCount = Number(data.orphanCount ?? (data.orphans ?? []).length)
+    const total = Number(data.total ?? 0)
+    meta.set(String(NAV_ALL_ID), { query: '', total })
+    meta.set(String(NAV_NONE_ID), { query: 'none', total: orphanCount })
+    const nodes: CaseTreeNode[] = [syntheticNavNode(NAV_ALL_ID, '全部用例', total), ...((data.list ?? []) as CaseTreeNode[])]
+    if (orphanCount > 0) {
+      nodes.push(syntheticNavNode(NAV_NONE_ID, '未关联功能点', orphanCount))
     }
-    moduleNavTree.value = tree
-    caseTotal.value = data.total ?? 0
+    moduleNavMeta.value = meta
+    moduleNavNodes.value = nodes
+    caseTotal.value = total
     await nextTick()
     syncModuleNav()
+    // 新建 / 删除 / 导入后重拉树：旧缓存的页码不再可信，展开着的节点重取第一页
+    moduleNavRef.value?.invalidateCases()
   } catch (err) {
-    moduleNavTree.value = []
+    moduleNavNodes.value = []
+    moduleNavMeta.value = new Map()
     caseTotal.value = 0
     ElMessage.error(err instanceof Error ? err.message : '功能点加载失败')
   } finally {
@@ -489,33 +524,25 @@ watch(
 
 /** 地址栏或重置按钮改了筛选，面板高亮要跟着走，否则树和列表两边显示对不上。 */
 function syncModuleNav(): void {
-  const query = tableRef.value?.filterQuery().moduleId ?? ''
-  moduleNavRef.value?.setCurrentKey(query ? (findNavNode(moduleNavTree.value, query)?.key ?? null) : NAV_ALL_KEY)
+  activeModuleQuery.value = String(tableRef.value?.filterQuery().moduleId ?? '')
 }
 
 function clearModuleNav(): void {
-  moduleNavRef.value?.setCurrentKey(NAV_ALL_KEY)
+  activeModuleQuery.value = ''
 }
 
-function onModuleNodeClick(data: ModuleNavNode): void {
-  const active = tableRef.value?.filterQuery().moduleId ?? ''
-  const deselect = data.query !== '' && data.query === active
-  const query = deselect ? '' : data.query
-  moduleNavRef.value?.setCurrentKey(query ? data.key : NAV_ALL_KEY)
-  tableRef.value?.setFilter('moduleId', query || undefined)
+function onModuleNodeClick(node: ModuleNode): void {
+  const query = navQueryOf(node)
+  const deselect = query !== '' && query === activeModuleQuery.value
+  const next = deselect ? '' : query
+  activeModuleQuery.value = next
+  tableRef.value?.setFilter('moduleId', next || undefined)
 }
 
-function filterModuleNode(value: string, data: ModuleNavNode): boolean {
-  if (!value) {
-    return true
-  }
-  const key = value.toLowerCase()
-  return `${data.name} ${data.path}`.toLowerCase().includes(key)
+/** 面板里的用例行：点标题直接进详情，和列表行点击同一条路径。 */
+function openCaseDetail(item: TestCase): void {
+  void router.push(`/test-cases/${item.id}`)
 }
-
-watch(moduleKeyword, (value) => {
-  moduleNavRef.value?.filter(value)
-})
 
 const columns: ColumnDef[] = [
   { prop: 'caseNo', label: '编号', width: 100 },
@@ -973,33 +1000,6 @@ useProjectScope({
 
 .case-nav__filter {
   margin-bottom: 8px;
-}
-
-.case-nav__tree {
-  min-height: 120px;
-  max-height: 62vh;
-  overflow: auto;
-}
-
-.case-nav__node {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  width: 100%;
-  padding-right: 6px;
-}
-
-.case-nav__node-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.case-nav__node-count {
-  flex: none;
-  color: var(--aitp-text-weak);
-  font-size: 12px;
 }
 
 .case-nav__hint {

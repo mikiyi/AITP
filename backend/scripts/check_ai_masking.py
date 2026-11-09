@@ -21,6 +21,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+import time
 from typing import Any, cast
 
 cast(Any, sys.stdout).reconfigure(encoding="utf-8", errors="replace")
@@ -177,17 +178,6 @@ def build_app(workdir: pathlib.Path) -> Flask:
         static_dir=ROOT / "backend" / "aitp" / "static",
     )
     return create_app(cfg)
-
-
-def sse_frames(resp: TestResponse) -> list[JsonDict]:
-    text = resp.get_data(as_text=True)
-    frames: list[JsonDict] = []
-    for line in text.splitlines():
-        if line.startswith("data:"):
-            payload = line[5:].strip()
-            if payload:
-                frames.append(cast(JsonDict, json.loads(payload)))
-    return frames
 
 
 # ---------------- 识别与替换 ----------------
@@ -363,10 +353,27 @@ def check_run_api(api: Api, db_path: pathlib.Path, spy: SpyAdapter) -> None:
     check("mask_json 记录手机号与邮箱类型",
           "phone" in mask_json and "email" in mask_json, mask_json[:200])
 
-    # 流式：start → mask → delta → done，mask 帧与 done 帧都带脱敏结果
+    # 流式：start → mask → delta → done，mask 帧与 done 帧都带脱敏结果。
+    # C2 起 stream 接口先回 taskId，帧要从 /lab/stream/<id>/frames 短轮询取——
+    # 长连接不再占 waitress worker，所以不能再从 POST 响应体里读 SSE。
     spy.sent.clear()
-    resp = api.client.post("/api/v1/lab/requirement_confirm/stream", json={"variables": variables})
-    frames = sse_frames(resp)
+    submitted = api.data(
+        "POST", "/api/v1/lab/requirement_confirm/stream", {"variables": variables}
+    )
+    task_id = int(submitted.get("taskId") or 0)
+    check("流式接口先返回 taskId", task_id > 0, str(submitted)[:200])
+    frames: list[JsonDict] = []
+    after = 0
+    finished = False
+    for _ in range(60):
+        payload = api.data("GET", f"/api/v1/lab/stream/{task_id}/frames?after={after}")
+        frames.extend(cast("list[JsonDict]", payload.get("frames") or []))
+        after = int(payload.get("lastSeq") or after)
+        if payload.get("finished"):
+            finished = True
+            break
+        time.sleep(0.2)
+    check("流式任务能收尾", finished, str(frames)[-160:])
     types = [str(frame.get("type")) for frame in frames]
     check("流式帧包含 mask 类型", "mask" in types, str(types))
     if "mask" in types:
@@ -375,7 +382,7 @@ def check_run_api(api: Api, db_path: pathlib.Path, spy: SpyAdapter) -> None:
         check("mask 帧带类型与数量",
               bool(mask_frame.get("applied")) and int(mask_frame.get("count") or 0) == 2,
               str(mask_frame))
-    done = frames[-1] if frames else {}
+    done = next((item for item in frames if item.get("type") == "done"), {})
     check("done 帧带脱敏结果",
           isinstance(done.get("mask"), dict) and bool(cast(JsonDict, done["mask"]).get("applied")),
           str(done)[:200])

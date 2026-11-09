@@ -2,6 +2,7 @@
   <div class="page">
     <div class="page-header">
       <h2 class="page-title">帮助文档</h2>
+      <el-button :icon="Guide" @click="reopenTour">重新打开首启引导</el-button>
       <el-button :icon="MagicStick" @click="activeTab = 'demo'">直接看 Demo 示例</el-button>
     </div>
 
@@ -190,6 +191,9 @@
               <li>脚本先检查端口：AITP 已在运行则直接打开页面；端口被其它程序占用会明确报错退出。可用参数：<code class="text-mono">--build</code>（强制重建前端）、<code class="text-mono">--reinstall</code>（重建虚拟环境）、<code class="text-mono">--no-browser</code>（不自动开浏览器）。</li>
               <li>停止服务：Windows <code class="text-mono">stop.bat</code>，macOS / Linux <code class="text-mono">./stop.sh</code>。</li>
               <li>升级：拉新代码后再跑一次 <code class="text-mono">start.bat --build</code>；数据库迁移在启动时按序自动执行，不需要手动跑 SQL。</li>
+              <li>首次启动（空数据库）首页会自动弹出四步引导：配置 AI 模型 → 载入示例项目 → 跑一次 AI 生成 → 看报告与追溯；可跳过，完成或跳过后不再自动弹出。存量数据库升级默认不弹引导。</li>
+              <li>引导里的「载入示例项目」以追加方式注入 <code class="text-mono">DEMO-EC</code> 示例（需求 / 用例 / 缺陷 / 知识 / 报告，外加可执行的接口断言脚本 <code class="text-mono">AUTO-API-001</code>），只重建示例自身、不动既有数据；项目列表空态也能一键载入。</li>
+              <li>想重看引导，点本页右上角「重新打开首启引导」即可回到首页重新弹出。</li>
             </ol>
 
             <h3 class="doc-h3">② 配置 AI 档案（设置 → AI 设置）</h3>
@@ -326,7 +330,8 @@
  * 正文数据与口径集中在同目录的 productHelpContent.ts，本文件只负责排版。
  */
 import { computed, ref } from 'vue'
-import { MagicStick } from '@element-plus/icons-vue'
+import { useRouter } from 'vue-router'
+import { Guide, MagicStick } from '@element-plus/icons-vue'
 import BrandName from '@/components/BrandName.vue'
 import type { DemoCase } from './productHelpContent'
 import {
@@ -344,6 +349,14 @@ import {
 } from './productHelpContent'
 
 const activeTab = ref('intro')
+
+const router = useRouter()
+
+/** 回首启引导：重置服务端状态并回到首页弹出引导（HomeView 监听该事件）。 */
+async function reopenTour(): Promise<void> {
+  await router.push('/')
+  window.dispatchEvent(new CustomEvent('aitp:reopen-tour'))
+}
 
 type NumberedDemo = DemoCase & { index: number }
 

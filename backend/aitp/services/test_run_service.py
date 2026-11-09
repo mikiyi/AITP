@@ -27,7 +27,7 @@ from ..repositories.test_run_repo import (
     run_case_summary,
     run_summary,
 )
-from . import notification_service
+from . import execution_protocol, notification_service
 
 
 def select_case_ids(conn: sqlite3.Connection, project_id: int,
@@ -415,6 +415,11 @@ def create_bug_from_failure(
         description_parts.append(f"预期结果：{row['expected_result']}")
     if row.get("actual_result"):
         description_parts.append(f"实际结果：{row['actual_result']}")
+    # GAP-35：转缺陷时把本次执行的原始证据（请求 / 响应 / 断言差异 / 附件）一起带上，
+    # 缺陷详情不再只剩一句「失败」。
+    evidence = execution_protocol.latest_evidence_for_run_case(conn, int(run_case_id))
+    if evidence:
+        description_parts.append(execution_protocol.describe_evidence(evidence))
 
     bug_repo = BugRepository(conn)
     project_id = int(run["project_id"])
@@ -448,7 +453,21 @@ def create_bug_from_failure(
         (bug_id, run_id, run_case_id),
     )
     bug_row = bug_repo.get(bug_id) or {}
-    return {"created": True, "bugId": bug_id, "bugNo": bug_row.get("bug_no"), "runCaseId": run_case_id}
+    # 证据反向挂上 bug_id：缺陷 → 证据（evidence_for_bug 靠这一步才查得到）
+    evidence_ids = execution_protocol.link_evidence_to_bug(
+        conn, int(bug_id),
+        run_case_id=int(run_case_id),
+        case_id=case_id,
+        run_id=run_id,
+    )
+    return {
+        "created": True,
+        "bugId": bug_id,
+        "bugNo": bug_row.get("bug_no"),
+        "runCaseId": run_case_id,
+        "evidenceId": int(evidence["evidenceId"]) if evidence else None,
+        "evidenceIds": evidence_ids,
+    }
 
 
 def run_priority_rates(stats: dict[str, Any], priority: str) -> tuple[int, int]:

@@ -11,10 +11,17 @@ import {
   type BlobResult,
   type PagePayload,
 } from './request'
+
+/** 接口失败时错误提示里带的追踪号响应头：统一请求层读它，这里对外暴露常量。 */
+export { TRACE_ID_HEADER } from './request'
 import type {
   AdoptCaseItem,
+  AiBudgetStatus,
+  AiCostSummary,
   AiModelInfo,
+  AiPriceTable,
   AiProfile,
+  AiProfilePrice,
   AiRecord,
   AiRecordPage,
   AiSession,
@@ -44,6 +51,7 @@ import type {
   DocTemplateUpload,
   DocumentAttachment,
   EnvHealthHistoryResult,
+  ExecutionEvidence,
   HomeCardItem,
   KnowledgeAnswer,
   AssistantEgress,
@@ -77,6 +85,7 @@ import type {
   ReleaseGate,
   ReleaseGateResult,
   Report,
+  ReportFailureSamples,
   ReportItem,
   ReportStats,
   ReportTrend,
@@ -105,10 +114,13 @@ import type {
   TraceabilityResult,
   ValidationCase,
   ValidationResult,
+  ValidationRunTask,
   VersionCompare,
   WorkbenchEntry,
   WorkbenchOverview,
   XmindParseResult,
+  DemoInjectResult,
+  OnboardingState,
 } from './types'
 
 /** 拼接下载类接口的查询串，跳过空值。 */
@@ -165,13 +177,7 @@ export const validationApi = {
   runCase: (id: number, body: Record<string, unknown> = {}) =>
     post<ValidationResult>(`/validation/cases/${id}/run`, body),
   runAll: (body: Record<string, unknown> = {}) =>
-    post<{
-      total: number
-      passed: number
-      failed: number
-      passRate: number
-      results: Array<{ id: number; name: string; passed: boolean; errors: string[] }>
-    }>('/validation/run-all', body),
+    post<ValidationRunTask>('/validation/run-all', body),
 }
 
 /** 回归清单。 */
@@ -195,7 +201,14 @@ export const regressionApi = {
     put<RegressionItem>(`/regressions/${id}/items/${itemId}`, body),
   removeItem: (id: number, itemId: number) => del(`/regressions/${id}/items/${itemId}`),
   execute: (id: number, results: Array<{ itemId: number; result: string; remark?: string }>) =>
-    post<{ id: number; status: string; updated: number[]; skipped: number[] }>(
+    post<{
+      id: number
+      status: string
+      updated: number[]
+      skipped: number[]
+      /** 自动项的服务端真跑结果（GAP-33），条数即本次真跑了多少条。 */
+      executed?: Array<Record<string, unknown>>
+    }>(
       `/regressions/${id}/execute`,
       { results },
     ),
@@ -223,6 +236,12 @@ export const testRunApi = {
   remove: (id: number) => del(`/test-runs/${id}`),
   addCases: (id: number, body: Record<string, unknown>) =>
     post<{ added: number[]; count: number; skipped: number[] }>(`/test-runs/${id}/cases`, body),
+  /**
+   * GAP-35 证据下钻：定位参数一次只认一个（evidenceId > runCaseId > bugId > regressionItemId > caseId）。
+   * 单份证据直接返回对象，缺陷维度返回 `{ list }`；查不到时后端给 null，前端要降级成中文空态。
+   */
+  evidence: (query: Record<string, string | number>) =>
+    get<ExecutionEvidence | { list: ExecutionEvidence[] } | null>('/test-runs/evidence', query),
   removeCase: (id: number, caseId: number) => del(`/test-runs/${id}/cases/${caseId}`),
   recordCase: (id: number, caseId: number, body: Record<string, unknown>) =>
     put<{ runCase: TestRunCase; run: TestRun }>(`/test-runs/${id}/cases/${caseId}`, body),
@@ -365,10 +384,23 @@ export const caseApi = {
     postLong<InterfaceExecution>(`/test-cases/${id}/interface-run`, body, runTimeout(body)),
   coverage: (projectId: number) => get('/test-cases/coverage', { projectId }),
   /** 功能点用例树：树上每个功能点挂自己的用例，未挂功能点的用例单独返回，供用例列表左侧筛选面板。 */
-  tree: (projectId: number, versionId?: number | null) =>
-    get<{ list: CaseTreeNode[]; orphans: TestCase[]; total: number }>('/test-cases/tree', {
+  tree: (projectId: number, versionId?: number | null, pageSize?: number) =>
+    get<{
+      list: CaseTreeNode[]
+      orphans: TestCase[]
+      total: number
+      /** 未关联功能点的用例总数：orphans 只是单批回传，条数以上限后的这个为准。 */
+      orphanCount: number
+      /** 单批回传的用例条数上限（后端默认 200）。 */
+      pageSize: number
+      /** 还有下一批时的游标；为 0 表示本批已取完。 */
+      nextCursor: number
+      /** 本批实际回传的用例条数。 */
+      returned: number
+    }>('/test-cases/tree', {
       projectId,
       versionId,
+      pageSize,
     }),
   coverageModules: (projectId: number, versionId?: number | null) =>
     get<ModuleCoverageResult>('/test-cases/coverage/modules', { projectId, versionId }),
@@ -403,6 +435,11 @@ export const bugApi = {
   batchRemove: (ids: number[]) => post<BatchDeleteResult>('/bugs/batch-delete', { ids }),
   transition: (id: number, body: Record<string, unknown>) => post(`/bugs/${id}/transition`, body),
   logs: (id: number) => get<BugLog[]>(`/bugs/${id}/logs`),
+  /** GAP-35 缺陷下钻执行证据：直挂本缺陷的快照 + 来源轮次用例的快照合并成一份清单。 */
+  evidence: (id: number) =>
+    get<{ list: ExecutionEvidence[]; total: number; latest: ExecutionEvidence | null; hint: string }>(
+      `/bugs/${id}/evidence`,
+    ),
   linkCases: (id: number, caseIds: number[]) => post(`/bugs/${id}/cases`, { caseIds }),
   unlinkCases: (id: number, caseIds: number[]) => del(`/bugs/${id}/cases`, { caseIds }),
   stats: () => get('/bugs/stats'),
@@ -481,6 +518,15 @@ export const reportApi = {
   update: (id: number, body: Record<string, unknown>) => put<Report>(`/reports/${id}`, body),
   remove: (id: number) => del(`/reports/${id}`),
   items: (id: number) => get<ReportItem[]>(`/reports/${id}/items`),
+  /** GAP-35 失败样本下钻：本报告统计范围内真实失败的轮次用例，每条带证据摘要。 */
+  failureSamples: (id: number, runCaseIds: number[] = []) =>
+    get<ReportFailureSamples>(
+      `/reports/${id}/failure-samples`,
+      runCaseIds.length ? { runCaseIds: runCaseIds.join(',') } : {},
+    ),
+  /** 勾选的样本定为报告「所选样本」，详情 / 预览 / 导出随之只带这些；传 [] 回到全量。 */
+  selectSamples: (id: number, runCaseIds: number[]) =>
+    post<ReportFailureSamples>(`/reports/${id}/failure-samples`, { runCaseIds }),
   setItems: (id: number, items: unknown[]) => put(`/reports/${id}/items`, { items }),
   stats: (id: number) => get<ReportStats>(`/reports/${id}/stats`),
   trends: (query: { projectId: number; granularity?: 'day' | 'week'; periods?: number }) =>
@@ -505,6 +551,17 @@ export const reportApi = {
 export const labApi = {
   capabilities: () => get<CapabilitySpec[]>('/lab/capabilities'),
   mainCapabilities: () => get<CapabilitySpec[]>('/lab/main-capabilities'),
+  /** GAP-30 成本视图：今日/本月花费 + 按能力/项目/档案拆分 + 软预算状态。 */
+  costSummary: (query?: { projectId?: number; capability?: string; days?: number }) =>
+    get<AiCostSummary>('/lab/cost/summary', query),
+  /** GAP-30 预算软阈值当前状态（只提示，不拦截调用）。 */
+  costBudget: () => get<AiBudgetStatus>('/lab/cost/budget'),
+  costBudgetUpdate: (body: Record<string, unknown>) =>
+    put<AiBudgetStatus>('/lab/cost/budget', body),
+  /** GAP-30 各模型档案的 token 单价与累计花费。 */
+  costPrices: () => get<AiPriceTable>('/lab/cost/prices'),
+  costPriceUpdate: (profileId: number, body: Record<string, unknown>) =>
+    put<AiProfilePrice>(`/lab/cost/prices/${profileId}`, body),
   prompts: () => get<PromptTemplate[]>('/lab/prompts'),
   run: (capability: string, body: Record<string, unknown>) =>
     postLong(`/lab/${capability}/run`, body),
@@ -835,4 +892,14 @@ export const templateApi = {
     post<{ removed: string[] }>('/doc-templates/uploads/cleanup', { storedNames }),
   /** 模板原文件下载直链：配合 window.open 用，Cookie 鉴权。 */
   fileDownloadUrl: (id: number) => `/api/v1/doc-templates/${id}/file`,
+}
+
+/** 首启引导状态与示例项目注入（GAP-18）。 */
+export const onboardingApi = {
+  state: () => get<OnboardingState>('/onboarding'),
+  /** action：complete 完成 / skip 跳过 / reopen 重开 */
+  update: (action: 'complete' | 'skip' | 'reopen') =>
+    post<OnboardingState>('/onboarding', { action }),
+  /** 追加式注入示例项目 DEMO-EC：只重建示例自身，不动其他项目。 */
+  injectDemo: () => post<DemoInjectResult>('/onboarding/demo'),
 }

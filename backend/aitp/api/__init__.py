@@ -19,6 +19,7 @@ def register_blueprints(app: Flask) -> None:
     from .lab import bp as lab_bp
     from .meta import bp as meta_bp
     from .modules import bp as modules_bp
+    from .onboarding import bp as onboarding_bp
     from .projects import bp as projects_bp
     from .project_versions import bp as project_versions_bp
     from .relations import bp as relations_bp
@@ -72,5 +73,6 @@ def register_blueprints(app: Flask) -> None:
         (validation_bp, "/api/v1/validation"),
         (settings_bp, "/api/v1/settings"),
         (meta_bp, "/api/v1/meta"),
+        (onboarding_bp, "/api/v1/onboarding"),
     ):
         app.register_blueprint(bp, url_prefix=prefix)

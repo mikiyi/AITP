@@ -18,7 +18,8 @@ from flask import Flask, Response, current_app, g, request
 
 from .envelope import fail
 from .errors import ErrorCode
-from .services import access_service
+from .db.connection import get_db
+from .services import access_service, audit_service, ci_service
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 _UNSAFE_METHODS = frozenset({"POST", "PATCH", "PUT", "DELETE"})
@@ -30,7 +31,8 @@ _AUTH_OPEN_PATHS = frozenset({
     "/api/v1/auth/status",
     "/api/v1/auth/login",
 })
-#: CI 路由由令牌自行鉴权；只在带了令牌头时绕过访问口令，避免普通浏览器请求借此绕开登录
+#: CI 路由由令牌自行鉴权；带令牌头时先经 ci_service 边界判定（白名单+哈希+有效期+吊销），
+#: 全部通过才绕过访问口令，否则显式拒绝。GAP-24 收紧，不再是「带令牌头即放行」。
 _CI_PREFIX = "/api/v1/ci/"
 
 #: 附件本身限 32MB，这里留出 multipart 余量
@@ -95,12 +97,39 @@ def _guard() -> Response | None:
     if request.method in _UNSAFE_METHODS and not _same_site():
         return fail(ErrorCode.CROSS_SITE_BLOCKED, "跨站请求已被拒绝：AITP 只接受本机页面的写入")
 
-    if request.path.startswith(_CI_PREFIX) and request.headers.get("X-AITP-CI-Token"):
-        return None
+    token = request.headers.get("X-AITP-CI-Token")
+    if token and request.path.startswith(_CI_PREFIX):
+        # 边界收紧：只有「路由白名单 + 哈希 + 有效期 + 吊销」全过，才允许绕过访问口令；
+        # 否则按 401/越界语义显式拒绝，不再静默当普通请求放行。
+        return _ci_boundary(token)
 
     if request.path not in _AUTH_OPEN_PATHS and not _access_allowed():
         return fail(ErrorCode.AUTH_REQUIRED, "需要访问口令，请先登录")
     return None
+
+
+def _ci_boundary(token: str) -> Response | None:
+    """CI 令牌访问边界判定；放行返回 None，拒绝返回错误包封并留一条审计。"""
+    conn = get_db()
+    result = ci_service.evaluate_ci_request(conn, request.method, request.path, token)
+    if result.allowed:
+        return None
+    try:
+        audit_service.record(
+            conn,
+            audit_service.AUDIT_ACTION_EXECUTE,
+            audit_service.RESOURCE_CI_TOKEN,
+            None,
+            str((result.row or {}).get("name") or "") or "ci-denied",
+            {"source": "ci", "outcome": "denied", "reason": result.reason,
+             "path": request.path, "method": request.method},
+            actor="ci:denied",
+            result="denied",
+        )
+        conn.commit()
+    except Exception:  # noqa: BLE001 - 审计失败不能改变拒绝结论本身
+        conn.rollback()
+    return fail(result.code, result.message)
 
 
 def _access_token() -> str:

@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "说明": "由 check_prompt_regression.py --update-baseline 生成；指标含义见该脚本 docstring。改动提示词后若此处出现回退，先确认是有意为之再重录。",
+  "samples": {
+    "case_login_typical": {
+      "passRate": 1.0,
+      "retention": 1.0,
+      "completeness": 1.0,
+      "dupRate": 0.75,
+      "issueCount": 0.0,
+      "promptChars": 1626.0
+    },
+    "case_login_defective": {
+      "passRate": 0.25,
+      "retention": 0.25,
+      "completeness": 0.0,
+      "dupRate": 0.0,
+      "issueCount": 11.0,
+      "promptChars": 1478.0
+    },
+    "xmind_order_tree": {
+      "passRate": 1.0,
+      "retention": 1.0,
+      "completeness": 1.0,
+      "dupRate": 0.3333,
+      "issueCount": 0.0,
+      "promptChars": 1273.0
+    },
+    "testpoint_login_tree": {
+      "passRate": 1.0,
+      "retention": 1.0,
+      "completeness": 1.0,
+      "dupRate": 0.0,
+      "issueCount": 0.0,
+      "promptChars": 1279.0
+    },
+    "regression_release_scope": {
+      "passRate": 1.0,
+      "retention": 1.0,
+      "completeness": 1.0,
+      "dupRate": 0.3333,
+      "issueCount": 0.0,
+      "promptChars": 1155.0
+    },
+    "confirm_requirement_markdown": {
+      "passRate": 1.0,
+      "retention": 1.0,
+      "completeness": 1.0,
+      "dupRate": 0.0,
+      "issueCount": 0.0,
+      "promptChars": 1321.0
+    }
+  }
+}

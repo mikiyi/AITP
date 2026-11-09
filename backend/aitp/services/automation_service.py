@@ -48,7 +48,7 @@ from ..repositories.automation_repo import (
     AutomationScriptRepository,
 )
 from ..repositories.sys_config_repo import SysConfigRepository
-from . import automation_writeback
+from . import automation_writeback, execution_protocol
 
 logger = logging.getLogger(__name__)
 
@@ -822,7 +822,33 @@ def execute_script(
             error_message=error_message,
         )
 
-    return AutomationRunRepository(conn).get(run_id) or {}
+    final_row = AutomationRunRepository(conn).get(run_id) or {}
+    # GAP-32：自动化执行也走统一证据协议，来源行 id = biz_automation_run.id
+    final_row["evidenceId"] = execution_protocol.capture_automation_run(
+        conn, run_row=final_row,
+        case_id=_writeback_case_id(conn, script, test_run_id=test_run_id),
+    )
+    conn.commit()
+    return final_row
+
+
+def _writeback_case_id(
+    conn: sqlite3.Connection, script: dict[str, Any], *, test_run_id: int | None
+) -> int | None:
+    """脚本覆盖的那条用例 id（没有覆盖关系时返回 None），只读一次，不改回写逻辑。"""
+    match_value = str(script.get("case_match_value") or "").strip()
+    if not match_value:
+        return None
+    sql = (
+        "SELECT id FROM biz_test_case WHERE is_deleted = 0 AND (case_no = ? OR CAST(id AS TEXT) = ?)"
+    )
+    params: list[Any] = [match_value, match_value]
+    if test_run_id:
+        sql += " AND id IN (SELECT case_id FROM biz_test_run_case WHERE run_id = ? AND is_deleted = 0)"
+        params.append(int(test_run_id))
+    sql += " ORDER BY id LIMIT 1"
+    row = conn.execute(sql, params).fetchone()
+    return int(row["id"]) if row else None
 
 
 def _writeback(

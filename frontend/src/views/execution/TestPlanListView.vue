@@ -754,9 +754,14 @@ onActivated(() => {
 }
 
 .prod-hint {
-  margin-top: 4px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--el-color-danger);
+  margin-top: 8px;
+  padding: 8px 11px 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--aitp-note-error) 16%, transparent);
+  border-left: 3px solid var(--aitp-note-error);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--aitp-note-error) 5%, var(--aitp-panel));
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--aitp-text);
 }
 </style>

@@ -2,7 +2,7 @@
 name: "xmind-to-case"
 title: "XMind 转用例"
 description: "把 xmind 大纲转成结构化测试用例，输出 JSON 数组"
-optional: "caseTypes, outputTemplate"
+optional: "caseTypes, outputTemplate, contextModules, contextCases"
 ---
 
 # 角色
@@ -14,6 +14,18 @@ optional: "caseTypes, outputTemplate"
 
 # XMind 大纲
 {{xmindOutline}}
+
+# 项目内已有事实（上下文装配器注入，不是用户手填内容）
+## 模块树路径
+{{contextModules}}
+
+## 已有用例
+{{contextCases}}
+
+使用要求：
+- 模块归属对齐「模块树路径」，不要自己发明层级
+- 与「已有用例」重复的场景不要再生成，只补它们没覆盖的场景
+- 内容为「（本次没有召回到相关…）」或「（未提供）」时按需求原文正常生成，不要编造项目内事实
 
 # 任务
 按大纲的层级顺序逐条展开：大纲中的一级分支通常对应一个测试场景，叶子节点对应具体测试点。

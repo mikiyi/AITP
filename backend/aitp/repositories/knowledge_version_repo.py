@@ -10,6 +10,7 @@ from ..common.security import content_checksum
 from ..common.time_utils import utcnow_iso
 from ..errors import AppError, ErrorCode
 from .base import BaseRepository, dumps, loads
+from .numbering import begin_claim
 
 VERSION_STATUS_PENDING = "pending"
 VERSION_STATUS_PUBLISHED = "published"
@@ -42,6 +43,12 @@ class KnowledgeVersionRepository(BaseRepository):
         return dict(row) if row else None
 
     def next_version(self, article_id: int) -> int:
+        """版本号有 uk_biz_knowledge_version(article_id, version)，取号要进写事务。
+
+        并发编辑同一条目时，「先查 MAX(version) 再 +1」会让两个版本撞同一个号，
+        报错落在 INSERT 上（199000 内部错误），用户只看到保存失败。
+        """
+        begin_claim(self.conn)
         row = self.conn.execute(
             "SELECT COALESCE(MAX(version), 0) AS v FROM biz_knowledge_version WHERE article_id = ?",
             (article_id,),

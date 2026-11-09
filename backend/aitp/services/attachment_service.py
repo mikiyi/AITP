@@ -17,6 +17,7 @@ import base64
 import binascii
 import io
 import json
+import logging
 import os
 import re
 import uuid
@@ -25,6 +26,9 @@ from pathlib import Path
 from typing import Any
 
 from ..common.secret_store import atomic_write_bytes
+from ..logging_setup import current_trace_id, log_event
+
+logger = logging.getLogger(__name__)
 
 #: 可作为文档导入的扩展名
 DOCUMENT_EXTENSIONS: dict[str, str] = {
@@ -295,8 +299,11 @@ def _register_heif() -> bool:
         return False
     try:
         pillow_heif.register_heif_opener()
-    except Exception:  # noqa: BLE001 - 重复注册会抛错，忽略即可
-        pass
+    except Exception as exc:  # noqa: BLE001 - 重复注册会抛错，降级为不注册但必须留痕
+        log_event(logger, "heif_register_failed", level=logging.WARNING,
+                  traceId=current_trace_id(),
+                  error=f"{type(exc).__name__}: {exc}",
+                  impact="HEIC/HEIF 附件本次不去水印")
     return True
 
 

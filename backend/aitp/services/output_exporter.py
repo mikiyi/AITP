@@ -18,17 +18,18 @@ from typing import Any
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
+from ..ai import capability_codes
 from ..errors import AppError, ErrorCode
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
-#: 支持导出的能力
-EXPORT_CASE_CAPABILITIES = ("case_generation", "xmind_to_case")
-EXPORT_MARKDOWN_CAPABILITIES = ("api_test_design",)
-EXPORTABLE_CAPABILITIES = EXPORT_CASE_CAPABILITIES + EXPORT_MARKDOWN_CAPABILITIES
-#: 支持导出 Word 的能力：用例类 + 报告
-EXPORT_WORD_CAPABILITIES = EXPORTABLE_CAPABILITIES + ("report_generation",)
+#: 导出能力以 `ai.capability_codes` 为唯一口径：能力卡片上的「导出 Excel / Word」按钮
+#: 按那里的集合渲染，这里再抄一份字符串就会漂移成「卡片宣称支持、后端报暂不支持」。
+EXPORT_CASE_CAPABILITIES = (capability_codes.CAP_CASE_GENERATION,
+                            capability_codes.CAP_XMIND_TO_CASE)
+EXPORTABLE_CAPABILITIES = capability_codes.EXPORT_EXCEL_CAPABILITIES
+EXPORT_WORD_CAPABILITIES = capability_codes.EXPORT_WORD_CAPABILITIES
 #: 导出格式白名单
 EXPORT_FORMATS = ("xlsx", "docx")
 

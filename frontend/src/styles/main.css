@@ -200,6 +200,119 @@ body {
   max-width: 100vw;
 }
 
+/* ------------------------------------------------------------------
+ * 提示条（el-alert）统一「克制左条」
+ *
+ * Element Plus 默认把标题、正文、图标全部染成状态色，底纹又是同色浅底，
+ * 信息一多整页发灰、层级也塌了。这里改成：状态色只给左侧 3px 强调条和图标，
+ * 标题回正文色、说明回次级色，靠字重与字号分层；底纹只留 5% 的轻染。
+ *
+ * 颜色用 color-mix 从状态色和面板色混出来，十套皮肤（含深色）自动适配；
+ * info 跟随 --aitp-primary，换肤色时提示条也跟着换。
+ * ------------------------------------------------------------------ */
+:root {
+  --aitp-note-info: var(--aitp-primary);
+  --aitp-note-warning: #c2740b;
+  --aitp-note-success: #1a8f5d;
+  --aitp-note-error: #cf3f3f;
+}
+
+.el-alert {
+  --el-alert-padding: 9px 12px 9px 13px;
+  --el-alert-border-radius-base: 10px;
+  --el-alert-title-font-size: 13px;
+  --el-alert-title-with-description-font-size: 13px;
+  --el-alert-description-font-size: 12.5px;
+  --el-alert-icon-size: 16px;
+  align-items: flex-start;
+  margin: 0 0 12px;
+  border: 1px solid var(--aitp-border);
+  border-color: color-mix(in srgb, var(--aitp-note-accent, var(--aitp-primary)) 16%, transparent);
+  border-left: 3px solid var(--aitp-note-accent, var(--aitp-primary));
+  background: var(--aitp-panel);
+  background-color: color-mix(in srgb, var(--aitp-note-accent, var(--aitp-primary)) 5%, var(--aitp-panel));
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
+  color: var(--aitp-text);
+}
+
+.el-alert--primary,
+.el-alert--info {
+  --aitp-note-accent: var(--aitp-note-info);
+}
+
+.el-alert--success {
+  --aitp-note-accent: var(--aitp-note-success);
+}
+
+.el-alert--warning {
+  --aitp-note-accent: var(--aitp-note-warning);
+}
+
+.el-alert--error {
+  --aitp-note-accent: var(--aitp-note-error);
+}
+
+/* 同优先级、但本文件在 Element Plus 之后加载，覆盖它的整行状态色 */
+.el-alert.is-light {
+  background-color: color-mix(in srgb, var(--aitp-note-accent) 5%, var(--aitp-panel));
+  color: var(--aitp-text);
+}
+
+.el-alert .el-alert__icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 2px 10px 0 0;
+  padding: 0;
+  border-radius: 0;
+  font-size: 16px;
+  color: var(--aitp-note-accent);
+  background: transparent;
+}
+
+.el-alert .el-alert__content {
+  gap: 2px;
+}
+
+.el-alert .el-alert__title,
+.el-alert .el-alert__title.with-description {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--aitp-text);
+}
+
+.el-alert.is-light .el-alert__description {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--aitp-text-weak);
+}
+
+/* 没有标题的提示条，正文就是唯一信息，不能按说明文字压小压灰 */
+.el-alert.is-light .el-alert__description:only-child {
+  font-size: 13px;
+  color: var(--aitp-text);
+}
+
+.el-alert .el-alert__description p {
+  margin: 0;
+}
+
+.el-alert .el-alert__description a {
+  color: var(--aitp-note-accent);
+}
+
+.el-alert .el-alert__close-btn {
+  top: 10px;
+  right: 12px;
+  color: var(--aitp-text-weak);
+}
+
+.el-alert .el-alert__close-btn:hover {
+  color: var(--aitp-text);
+}
+
 /* 外部大模型调用确认框：两个按钮用深绿/深黄，一眼区分「先检查」与「已确认」 */
 .ai-egress-box .ai-egress-cancel,
 .ai-egress-box .ai-egress-cancel:hover,

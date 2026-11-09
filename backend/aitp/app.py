@@ -15,6 +15,7 @@ from .config import AppConfig, load_config
 from .errors import register_error_handlers
 from .logging_setup import log_deploy_event, setup_logging
 from .middleware import register_middleware
+from .observability import register_observability
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
@@ -310,6 +311,7 @@ def create_app(config: AppConfig | None = None) -> Flask:
 
     register_error_handlers(app)
     register_middleware(app)
+    register_observability(app)
     app.after_request(_strip_cors_headers)
 
     from .db.connection import close_db

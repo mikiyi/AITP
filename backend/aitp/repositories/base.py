@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
 from typing import Any, Iterable, cast
 
 from ..common.pagination import MAX_PAGE_SIZE, Page, RowDict, RowList, build_page
@@ -13,9 +14,19 @@ from ..common.time_utils import utcnow_iso
 ParamList = list[Any]
 # sqlite3.Row 列表
 SqlRowList = list[sqlite3.Row]
+# 下面两个别名供类内方法签名用：BaseRepository 有个叫 list 的方法，
+# 类体里直接写 list[int] / list[str] 会解析到那个方法而不是内置 list，
+# 所以在模块作用域（内置 list 可见）先取好别名再引用。
+IdBatchList = list[int]
+StrList = list[str]
 
 #: 筛选值哨兵：表示「该字段未挂值」，用于「未关联功能点」这类空值筛选
 NULL_FILTER = "__null__"
+
+#: 扫描式读取单批行数上限：导出与游标接口每批最多读这么多行，绝不整表载入内存
+SCAN_PAGE_SIZE = 500
+#: 单次扫描累计行数上限：超过就停止，给导出处一个可验证的硬上界
+SCAN_MAX_ROWS = 50_000
 
 
 class BaseRepository:
@@ -110,7 +121,8 @@ class BaseRepository:
             direction = self.default_order_dir
         sql = (
             f"SELECT * FROM {self.table} WHERE {where} "
-            f"ORDER BY {self._safe_order(order_by)} {direction.upper()} LIMIT ? OFFSET ?"
+            f"ORDER BY {self._safe_order(order_by)} {direction.upper()}, id {direction.upper()}"
+            f" LIMIT ? OFFSET ?"
         )
         rows = self.conn.execute(sql, [*params, limit, offset]).fetchall()
         return build_page(rows, total, page_num, limit)
@@ -123,6 +135,118 @@ class BaseRepository:
             f"SELECT * FROM {self.table} WHERE {where} LIMIT ?", [*params, int(limit)]
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # ---- 扫描式读取：导出 / 游标接口的替代 list_all 写法 ----
+    def iter_rows(
+        self,
+        filters: dict[str, Any] | None = None,
+        keyword: str | None = None,
+        *,
+        batch: int = SCAN_PAGE_SIZE,
+        max_rows: int = SCAN_MAX_ROWS,
+        order_by: str | None = None,
+        order: str | None = None,
+        columns: str = "*",
+    ) -> Iterator[RowList]:
+        """按批 yield 行，单批不超过 SCAN_PAGE_SIZE 行、总量不超过 max_rows 行。
+
+        导出与需要遍历全量的接口用它，不要用 list_all(limit=10000) 一次载入全表：
+        内存只留一批，SQLite 也只读一批。排序与 list() 一致（附带 id 决胜），
+        所以同一批数据在列表页与导出文件里顺序相同。
+        """
+        where, params = self._build_where(filters, keyword)
+        size = max(1, min(int(batch or SCAN_PAGE_SIZE), SCAN_PAGE_SIZE))
+        ceiling = max(0, int(max_rows or SCAN_MAX_ROWS))
+        direction = (order or self.default_order_dir).lower()
+        if direction not in ("asc", "desc"):
+            direction = self.default_order_dir
+        order_sql = f"ORDER BY {self._safe_order(order_by)} {direction.upper()}, id {direction.upper()}"
+        offset = 0
+        scanned = 0
+        while ceiling == 0 or scanned < ceiling:
+            want = size if ceiling == 0 else min(size, ceiling - scanned)
+            rows = self.conn.execute(
+                f"SELECT {columns} FROM {self.table} WHERE {where} "
+                f"{order_sql} LIMIT ? OFFSET ?",
+                [*params, want, offset],
+            ).fetchall()
+            if not rows:
+                return
+            chunk = [dict(r) for r in rows]
+            scanned += len(chunk)
+            offset += len(chunk)
+            yield chunk
+            if len(chunk) < want:
+                return
+
+    def iter_ids(
+        self,
+        filters: dict[str, Any] | None = None,
+        keyword: str | None = None,
+        *,
+        batch: int = SCAN_PAGE_SIZE,
+        max_rows: int = SCAN_MAX_ROWS,
+    ) -> Iterator[IdBatchList]:
+        """只要主键的批量扫描：读放大远低于 iter_rows，供「按范围选一批 id」用。"""
+        for chunk in self.iter_rows(
+            filters, keyword, batch=batch, max_rows=max_rows, columns="id"
+        ):
+            yield [int(row["id"]) for row in chunk]
+
+    def scan_column(
+        self,
+        column: str,
+        filters: dict[str, Any] | None = None,
+        keyword: str | None = None,
+        *,
+        max_rows: int = SCAN_MAX_ROWS,
+    ) -> StrList:
+        """单列值清单（如已有用例编号），只读一列，不整行载入。"""
+        if not _is_safe_identifier(column):
+            raise ValueError(f"非法列名：{column}")
+        values: list[str] = []
+        for chunk in self.iter_rows(
+            filters, keyword, columns=column, max_rows=max_rows, order_by=column, order="asc"
+        ):
+            values.extend(str(row[column]) for row in chunk if row.get(column) is not None)
+        return values
+
+    def page_after_id(
+        self,
+        filters: dict[str, Any] | None = None,
+        *,
+        after_id: int = 0,
+        batch: int = SCAN_PAGE_SIZE,
+    ) -> RowList:
+        """主键游标的下一页：取 id 大于游标的一批，按 id 升序；返回空列表即游标耗尽。"""
+        where, params = self._build_where(filters, None)
+        size = max(1, min(int(batch or SCAN_PAGE_SIZE), SCAN_PAGE_SIZE))
+        rows = self.conn.execute(
+            f"SELECT * FROM {self.table} WHERE {where} AND id > ? ORDER BY id ASC LIMIT ?",
+            [*params, int(after_id or 0), size],
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def group_counts(
+        self,
+        columns: tuple[str, ...],
+        filters: dict[str, Any] | None = None,
+        keyword: str | None = None,
+    ) -> RowList:
+        """按少数几列做 COUNT 汇总：万级数据只要几十行结果，取代把整表读进内存数数。"""
+        select = ", ".join(columns)
+        for column in columns:
+            if not _is_safe_identifier(column):
+                raise ValueError(f"非法列名：{column}")
+        where, params = self._build_where(filters, keyword)
+        return [
+            dict(row)
+            for row in self.conn.execute(
+                f"SELECT {select}, COUNT(*) AS row_count FROM {self.table} "
+                f"WHERE {where} GROUP BY {select}",
+                params,
+            ).fetchall()
+        ]
 
     def raw(self, sql: str, params: Iterable[Any] = ()) -> SqlRowList:
         return self.conn.execute(sql, tuple(params)).fetchall()

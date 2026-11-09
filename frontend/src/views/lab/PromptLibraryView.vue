@@ -41,9 +41,16 @@
         </div>
         <p class="prompt-card__desc">{{ item.description || '（无说明）' }}</p>
         <div class="prompt-card__vars">
-          <el-tag v-for="name in item.variables" :key="name" size="small" :type="optionalOf(item, name) ? 'info' : 'warning'">
+          <span
+            v-for="name in item.variables"
+            :key="name"
+            class="pvar"
+            :class="optionalOf(item, name) ? 'is-optional' : 'is-required'"
+            :title="optionalOf(item, name) ? `可选变量 ${name}` : `必填变量 ${name}`"
+            :aria-label="optionalOf(item, name) ? `可选变量 ${name}` : `必填变量 ${name}`"
+          >
             {{ name }}
-          </el-tag>
+          </span>
         </div>
         <div class="prompt-card__foot">
           <span
@@ -68,22 +75,32 @@
             <span class="text-mono">{{ current.path }}</span>
           </el-descriptions-item>
           <el-descriptions-item label="必填变量">
-            <el-tag
-              v-for="name in requiredOf(current)"
-              :key="name"
-              size="small"
-              type="warning"
-              class="var-tag"
-            >
-              {{ name }}
-            </el-tag>
-            <span v-if="!requiredOf(current).length" class="muted">无</span>
+            <div v-if="requiredOf(current).length" class="var-list">
+              <span
+                v-for="name in requiredOf(current)"
+                :key="name"
+                class="pvar is-required"
+                :title="`必填变量 ${name}`"
+                :aria-label="`必填变量 ${name}`"
+              >
+                {{ name }}
+              </span>
+            </div>
+            <span v-else class="muted">无</span>
           </el-descriptions-item>
           <el-descriptions-item label="可选变量">
-            <el-tag v-for="name in optionalVarsOf(current)" :key="name" size="small" class="var-tag">
-              {{ name }}
-            </el-tag>
-            <span v-if="!optionalVarsOf(current).length" class="muted">无</span>
+            <div v-if="optionalVarsOf(current).length" class="var-list">
+              <span
+                v-for="name in optionalVarsOf(current)"
+                :key="name"
+                class="pvar is-optional"
+                :title="`可选变量 ${name}`"
+                :aria-label="`可选变量 ${name}`"
+              >
+                {{ name }}
+              </span>
+            </div>
+            <span v-else class="muted">无</span>
           </el-descriptions-item>
         </el-descriptions>
 
@@ -337,7 +354,46 @@ onMounted(load)
 .prompt-card__vars {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 6px;
+}
+
+/* 变量名是提示词里的代码 token：等宽、轻底、细边；必填用 * 与橙色，可选只留灰边 */
+.pvar {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 5px 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  font-size: 11.5px;
+  line-height: 1;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.pvar.is-required {
+  color: color-mix(in srgb, var(--aitp-note-warning) 62%, var(--aitp-text));
+  border-color: color-mix(in srgb, var(--aitp-note-warning) 34%, transparent);
+  background: color-mix(in srgb, var(--aitp-note-warning) 8%, var(--aitp-panel));
+}
+
+.pvar.is-required::before {
+  content: '*';
+  margin-right: 2px;
+}
+
+.pvar.is-optional {
+  color: var(--aitp-text-weak);
+  border-color: var(--aitp-border);
+  background: transparent;
+}
+
+.var-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 /* 使用次数固定贴在卡片右下角；有数据用主题绿，0 次用浅灰不抢眼 */
@@ -357,10 +413,6 @@ onMounted(load)
 .prompt-card__usage.is-zero {
   color: var(--aitp-text-weak);
   opacity: 0.7;
-}
-
-.var-tag {
-  margin-right: 4px;
 }
 
 .detail-title {

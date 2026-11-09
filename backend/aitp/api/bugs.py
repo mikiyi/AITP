@@ -13,7 +13,7 @@ from ..errors import AppError, ErrorCode
 from ..repositories.base import dumps, loads
 from ..repositories.bug_repo import BugRepository
 from ..repositories.test_case_repo import TestCaseRepository
-from ..services import audit_service, tabular_export
+from ..services import audit_service, execution_protocol, export_jobs, tabular_export
 from .helpers import (
     attach_version_codes,
     audit,
@@ -182,18 +182,27 @@ BUG_TABULAR_COLUMNS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _bug_repo(conn: Any) -> BugRepository:
+    return BugRepository(conn)
+
+
 @bp.get("/export")
 def export_bugs() -> Response:
-    """导出缺陷清单为 CSV / JSON，筛选条件与列表接口一致。"""
+    """导出缺陷清单为 CSV / JSON，筛选条件与列表接口一致。
+
+    数据按批扫描（单批 SCAN_PAGE_SIZE 行）；行数超过直连上限时改用后台导出任务
+    （POST /api/v1/bugs/export/async），不再一次 list_all(limit=10000)。
+    """
     conn = db()
     fmt = tabular_format_of(request.args.get("format"))
     filters = query_filters(FILTERS)
     if "project_id" not in filters:
         raise AppError(ErrorCode.PARAM_ERROR, "projectId 必填：导出不允许全库口径")
-    rows = BugRepository(conn).list_all(filters, keyword_of() or None, limit=10000)
-    content, mimetype, extension = tabular_export.render(
-        fmt, BUG_TABULAR_COLUMNS, [_to_public(row) for row in rows]
-    )
+    keyword = keyword_of()
+    total = export_jobs.rows_total(_bug_repo)(conn, filters, keyword)
+    export_jobs.guard_sync_rows(total, "/api/v1/bugs/export/async")
+    rows = export_jobs.scan_rows(conn, _bug_repo, _to_public, filters, keyword)
+    content, mimetype, extension = tabular_export.render(fmt, BUG_TABULAR_COLUMNS, rows)
     audit(conn, audit_service.AUDIT_ACTION_EXPORT, audit_service.RESOURCE_BUG, None, "",
           {"format": fmt, "count": len(rows)})
     return download_response(
@@ -214,7 +223,34 @@ def get_bug(pk: str) -> Response:
     payload["linkedCaseIds"] = linked_case_ids
     payload["linkedCases"] = _linked_cases(conn, linked_case_ids, row.get("project_id"))
     payload["logs"] = repo.list_logs(path_int(pk))
+    payload["evidenceCount"] = len(execution_protocol.evidence_for_bug(conn, path_int(pk)))
     return ok(payload)
+
+
+@bp.get("/<pk>/evidence")
+def list_bug_evidence(pk: str) -> Response:
+    """缺陷详情下钻执行证据（GAP-35 验收标准 1）。
+
+    两处来源合并成一份清单：直接挂了本缺陷的快照，加上本缺陷来源轮次用例的快照；
+    保留期已过的不在其中。缺陷不存在时按既有口径给 404 中文提示，而不是空清单。
+    """
+    conn = db()
+    target = path_int(pk)
+    row = BugRepository(conn).get(target)
+    if not row:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "缺陷不存在")
+    guard_project_scope(row, scope_arg(), "缺陷")
+    items = execution_protocol.evidence_for_bug(conn, target)
+    return ok({
+        "list": items,
+        "total": len(items),
+        "latest": items[0] if items else None,
+        "hint": (
+            "" if items else
+            "这条缺陷还没有关联的执行证据：可能创建于证据快照上线之前，"
+            "或已超过保留期被清理；可从失败的轮次用例用「转缺陷」重新建立关联。"
+        ),
+    })
 
 
 @bp.post("")
@@ -412,3 +448,18 @@ def unlink_bug_cases(pk: str) -> Response:
     removed = repo.unlink_cases(target, ids)
     commit(conn)
     return ok({"bugId": target, "removed": removed, "caseIds": repo.linked_case_ids(target)})
+
+
+export_jobs.register(export_jobs.ExportSpec(
+    resource="bug",
+    label="缺陷清单",
+    formats=tabular_export.TABULAR_FORMATS,
+    filters=FILTERS,
+    columns=BUG_TABULAR_COLUMNS,
+    pages=export_jobs.row_batches(_bug_repo, _to_public),
+    count=export_jobs.rows_total(_bug_repo),
+    name_of=lambda conn, filters, fmt: "缺陷清单",
+    audit_resource=audit_service.RESOURCE_BUG,
+    project_required=True,
+))
+export_jobs.install_routes(bp, "bug")

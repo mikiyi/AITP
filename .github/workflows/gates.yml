@@ -1,0 +1,79 @@
+# 门禁流水线（GAP-21）。push / pull_request 触发，在干净 runner 上跑：
+#   1) 安装 Python 依赖与前端依赖并构建前端（vite 产物输出到 backend/aitp/static）
+#   2) 后台启动本地服务（python backend/run.py，默认 127.0.0.1:8760）
+#   3) check_types --require-frontend（缺前端依赖时直接失败）
+#   4) run_all_checks 一键跑全部确定性门禁（check_ai_live 已由 runner 永久排除）
+# 无论成败都上传 JSON 报告与服务日志为 artifact，便于归档排查。
+#
+# 说明：
+# - check_isolation_matrix 在 CI 上用 --skip-name 排除：它是「多项目 × 多版本」
+#   长时审计门禁（文档自述可长跑、需要访问口令配置），在 ephemeral runner 上
+#   耗时且结果受演示数据时序影响，先在 CI 排除、保留本地手工跑；后续如要纳入，
+#   去掉对应 --skip-name 并观察超时即可。
+# - 本仓库从未真实执行过 GitHub Actions（本地无法验证），workflow 字段按官方
+#   schema 编写，首次推送后以 Actions 页面的真实运行结果为准。
+name: gates
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gates:
+    # 保护分支 required status check 的名称即此 job id：gates
+    name: gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      AITP_BASE_URL: http://127.0.0.1:8760
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装 Python 依赖
+        run: pip install -r requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 安装前端依赖并构建
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: 启动本地服务（后台）
+        run: |
+          mkdir -p logs
+          nohup python backend/run.py > logs/server.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8760/api/v1/health > /dev/null; then
+              echo "服务已就绪"; exit 0
+            fi
+            sleep 2
+          done
+          echo "服务启动超时"; tail -50 logs/server.log; exit 1
+
+      - name: 类型门禁（含真实 vue-tsc，缺前端依赖即失败）
+        run: python backend/scripts/check_types.py --require-frontend
+
+      - name: 一键门禁 runner
+        run: >
+          python backend/scripts/run_all_checks.py
+          --timeout 600
+          --skip-name check_isolation_matrix
+          --json gates-report.json
+
+      - name: 上传门禁报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gates-report
+          path: |
+            gates-report.json
+            logs/server.log
+            data/aitp.log

@@ -26,7 +26,7 @@ from ..repositories.test_run_repo import (
     run_summary,
 )
 from ..services import audit_service, tabular_export, test_run_service
-from ..services import automation_service, interface_runner, job_queue
+from ..services import automation_service, execution_protocol, interface_runner, job_queue
 from .helpers import (
     attach_version_codes,
     audit,
@@ -221,6 +221,68 @@ def delete_run(pk: str) -> Response:
     audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_TEST_RUN, target,
           str(row.get("name") or ""))
     return ok({"id": target, "deleted": True})
+
+
+@bp.get("/evidence")
+def query_execution_evidence() -> Response:
+    """统一证据读口（GAP-32 功能点 4）：轮次 / 缺陷 / 回归 / 报告四处下钻同一份证据。
+
+    定位参数一次只认一个，按 evidenceId > runCaseId > bugId > regressionItemId > caseId 取；
+    查不到（含保留期到期）返回 ``data: null``，前端据此显示空态而不是报错。
+    """
+    conn = db()
+    args = request.args
+    evidence_id = optional_int(args.get("evidenceId"), "evidenceId")
+    if evidence_id:
+        return ok(execution_protocol.get_evidence(conn, evidence_id))
+    run_case_id = optional_int(args.get("runCaseId"), "runCaseId")
+    if run_case_id:
+        return ok(execution_protocol.latest_evidence_for_run_case(conn, run_case_id))
+    bug_id = optional_int(args.get("bugId"), "bugId")
+    if bug_id:
+        return ok({"list": execution_protocol.evidence_for_bug(conn, bug_id)})
+    item_id = optional_int(args.get("regressionItemId"), "regressionItemId")
+    if item_id:
+        return ok(execution_protocol.latest_evidence_for_item(conn, item_id))
+    case_id = optional_int(args.get("caseId"), "caseId")
+    if case_id:
+        return ok(execution_protocol.latest_evidence_for_case(conn, case_id))
+    raise AppError(
+        ErrorCode.PARAM_ERROR,
+        "查证据要带定位参数：evidenceId / runCaseId / bugId / regressionItemId / caseId 之一；"
+        "也可以直接走 /api/v1/test-runs/evidence/<来源类型>/<原表行id>",
+    )
+
+
+@bp.get("/evidence/<source_type>/<source_row_id>")
+def get_execution_evidence_by_source(source_type: str, source_row_id: str) -> Response:
+    """按「来源类型 + 原表行 id」取证据：没有快照时回落只读 adapter。"""
+    conn = db()
+    payload = execution_protocol.by_source(
+        conn, str(source_type), path_int(source_row_id, "sourceRowId")
+    )
+    if payload is None:
+        raise AppError(
+            ErrorCode.RESOURCE_NOT_FOUND,
+            f"这次执行（{source_type} #{source_row_id}）没有查到证据："
+            "可能是执行于证据快照上线之前，或已超过保留期被清理。",
+        )
+    return ok(payload)
+
+
+@bp.get("/<pk>/evidence")
+def list_run_evidence(pk: str) -> Response:
+    """轮次详情下钻：本轮全部证据 + 执行类型 × 必填证据字段达标率（§8 量化口径）。"""
+    conn = db()
+    target = path_int(pk)
+    run = _run_or_404(conn, target)
+    project_id = run.get("project_id")
+    rows = execution_protocol.evidence_for_run(conn, target)
+    return ok({
+        "list": rows,
+        "counts": execution_protocol.evidence_counts(conn, project_id),
+        "matrix": execution_protocol.field_matrix(conn, project_id),
+    })
 
 
 @bp.get("/<pk>/cases")

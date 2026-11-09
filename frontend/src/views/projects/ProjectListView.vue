@@ -23,6 +23,13 @@
           <el-button link type="primary" @click.stop="openEdit(row)">编辑</el-button>
           <el-button link type="danger" @click.stop="remove(row)">删除</el-button>
         </template>
+        <template #empty>
+          <div class="project-empty">
+            <p class="muted">还没有项目。新建一个，或载入内置示例项目快速体验主链路。</p>
+            <el-button type="primary" size="small" @click="openCreate">新建项目</el-button>
+            <el-button size="small" :loading="injectingDemo" @click="injectDemo">载入示例项目</el-button>
+          </div>
+        </template>
       </BaseProTable>
     </div>
 
@@ -70,10 +77,24 @@ import { reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
-import { projectApi } from '@/api'
+import { onboardingApi, projectApi } from '@/api'
 import type { Project } from '@/api/types'
 
 const tableRef = ref<TableExpose | null>(null)
+const injectingDemo = ref(false)
+
+async function injectDemo(): Promise<void> {
+  injectingDemo.value = true
+  try {
+    await onboardingApi.injectDemo()
+    ElMessage.success('示例项目 DEMO-EC 已载入，点击行即可查看')
+    tableRef.value?.reload()
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '示例注入失败')
+  } finally {
+    injectingDemo.value = false
+  }
+}
 
 const columns: ColumnDef[] = [
   { prop: 'code', label: '编号', width: 130 },
@@ -189,5 +210,17 @@ function onRowClick(row: Project): void {
 :global(.project-status-popper .el-select-dropdown__item.is-selected .status-option__label) {
   color: var(--el-color-primary);
   font-weight: 600;
+}
+
+.project-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 24px 0;
+}
+
+.project-empty p {
+  margin: 0;
 }
 </style>

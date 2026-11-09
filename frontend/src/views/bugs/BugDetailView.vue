@@ -59,6 +59,45 @@
       </div>
 
       <div class="panel panel-pad">
+        <div class="section-title">
+          执行证据
+          <el-tag size="small" effect="plain">{{ evidences.length }} 条</el-tag>
+        </div>
+        <el-table :data="evidences" size="small" border>
+          <el-table-column label="证据编号" width="104">
+            <template #default="{ row }">EV-{{ row.evidenceId ?? '-' }}</template>
+          </el-table-column>
+          <el-table-column label="来源" width="106">
+            <template #default="{ row }">{{ row.sourceTypeLabel || row.sourceType || '-' }}</template>
+          </el-table-column>
+          <el-table-column prop="title" label="用例" min-width="180" show-overflow-tooltip />
+          <el-table-column label="结论" width="86">
+            <template #default="{ row }">
+              <el-tag :type="row.result === 'passed' ? 'success' : row.result === 'failed' ? 'danger' : 'warning'" size="small" effect="plain">
+                {{ row.resultLabel || row.result || '-' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="断言" width="104">
+            <template #default="{ row }">
+              {{ row.assertionSummary?.passed ?? 0 }}/{{ row.assertionSummary?.total ?? 0 }} 通过
+            </template>
+          </el-table-column>
+          <el-table-column label="执行时间" width="160">
+            <template #default="{ row }">{{ dateTimeText(row.executedAt) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="104" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" size="small" @click="openEvidence(row)">查看证据</el-button>
+            </template>
+          </el-table-column>
+          <template #empty>
+            <span class="muted">{{ evidenceHint }}</span>
+          </template>
+        </el-table>
+      </div>
+
+      <div class="panel panel-pad">
         <div class="section-title">状态流转</div>
         <div class="toolbar">
           <el-select v-model="nextStatus" placeholder="选择目标状态" style="width: 180px">
@@ -83,6 +122,7 @@
           </el-table-column>
         </el-table>
       </div>
+      <EvidenceDrawer v-model="evidenceVisible" :locator="evidenceLocator" title="执行证据" />
     </div>
 
     <el-empty v-else description="缺陷不存在" />
@@ -94,14 +134,19 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Back } from '@element-plus/icons-vue'
+import EvidenceDrawer from '@/components/EvidenceDrawer.vue'
 import { bugApi } from '@/api'
-import type { Bug, BugLog } from '@/api/types'
+import type { Bug, BugLog, ExecutionEvidence } from '@/api/types'
 import { dateTimeText } from '@/utils/format'
 
 const route = useRoute()
 const router = useRouter()
 const detail = ref<Bug | null>(null)
 const logs = ref<BugLog[]>([])
+const evidences = ref<ExecutionEvidence[]>([])
+const evidenceHint = ref('')
+const evidenceVisible = ref(false)
+const evidenceLocator = ref<Record<string, string | number>>({})
 const loading = ref(true)
 const nextStatus = ref('')
 const comment = ref('')
@@ -183,6 +228,25 @@ async function loadLogs(): Promise<void> {
   }
 }
 
+async function loadEvidences(): Promise<void> {
+  try {
+    const data = await bugApi.evidence(Number(route.params.id))
+    evidences.value = data.list ?? []
+    evidenceHint.value =
+      data.hint || '这条缺陷还没有关联的执行证据，可从失败的轮次用例用「转缺陷」重新建立关联。'
+  } catch {
+    evidences.value = []
+    evidenceHint.value = '执行证据暂时读不到，其余信息不受影响。'
+  }
+}
+
+function openEvidence(row: ExecutionEvidence): void {
+  evidenceLocator.value = row.evidenceId
+    ? { evidenceId: Number(row.evidenceId) }
+    : { bugId: Number(route.params.id) }
+  evidenceVisible.value = true
+}
+
 async function doTransition(): Promise<void> {
   if (!nextStatus.value) {
     ElMessage.warning('请选择目标状态')
@@ -210,6 +274,7 @@ onMounted(async () => {
   try {
     detail.value = await bugApi.get(Number(route.params.id))
     await loadLogs()
+    await loadEvidences()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载缺陷失败')
   } finally {

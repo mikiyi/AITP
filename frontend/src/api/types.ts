@@ -150,6 +150,47 @@ export interface ModuleCoverageResult {
   unassigned: ModuleCoverageStat
 }
 
+/**
+ * GAP-29：一条重复判定，与后端 dedup_service.DuplicateHit.as_dict() 一一对应。
+ * `index` 对齐的是模型原始产出数组，不能拿来定位采纳行（采纳行会过滤掉没标题的条目）。
+ */
+export interface LabDedupHit {
+  index: number
+  title: string
+  similarity: number
+  matchedRef?: string
+  matchedTitle?: string
+  reason?: string
+  scope?: string
+  /** existing=撞库内已有用例，batch=撞本批次内的另一条。 */
+  source?: string
+  /** 增量模式下是否已被摘走；标记模式恒为 false。 */
+  dropped: boolean
+  /** 摘走后能否由用户找回（疑似档不可找回，只标注）。 */
+  restorable: boolean
+}
+
+/** GAP-29：一次生成的去重结论（done 帧与历史记录里的 dedup）。 */
+export interface LabDedupConclusion {
+  capability: string
+  /** 计数单位：条 / 步 等。 */
+  unit?: string
+  mode: string
+  modeLabel?: string
+  applicable?: boolean
+  compared?: number
+  existingTotal?: number
+  hitCount?: number
+  suspectCount?: number
+  droppedCount?: number
+  /** 只回传前若干条命中，超出部分看 hitCount。 */
+  items?: LabDedupHit[]
+  dropped?: Array<Record<string, unknown>>
+  notes?: string[]
+  /** 去重环节自身出错时给出原因，不影响产出。 */
+  error?: string
+}
+
 /** AI 生成用例的采纳载荷。 */
 export interface AdoptCaseItem {
   title: string
@@ -661,6 +702,10 @@ export interface AiProfile {
   maxTokens: number
   timeout: number
   sortOrder: number
+  /** GAP-30：档案列表直接带回单价现值（微元 / 1000 token，0 = 未配价）。 */
+  priceInputMicros?: number
+  priceOutputMicros?: number
+  priceCurrency?: string
   createdAt?: string
   updatedAt?: string
 }
@@ -734,12 +779,36 @@ export interface DatabaseStatus {
   error: string
 }
 
+/** 写锁计数快照：`db/write_guard.write_stats()` 的返回，健康检查直接透传。 */
+export interface DbWriteStats {
+  commits: number
+  waits: number
+  slowWaits: number
+  busyErrors: number
+  busyRetries: number
+  timeouts: number
+  totalWaitMs: number
+  maxWaitMs: number
+  registeredDbs?: number
+  slowWaitThresholdMs?: number
+  busyRetryLimit?: number
+}
+
 export interface HealthStatus {
   status: string
   appVersion: string
   aiConfigured: boolean
   serverTime: string
   database: DatabaseStatus
+  /** 进程内写锁计数：跨进程看不到别人的排队，只报本进程这一份。 */
+  dbWrite: DbWriteStats
+  /** 档案数量与实际可用候选数；空 profileId 的虚拟档案不算「用户配了」。 */
+  aiProfileCount: number
+  aiCandidateCount: number
+  /** 知识库待审草稿数。 */
+  knowledgePendingDrafts: number
+  /** 任务队列积压：排队与执行中。 */
+  taskQueue: { queued: number; running: number }
 }
 
 /** 自检结果。 */
@@ -880,12 +949,17 @@ export interface RestoreResult {
   restoredFiles?: Record<string, string | number>
 }
 
-/** 测试环境配置：一套命名环境（应用服务器 + 数据库服务器），口令只回掩码。 */
-export interface TestEnvApp {
+/** 测试环境配置：一套命名环境（多台应用服务器 + 数据库服务器），口令只回掩码。 */
+export interface TestEnvAppServer {
   baseUrl: string
   healthPath: string
   /** 可选监控地址（node_exporter /metrics 或 JSON 指标），远程服务器才有 CPU/内存/磁盘 */
   metricsUrl?: string
+}
+
+/** app 保留首台字段兼容旧调用方；新代码读 servers。 */
+export interface TestEnvApp extends TestEnvAppServer {
+  servers?: TestEnvAppServer[]
 }
 
 export interface TestEnvDb {
@@ -916,6 +990,7 @@ export interface TestEnv {
 export interface TestEnvListResult {
   list: TestEnv[]
   dbTypes: string[]
+  dbTypeLabels?: Record<string, string>
   dbDefaultPorts: Record<string, number>
   kinds?: { value: string; label: string }[]
 }
@@ -952,10 +1027,17 @@ export interface TestEnvProbeItem {
   latencyMs: number
   message: string
   metrics?: ServerMetrics
+  /** 应用服务器探测时带上该台的地址，便于多台逐条展示 */
+  baseUrl?: string
+}
+
+export interface TestEnvAppProbe extends TestEnvProbeItem {
+  /** 多台应用服务器的逐台结果；app 本身的 ok/message 是汇总 */
+  servers?: TestEnvProbeItem[]
 }
 
 export interface TestEnvProbe {
-  app: TestEnvProbeItem
+  app: TestEnvAppProbe
   db: TestEnvProbeItem
   overall: 'healthy' | 'unhealthy'
 }
@@ -978,6 +1060,8 @@ export interface EnvHealthHistoryItem {
   probedAt: string
   probe: TestEnvProbe | null
   app: EnvHealthSide
+  /** 多台应用服务器逐台曲线，顺序与 app.servers 一致 */
+  appServers?: EnvHealthSide[]
   db: EnvHealthSide
 }
 
@@ -1239,6 +1323,19 @@ export interface ValidationResult {
   reviewRequired: boolean
 }
 
+/** 回归清单的执行覆盖口径：分母为 0 时对应比率是 0，不是 null。 */
+export interface RegressionCoverage {
+  total: number
+  executed: number
+  executedRate: number
+  autoTotal: number
+  autoExecuted: number
+  autoRate: number
+  autoShare: number
+  evidenced: number
+  evidenceRate: number
+}
+
 /** 回归清单。 */
 export interface Regression {
   id: Id
@@ -1256,6 +1353,7 @@ export interface Regression {
   content: string
   items?: RegressionItem[]
   stats?: Record<string, number>
+  coverage?: RegressionCoverage
   createdAt?: string
   updatedAt?: string
 }
@@ -1274,6 +1372,16 @@ export interface RegressionItem {
   remark: string
   executedBy: string | null
   executedAt: string | null
+  /** GAP-33：auto 由服务端真跑回写，manual 由执行人回写结论。 */
+  execMode?: string
+  caseId?: Id | null
+  envId?: Id | null
+  /** 真跑产生的证据快照 id，用于下钻。 */
+  evidenceId?: Id | null
+  /** GAP-35：手工回写的证据摘要，备注不算证据。 */
+  logSummary?: string
+  requestSummary?: string
+  responseSummary?: string
 }
 
 /** 提示词模板。 */
@@ -2040,4 +2148,260 @@ export interface CiRunResult {
   tasks: QueueTask[]
   automationQueued: number
   warnings: string[]
+}
+
+/**
+ * GAP-30：一次调用的成本结论。金额一律「微元」整数，
+ * 未配单价时 costMicros 是 null（表示「算不出钱」），不是 0（表示「确实没花钱」）。
+ */
+export interface AiCostReport {
+  priced: boolean
+  costMicros: number | null
+  costYuan: number | null
+  currency: string
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  estimated?: boolean
+  priceInputMicros?: number
+  priceOutputMicros?: number
+  priceCurrency?: string
+  budget?: AiBudgetStatus
+}
+
+/** GAP-30：一段时间的用量汇总。 */
+export interface AiCostSpend {
+  calls: number
+  pricedCalls: number
+  unpricedCalls: number
+  costMicros: number
+  costYuan: number | null
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+}
+
+/** GAP-30：预算软阈值本身（0 = 不设限）。 */
+export interface AiBudgetConfig {
+  dailyMicros: number
+  dailyYuan: number | null
+  monthlyMicros: number
+  monthlyYuan: number | null
+  warnRatio: number
+  callTokens: number
+  callTokensCapability: number
+  callTokensProject: number
+  /** 预算只提示、永不拦截。 */
+  hardBlock: boolean
+}
+
+/** GAP-30：某个周期「花费 vs 软阈值」的判断结果。 */
+export interface AiCostPeriod extends AiCostSpend {
+  name: string
+  limitMicros: number
+  limitYuan: number | null
+  ratioPercent: number
+  warnRatio: number
+  level: string
+  levelLabel: string
+}
+
+/** GAP-30：预算与用量的当前状态，前端只做提示。 */
+export interface AiBudgetStatus {
+  currency: string
+  budget: AiBudgetConfig
+  today: AiCostPeriod
+  month: AiCostPeriod
+  callTokenLimit: number
+  callTokenHint: string
+  warnings: string[]
+  blocking: boolean
+  unpricedCalls: number
+}
+
+/** GAP-30：成本视图的分组拆分行（按能力或按项目，两类字段共用一个形状）。 */
+export interface AiCostBreakdown {
+  capability?: string
+  capabilityLabel?: string
+  projectId?: number | null
+  projectName?: string
+  costMicros: number
+  costYuan: number | null
+  calls: number
+  totalTokens: number
+}
+
+/** GAP-30：成本视图读侧：总量 + 三个维度拆分 + 预算状态。 */
+export interface AiCostSummary {
+  day: string
+  monthLabel: string
+  currency: string
+  today: AiCostSpend
+  month: AiCostSpend
+  scoped: AiCostSpend
+  byCapability: AiCostBreakdown[]
+  byProject: AiCostBreakdown[]
+  byProfile: AiProfilePrice[]
+  budget: AiBudgetStatus
+  /** 只在请求带 days>0 时返回。 */
+  daily?: Array<{ day: string } & AiCostSpend>
+  filter?: { projectId: number | null; capability: string }
+}
+
+/** GAP-30：一个档案的单价与该档案的累计用量。 */
+export interface AiProfilePrice {
+  profileId: number
+  profileName: string
+  provider: string
+  model: string
+  priced: boolean
+  priceInputMicros: number
+  priceOutputMicros: number
+  priceCurrency: string
+  priceUnit: string
+  priceInputYuan: number | null
+  priceOutputYuan: number | null
+  calls: number
+  costMicros: number
+  costYuan: number | null
+}
+
+/** GAP-30：单价表整体口径。 */
+export interface AiPriceTable {
+  currency: string
+  microsPerYuan: number
+  priceUnit: string
+  profiles: AiProfilePrice[]
+}
+
+/** GAP-32：证据快照里的一条断言结果。 */
+export interface EvidenceAssertion {
+  name?: string
+  passed?: boolean
+  expected?: string
+  actual?: string
+  message?: string
+  [key: string]: unknown
+}
+
+/** GAP-32：证据快照里固化的附件，previewUrl 是当时的可回放地址。 */
+export interface EvidenceAttachment {
+  attachmentId: number
+  fileName: string
+  kind: string
+  mediaType: string
+  suffix: string
+  previewUrl: string
+  note: string
+}
+
+/**
+ * GAP-32：一次执行留下的证据快照。
+ * 字段与后端 execution_protocol.ExecutionResult.as_dict() 一一对应，那里是唯一出口。
+ */
+export interface ExecutionEvidence {
+  sourceType: string
+  sourceTypeLabel: string
+  sourceRowId: number | null
+  evidenceId: number | null
+  projectId: number | null
+  caseId: number | null
+  runId: number | null
+  runCaseId: number | null
+  regressionId: number | null
+  regressionItemId: number | null
+  bugId: number | null
+  envId: number | null
+  envName: string
+  title: string
+  result: string
+  resultLabel: string
+  durationMs: number
+  assertions: EvidenceAssertion[]
+  assertionSummary: string
+  requestSummary: string
+  responseSummary: string
+  logSummary: string
+  attachments: EvidenceAttachment[]
+  sourceRef: Record<string, unknown>
+  traceId: string
+  errorMessage: string
+  executedBy: string
+  executedAt: string
+}
+
+/** GAP-35：报告下钻用的一个失败样本。 */
+export interface ReportFailureSample {
+  sampleKey: string
+  runCaseId: number
+  runId: number
+  runName: string
+  caseId: number | null
+  caseNo: string
+  title: string
+  priority: string
+  module: string
+  result: string
+  resultLabel: string
+  executedBy: string
+  executedAt: string
+  durationMs: number
+  bugId: number | null
+  bugNo: string
+  /** 有没有可下钻的证据快照。 */
+  hasEvidence: boolean
+  evidenceId: number | null
+  sourceType: string
+  sourceTypeLabel: string
+  sourceRowId: number | null
+  evidenceUrl: string
+  drillUrl: string
+  attachments: EvidenceAttachment[]
+  attachmentCount: number
+  failurePoints: string[]
+  failureSummary: string
+  evidenceSummary: string
+  failureTotal: number
+}
+
+/** GAP-35：报告的失败样本清单；total 是统计范围内的全部，selected 是已勾选的。 */
+export interface ReportFailureSamples {
+  reportId: number
+  scope: string
+  total: number
+  selected: number[]
+  list: ReportFailureSample[]
+  evidenceCount: number
+  hint: string
+  evidenceSection: string
+}
+
+/** 全量验证提交后的任务回执；结果要到任务详情里取。 */
+export interface ValidationRunTask {
+  queued: boolean
+  taskId: Id
+  task: QueueTask
+}
+
+/** 全量验证的汇总口径。 */
+export interface ValidationRunSummary {
+  total: number
+  passed: number
+  failed: number
+  passRate: number
+  results: Array<Record<string, unknown>>
+}
+
+/** 示例项目注入结果：各表插了多少行。 */
+export interface DemoInjectResult {
+  code: string
+  counts: Record<string, number>
+}
+
+/** 首次引导状态。 */
+export interface OnboardingState {
+  completed: boolean
+  reopenedAt: string
+  /** 前端只看这个字段决定要不要弹引导。 */
+  showGuide: boolean
 }

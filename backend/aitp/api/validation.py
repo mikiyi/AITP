@@ -16,7 +16,7 @@ from ..repositories.validation_case_repo import (
     ValidationCaseRepository,
     case_summary,
 )
-from ..services import audit_service, validation_service
+from ..services import audit_service, validation_jobs, validation_service
 from .helpers import audit, body, commit, db, page_args, path_int
 
 bp = Blueprint("validation", __name__)
@@ -123,17 +123,15 @@ def run_case(pk: str) -> Response:
 
 @bp.post("/run-all")
 def run_all() -> Response:
-    """跑一遍全部启用的案例，返回通过率。"""
+    """提交全量验证任务并立即返回，结果到任务详情（`GET /api/v1/tasks/<taskId>`）里取。
+
+    逐条案例可能触发真实模型调用，整批耗时不可控，因此不在请求线程里跑（GAP-26）。
+    返回体同时给出 `taskId` 与任务快照，汇总口径在 `result` 里：
+    `{total, passed, failed, passRate, results}`。
+    """
     conn = db()
     data = body()
     project_id = optional_int(data.get("projectId"), "projectId")
     profile_id = optional_int(data.get("profileId"), "profileId")
-    result = validation_service.run_all(
-        conn,
-        project_id=project_id,
-        profile_id=profile_id,
-    )
-    commit(conn)
-    audit(conn, audit_service.AUDIT_ACTION_GENERATE, audit_service.RESOURCE_VALIDATION_CASE,
-          None, "全量验证", {"passed": result.get("passed"), "total": result.get("total")})
-    return ok(result)
+    task = validation_jobs.submit_run_all(conn, project_id=project_id, profile_id=profile_id)
+    return ok({"queued": True, "taskId": task.get("id"), "task": task})

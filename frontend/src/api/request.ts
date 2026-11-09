@@ -93,16 +93,30 @@ export function explainCode(code: number, fallback: string): string {
   }
 }
 
-async function parseBody(response: Response): Promise<ApiEnvelope> {
+async function parseBody(response: Response, traceId = ''): Promise<ApiEnvelope> {
   const text = await response.text()
   if (!text) {
-    throw new ApiError('后端返回空响应', -1, '', true)
+    throw new ApiError('后端返回空响应', -1, traceId, true)
   }
   try {
     return JSON.parse(text) as ApiEnvelope
   } catch {
-    throw new ApiError('后端返回了非 JSON 内容', -1, '', true)
+    throw new ApiError('后端返回了非 JSON 内容', -1, traceId, true)
   }
+}
+
+/** 后端回显的追踪号响应头；报错时把它带进提示文案，用户反馈就能直接定位日志行。 */
+export const TRACE_ID_HEADER = 'X-Trace-Id'
+
+/** 取本次请求的追踪号：优先响应头，其次包封里的 traceId。 */
+function traceIdOf(response: Response, envelope: ApiEnvelope | null = null): string {
+  const header = response.headers.get(TRACE_ID_HEADER) ?? ''
+  return header.trim() || (envelope?.traceId ?? '').trim()
+}
+
+/** 失败提示统一追加上追踪号；成功路径与提示样式都不走这里。 */
+function withTrace(message: string, traceId: string): string {
+  return traceId ? `${message}（追踪号 ${traceId}）` : message
 }
 
 export interface RequestOptions {
@@ -190,12 +204,21 @@ export async function request<T = unknown>(path: string, options: RequestOptions
   }
 
   let envelope: ApiEnvelope
+  let trace = ''
   try {
     const response = await fetch(url, init)
-    envelope = await parseBody(response)
+    trace = traceIdOf(response)
+    envelope = await parseBody(response, trace)
   } catch (err) {
     if (err instanceof ApiError) {
-      throw err
+      throw new ApiError(
+        withTrace(err.message, err.traceId || trace),
+        err.code,
+        err.traceId || trace,
+        err.isNetwork,
+        err.data,
+        err.isTimeout,
+      )
     }
     if (guard.timedOut()) {
       throw new ApiError(timeoutMessage(timeoutMs), -1, '', true, null, true)
@@ -212,10 +235,11 @@ export async function request<T = unknown>(path: string, options: RequestOptions
     if (envelope.code === ErrorCode.AUTH_REQUIRED) {
       handleAuthRequired()
     }
+    trace = trace || (envelope.traceId ?? '').trim()
     throw new ApiError(
-      explainCode(envelope.code, envelope.message || '请求失败'),
+      withTrace(explainCode(envelope.code, envelope.message || '请求失败'), trace),
       envelope.code,
-      envelope.traceId,
+      trace,
       false,
       envelope.data,
     )
@@ -296,6 +320,7 @@ export async function postBlob(
   const guard = withTimeout(undefined, timeoutMs)
   let response: Response
   let envelope: ApiEnvelope | null = null
+  let trace = ''
   try {
     response = await fetch(`${API_BASE}${path}`, {
       method: 'POST',
@@ -303,12 +328,20 @@ export async function postBlob(
       body: JSON.stringify(body ?? {}),
       signal: guard.signal,
     })
+    trace = traceIdOf(response)
     if ((response.headers.get('Content-Type') ?? '').includes('application/json')) {
-      envelope = await parseBody(response)
+      envelope = await parseBody(response, trace)
     }
   } catch (err) {
     if (err instanceof ApiError) {
-      throw err
+      throw new ApiError(
+        withTrace(err.message, err.traceId || trace),
+        err.code,
+        err.traceId || trace,
+        err.isNetwork,
+        err.data,
+        err.isTimeout,
+      )
     }
     if (guard.timedOut()) {
       throw new ApiError(timeoutMessage(timeoutMs), -1, '', true, null, true)
@@ -325,16 +358,17 @@ export async function postBlob(
     if (envelope.code === ErrorCode.AUTH_REQUIRED) {
       handleAuthRequired()
     }
+    trace = trace || (envelope.traceId ?? '').trim()
     throw new ApiError(
-      explainCode(envelope.code, envelope.message || '导出失败'),
+      withTrace(explainCode(envelope.code, envelope.message || '导出失败'), trace),
       envelope.code,
-      envelope.traceId,
+      trace,
       false,
       envelope.data,
     )
   }
   if (!response.ok) {
-    throw new ApiError('导出失败，请稍后重试', -1, '', true)
+    throw new ApiError(withTrace('导出失败，请稍后重试', trace), -1, trace, true)
   }
   return blobResultOf(response)
 }
@@ -355,17 +389,26 @@ export async function getBlob(
   const guard = withTimeout(undefined, timeoutMs)
   let response: Response
   let envelope: ApiEnvelope | null = null
+  let trace = ''
   try {
     response = await fetch(`${API_BASE}${path}${qs ? `?${qs}` : ''}`, {
       method: 'GET',
       signal: guard.signal,
     })
+    trace = traceIdOf(response)
     if ((response.headers.get('Content-Type') ?? '').includes('application/json')) {
-      envelope = await parseBody(response)
+      envelope = await parseBody(response, trace)
     }
   } catch (err) {
     if (err instanceof ApiError) {
-      throw err
+      throw new ApiError(
+        withTrace(err.message, err.traceId || trace),
+        err.code,
+        err.traceId || trace,
+        err.isNetwork,
+        err.data,
+        err.isTimeout,
+      )
     }
     if (guard.timedOut()) {
       throw new ApiError(timeoutMessage(timeoutMs), -1, '', true, null, true)
@@ -382,16 +425,17 @@ export async function getBlob(
     if (envelope.code === ErrorCode.AUTH_REQUIRED) {
       handleAuthRequired()
     }
+    trace = trace || (envelope.traceId ?? '').trim()
     throw new ApiError(
-      explainCode(envelope.code, envelope.message || '导出失败'),
+      withTrace(explainCode(envelope.code, envelope.message || '导出失败'), trace),
       envelope.code,
-      envelope.traceId,
+      trace,
       false,
       envelope.data,
     )
   }
   if (!response.ok) {
-    throw new ApiError('导出失败，请稍后重试', -1, '', true)
+    throw new ApiError(withTrace('导出失败，请稍后重试', trace), -1, trace, true)
   }
   return blobResultOf(response)
 }

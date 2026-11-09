@@ -5,6 +5,10 @@
 - html  → 单文件 HTML（内嵌 CSS），可离线双击打开
 - pdf   → reportlab 直出的 .pdf；中文字体在本机字体目录按黑体类优先逐级探测，找不到才降级为英文占位
 - print → 面向浏览器的打印视图，用户自行「另存为 PDF」
+
+GAP-35 的「失败样本 + 执行证据」维度由 ``samples`` 参数带进来，三种格式各自排一次版
+（md 走表格 + 摘要代码块、html 走真表格 + 证据块、pdf 走 reportlab 表格 + 段落），
+不共用同一段渲染，所以「某一种格式漏带样本」是能被门禁单独抓红的。
 """
 
 from __future__ import annotations
@@ -28,6 +32,20 @@ SECTION_LABELS: dict[str, str] = {
     "risk": "风险",
     "conclusion": "结论与建议",
 }
+
+#: GAP-35：失败样本与执行证据章节。三种导出格式各自渲染这一章节，
+#: 所以「漏带样本」在某一种格式里红得出来，而不是靠通用章节蒙混过关。
+FAILURE_SECTION_LABEL = "失败样本执行证据"
+#: 空态文案：没有失败样本时仍然出章节，只是写明空态，避免被误读成导出漏了内容
+FAILURE_EMPTY_TEXT = "本次统计范围内没有失败样本，报告不附带执行证据。"
+#: 一条证据都没有时的提示：快照上线之前 / 超过保留期被清理
+FAILURE_NO_EVIDENCE_TEXT = "这条失败样本没有可下钻的执行证据快照。"
+#: 证据编号前缀，与 execution_protocol.describe_evidence 同口径
+EVIDENCE_NO_PREFIX = "EV-"
+#: 导出里最多带多少条失败样本；超出只在标题写明总数，避免长报告把 PDF 撑爆
+MAX_FAILURE_SAMPLES = 30
+#: 单个样本最多列几条失败要点
+MAX_FAILURE_POINTS = 5
 
 TYPE_LABELS: dict[str, str] = {
     "summary": "测试总结",
@@ -178,6 +196,240 @@ def _sections_markdown(items: list[dict[str, Any]]) -> list[str]:
     return blocks
 
 
+# ---------------- 失败样本与执行证据（GAP-35） ----------------
+
+def _text(value: Any) -> str:
+    """任意值 → 渲染用文本；None / 空值统一成空串，不给导出留下 'None' 字样。"""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "是" if value else "否"
+    return str(value).strip()
+
+
+def normalize_failure_samples(samples: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
+    """调用契约：``None`` = 这次导出不带证据维度（保持既有产物不变）；
+    列表 = 带证据维度，空列表就是空态章节。"""
+    if samples is None:
+        return None
+    return [dict(item) for item in samples if isinstance(item, dict)]
+
+
+def _sample_total(samples: list[dict[str, Any]]) -> int:
+    for sample in samples:
+        raw = sample.get("failureTotal")
+        if raw not in (None, ""):
+            try:
+                return max(int(raw), len(samples))
+            except (TypeError, ValueError):
+                break
+    return len(samples)
+
+
+def _sample_evidence_no(sample: dict[str, Any]) -> str:
+    """证据编号：与缺陷描述里的 ``EV-<id>`` 同一个号，两处下钻到同一条证据。"""
+    evidence_id = sample.get("evidenceId")
+    return f"{EVIDENCE_NO_PREFIX}{int(evidence_id)}" if evidence_id not in (None, "") else ""
+
+
+def _sample_cells(sample: dict[str, Any]) -> dict[str, str]:
+    """把一个失败样本拉平成六种格式共用的字段：标识 / 用例 / 结论 / 耗时时间 / 证据 / 要点。"""
+    points_raw = sample.get("failurePoints")
+    points = [ _text(item) for item in points_raw if _text(item) ] if isinstance(points_raw, list) else []
+    timing = " / ".join(
+        value for value in (
+            f"{int(sample.get('durationMs') or 0)}ms" if sample.get("durationMs") is not None else "",
+            _text(sample.get("executedAt")),
+        ) if value
+    )
+    evidence_no = _sample_evidence_no(sample)
+    attachments = sample.get("attachments")
+    attachment_marks: list[str] = []
+    if isinstance(attachments, list):
+        for item in attachments:
+            if not isinstance(item, dict):
+                continue
+            name = _text(item.get("fileName")) or _text(item.get("attachmentId"))
+            link = _text(item.get("previewUrl"))
+            if name or link:
+                attachment_marks.append(f"{name} → {link}" if link else name)
+    evidence_cell = " / ".join(
+        value for value in (
+            evidence_no or "无快照",
+            _text(sample.get("drillUrl") or sample.get("evidenceUrl")),
+            "附件：" + "、".join(attachment_marks[:3]) if attachment_marks else "",
+        ) if value
+    )
+    return {
+        "key": _text(sample.get("sampleKey")) or f"#{_text(sample.get('runCaseId'))}",
+        "case": " ".join(value for value in (_text(sample.get("caseNo")), _text(sample.get("title"))) if value),
+        "result": " / ".join(
+            value for value in (_text(sample.get("resultLabel")) or _text(sample.get("result")),
+                                _text(sample.get("sourceTypeLabel"))) if value
+        ),
+        "timing": timing,
+        "evidence": evidence_cell,
+        "points": "；".join(points[:MAX_FAILURE_POINTS]) or _text(sample.get("failureSummary"))
+                   or (FAILURE_NO_EVIDENCE_TEXT if not evidence_no else "无失败要点"),
+        "evidenceNo": evidence_no,
+        "attachments": "、".join(attachment_marks),
+        "summary": _text(sample.get("evidenceSummary")),
+    }
+
+
+def _visible_samples(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return samples[:MAX_FAILURE_SAMPLES]
+
+
+def failure_markdown_section(samples: list[dict[str, Any]] | None) -> str:
+    """证据章节的 Markdown 形态：报告详情接口与前端章节共用这一份口径。"""
+    if samples is None:
+        return ""
+    heading = f"## {FAILURE_SECTION_LABEL}"
+    if not samples:
+        return f"{heading}（0 条）\n\n{FAILURE_EMPTY_TEXT}\n"
+    total = _sample_total(samples)
+    shown = _visible_samples(samples)
+    suffix = f"（共 {total} 条，以下 {len(shown)} 条）" if total > len(shown) else f"（{total} 条）"
+    lines = [f"{heading}{suffix}", ""]
+    lines.append("| 样本标识 | 用例 | 结论 | 耗时 / 执行时间 | 证据 | 失败要点 |")
+    lines.append("| --- | --- | --- | --- | --- | --- |")
+    for sample in shown:
+        cell = _sample_cells(sample)
+        lines.append(
+            f"| `{cell['key']}` | {cell['case'] or '-'} | {cell['result'] or '-'} | "
+            f"{cell['timing'] or '-'} | {cell['evidence']} | {cell['points']} |"
+        )
+    lines.append("")
+    for sample in shown:
+        cell = _sample_cells(sample)
+        lines.append(f"### {cell['key']} {cell['case']}".rstrip())
+        lines.append(f"- 结论：{cell['result'] or '-'}")
+        lines.append(f"- 耗时 / 执行时间：{cell['timing'] or '-'}")
+        drill = _text(sample.get("drillUrl")) or _text(sample.get("evidenceUrl"))
+        lines.append(f"- 证据下钻：{drill or FAILURE_NO_EVIDENCE_TEXT}")
+        if cell["attachments"]:
+            lines.append(f"- 证据附件：{cell['attachments']}")
+        if cell["summary"]:
+            lines.append("")
+            lines.append("```text")
+            lines.append(cell["summary"])
+            lines.append("```")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _html_row(cells: dict[str, str], sample: dict[str, Any]) -> str:
+    """单行 HTML：证据列给可点的下钻链接，导出文件双击就能跳到当次执行证据。"""
+    drill = _text(sample.get("drillUrl")) or _text(sample.get("evidenceUrl"))
+    evidence = html_lib.escape(cells["evidenceNo"]) if cells["evidenceNo"] else "无快照"
+    if drill:
+        evidence = f'{evidence} <a href="{html_lib.escape(drill, quote=True)}">{html_lib.escape(drill)}</a>'
+    cells_html = [
+        f"<code>{html_lib.escape(cells['key'])}</code>",
+        html_lib.escape(cells["case"] or "-"),
+        html_lib.escape(cells["result"] or "-"),
+        html_lib.escape(cells["timing"] or "-"),
+        evidence,
+        html_lib.escape(cells["points"]),
+    ]
+    return f"<tr>{''.join(f'<td>{item}</td>' for item in cells_html)}</tr>"
+
+
+def failure_html_section(samples: list[dict[str, Any]] | None) -> str:
+    """证据章节的 HTML 形态：独立渲染一份表格 + 每条样本的证据摘要块。"""
+    if samples is None:
+        return ""
+    if not samples:
+        return (
+            f'<h2>{html_lib.escape(FAILURE_SECTION_LABEL)}（0 条）</h2>\n'
+            f'<p class="evidence-empty">{html_lib.escape(FAILURE_EMPTY_TEXT)}</p>\n'
+        )
+    total = _sample_total(samples)
+    shown = _visible_samples(samples)
+    suffix = f"（共 {total} 条，以下 {len(shown)} 条）" if total > len(shown) else f"（{total} 条）"
+    parts = [
+        f'<h2>{html_lib.escape(FAILURE_SECTION_LABEL)}{html_lib.escape(suffix)}</h2>',
+        '<table class="evidence-table">',
+        "<thead><tr>"
+        + "".join(f"<th>{name}</th>" for name in
+                  ("样本标识", "用例", "结论", "耗时 / 执行时间", "证据", "失败要点"))
+        + "</tr></thead><tbody>",
+    ]
+    for sample in shown:
+        parts.append(_html_row(_sample_cells(sample), sample))
+    parts.append("</tbody></table>")
+    for sample in shown:
+        cell = _sample_cells(sample)
+        body_lines = [
+            (
+                f"<div><strong>{html_lib.escape(cell['key'])}</strong>"
+                f"　{html_lib.escape(cell['case'])}</div>"
+            ),
+            (
+                f"<div>结论：{html_lib.escape(cell['result'] or '-')}"
+                f"　耗时 / 执行时间：{html_lib.escape(cell['timing'] or '-')}</div>"
+            ),
+        ]
+        if cell["attachments"]:
+            body_lines.append(
+                f"<div>证据附件：{html_lib.escape(cell['attachments'])}</div>"
+            )
+        if cell["summary"]:
+            body_lines.append(f"<pre>{html_lib.escape(cell['summary'])}</pre>")
+        parts.append(f'<div class="evidence-block">{"".join(body_lines)}</div>')
+    return "\n".join(parts) + "\n"
+
+
+def failure_pdf_flowables(
+    samples: list[dict[str, Any]] | None,
+    styles: dict[str, Any],
+    font_name: str,
+) -> list[Any]:
+    """证据章节的 PDF 形态：同一份字段走 reportlab 表格 + 摘要段落，不引入新依赖。"""
+    if samples is None:
+        return []
+    from reportlab.platypus import Paragraph, Preformatted, Spacer
+
+    if not samples:
+        return [
+            Paragraph(f"{FAILURE_SECTION_LABEL}（0 条）", styles["h2"]),
+            Paragraph(FAILURE_EMPTY_TEXT, styles["body"]),
+            Spacer(1, 8),
+        ]
+    total = _sample_total(samples)
+    shown = _visible_samples(samples)
+    suffix = f"（共 {total} 条，以下 {len(shown)} 条）" if total > len(shown) else f"（{total} 条）"
+    story: list[Any] = [Paragraph(_inline_markup(FAILURE_SECTION_LABEL + suffix), styles["h2"])]
+    table_data = [["样本标识", "用例", "结论", "耗时 / 执行时间", "证据", "失败要点"]]
+    for sample in shown:
+        cell = _sample_cells(sample)
+        drill = _text(sample.get("drillUrl")) or _text(sample.get("evidenceUrl"))
+        evidence = f"{cell['evidenceNo'] or '无快照'} {drill}".strip()
+        table_data.append([
+            cell["key"], cell["case"] or "-", cell["result"] or "-",
+            cell["timing"] or "-", evidence, cell["points"],
+        ])
+    story.append(_pdf_table([[ _inline_markup(text) for text in row] for row in table_data], font_name))
+    story.append(Spacer(1, 8))
+    for sample in shown:
+        cell = _sample_cells(sample)
+        story.append(Paragraph(_inline_markup(f"{cell['key']} {cell['case']}".strip()), styles["h3"]))
+        lines = [
+            f"结论：{cell['result'] or '-'}",
+            f"耗时 / 执行时间：{cell['timing'] or '-'}",
+            "证据下钻："
+            + (_text(sample.get("drillUrl")) or _text(sample.get("evidenceUrl")) or FAILURE_NO_EVIDENCE_TEXT),
+        ]
+        if cell["attachments"]:
+            lines.append(f"证据附件：{cell['attachments']}")
+        story.append(Paragraph(_inline_markup("　".join(lines)), styles["body"]))
+        if cell["summary"]:
+            story.append(Preformatted(cell["summary"], styles["code"]))
+        story.append(Spacer(1, 6))
+    return story
+
+
 # ---------------- 章节解析 ----------------
 
 _SECTION_BY_LABEL = {label: key for key, label in SECTION_LABELS.items()}
@@ -262,8 +514,12 @@ def parse_sections(markdown_text: str) -> list[dict[str, Any]]:
 
 # ---------------- Markdown ----------------
 
-def render_markdown(report: dict[str, Any], items: list[dict[str, Any]]) -> str:
-    """渲染 Markdown：frontmatter + 元信息 + 章节 + 正文。"""
+def render_markdown(
+    report: dict[str, Any],
+    items: list[dict[str, Any]],
+    samples: list[dict[str, Any]] | None = None,
+) -> str:
+    """渲染 Markdown：frontmatter + 元信息 + 章节 + 失败样本证据 + 正文。"""
     title = str(report.get("title") or "测试报告")
     frontmatter = "\n".join([
         "---",
@@ -288,6 +544,10 @@ def render_markdown(report: dict[str, Any], items: list[dict[str, Any]]) -> str:
         blocks.append(f"## 摘要\n\n{summary}")
 
     blocks.extend(_sections_markdown(items))
+
+    evidence_block = failure_markdown_section(normalize_failure_samples(samples))
+    if evidence_block:
+        blocks.append(evidence_block.rstrip())
 
     content = _residual_content(str(report.get("content") or ""), items)
     if content:
@@ -323,6 +583,9 @@ hr { border: none; border-top: 1px solid #e5e6eb; margin: 20px 0; }
 .meta { margin: 0 0 20px; padding: 12px 16px; background: #f7f8fa; border-radius: 6px; font-size: 14px; }
 .meta div { margin: 3px 0; }
 .footer { margin-top: 36px; padding-top: 12px; border-top: 1px solid #e5e6eb; color: #909399; font-size: 12px; }
+.evidence-block { margin: 10px 0; padding: 8px 12px; border-left: 3px solid #f0a020; background: #fcfaf5; }
+.evidence-block pre { white-space: pre-wrap; }
+.evidence-empty { color: #909399; }
 @media print {
   body { padding: 0; max-width: none; font-size: 12pt; }
   h2 { page-break-after: avoid; }
@@ -360,8 +623,13 @@ def render_html(
     report: dict[str, Any],
     items: list[dict[str, Any]],
     print_view: bool = False,
+    samples: list[dict[str, Any]] | None = None,
 ) -> str:
-    """渲染单文件 HTML；print_view=True 时打开即进入打印友好布局。"""
+    """渲染单文件 HTML；print_view=True 时打开即进入打印友好布局。
+
+    ``samples`` 是 GAP-35 的失败样本快照：这里单独渲染一份 HTML 表格，
+    不走 Markdown 通道，所以 md 侧章节出问题也不会连累 html 取证。
+    """
     title = str(report.get("title") or "测试报告")
     blocks: list[str] = []
     summary = str(report.get("summary") or "").strip()
@@ -384,6 +652,7 @@ def render_html(
         blocks.append("## 正文\n\n" + content)
 
     body = "\n\n".join(_markdown_to_html(_escape_html_tags(block)) for block in blocks)
+    evidence_html = failure_html_section(normalize_failure_samples(samples))
     action = ""
     if print_view:
         action = (
@@ -398,6 +667,7 @@ def render_html(
         f"<title>{html_lib.escape(title)}</title>\n"
         f"<style>{_HTML_CSS}</style>\n</head>\n<body>\n"
         f"<h1>{html_lib.escape(title)}</h1>\n{_meta_html(report)}\n{action}\n{body}\n"
+        f"{evidence_html}\n"
         f'<div class="footer">由 AITestPlatform 导出于 {utcnow_iso()}</div>\n'
         "</body>\n</html>\n"
     )
@@ -628,7 +898,11 @@ def _pdf_flowables(
     return flowables
 
 
-def render_pdf(report: dict[str, Any], items: list[dict[str, Any]]) -> tuple[bytes, bool]:
+def render_pdf(
+    report: dict[str, Any],
+    items: list[dict[str, Any]],
+    samples: list[dict[str, Any]] | None = None,
+) -> tuple[bytes, bool]:
     """渲染 PDF，返回 (字节流, 字体降级告警)。"""
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_LEFT
@@ -721,6 +995,9 @@ def render_pdf(report: dict[str, Any], items: list[dict[str, Any]]) -> tuple[byt
     if content:
         story.append(Paragraph("正文", styles["h2"]))
         story.extend(_pdf_flowables(content, styles, font_name))
+
+    # GAP-35：失败样本证据章节在 PDF 里单独排一次，不借道 Markdown
+    story.extend(failure_pdf_flowables(normalize_failure_samples(samples), styles, font_name))
 
     story.append(Spacer(1, 14))
     story.append(

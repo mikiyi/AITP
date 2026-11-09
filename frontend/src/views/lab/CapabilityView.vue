@@ -634,8 +634,43 @@
           </el-select>
         </el-form-item>
       </el-form>
-      <el-table :data="adoptRows" size="small" border max-height="320">
-        <el-table-column prop="title" label="用例标题" min-width="240" show-overflow-tooltip />
+      <div v-if="adoptDedupText" class="adopt-dedup">
+        <span class="adopt-dedup__text">
+          {{ adoptDedupText }}；疑似重复 {{ adoptSuspectRows.length }} 条已默认不勾选，
+          确认过确实不是重复可以再一键恢复。
+        </span>
+        <el-button
+          v-if="adoptSuspectRows.length"
+          size="small"
+          :type="adoptSuspectsRestored ? 'default' : 'warning'"
+          @click="toggleAdoptSuspects"
+        >
+          {{ adoptSuspectsRestored ? '取消勾选疑似重复' : `一键恢复 ${adoptSuspectRows.length} 条` }}
+        </el-button>
+      </div>
+      <el-table
+        ref="adoptTable"
+        :data="adoptRows"
+        size="small"
+        border
+        max-height="320"
+        @selection-change="onAdoptSelectionChange"
+      >
+        <el-table-column type="selection" width="42" />
+        <el-table-column label="用例标题" min-width="240" show-overflow-tooltip>
+          <template #default="scope">
+            <span class="adopt-dup-title">
+              <span>{{ scope.row.title }}</span>
+              <el-tooltip
+                v-if="scope.row.dupHit"
+                :content="dupHitTip(scope.row.dupHit)"
+                placement="top"
+              >
+                <el-tag size="small" type="warning" effect="plain">疑似重复</el-tag>
+              </el-tooltip>
+            </span>
+          </template>
+        </el-table-column>
         <el-table-column prop="caseType" label="类型" width="100" />
         <el-table-column prop="priority" label="优先级" width="90" />
         <el-table-column label="步骤数" width="80" align="right">
@@ -648,7 +683,7 @@
         :closable="false"
         show-icon
         class="adopt-alert"
-        title="AI 生成的用例需人工复核后再执行；采纳后状态为「未执行」"
+        :title="`AI 生成的用例需人工复核后再执行；本次已勾选 ${adoptSelection.length} 条，采纳后状态为「未执行」`"
       />
       <el-empty v-if="!adoptRows.length" description="产出不是用例 JSON 数组，无法自动采纳" :image-size="80" />
       <template #footer>
@@ -656,10 +691,10 @@
         <el-button
           type="primary"
           :loading="adopting"
-          :disabled="!adoptRows.length"
+          :disabled="!adoptSelection.length"
           @click="confirmAdopt"
         >
-          采纳 {{ adoptRows.length }} 条
+          采纳 {{ adoptSelection.length }} 条
         </el-button>
       </template>
     </el-dialog>
@@ -752,7 +787,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import type { UploadRequestOptions } from 'element-plus'
@@ -789,6 +824,8 @@ import type {
   DocumentAttachment,
   ImageAttachment,
   KnowledgeRef,
+  LabDedupConclusion,
+  LabDedupHit,
   MaskInfo,
   MindNode,
   ModuleOption,
@@ -856,6 +893,8 @@ const egressWarning = ref('')
 const reviewRequired = ref(false)
 const refs = ref<KnowledgeRef[]>([])
 const maskInfo = ref<MaskInfo | null>(null)
+/** GAP-29：本次产出的去重结论，由 done 帧带回；换产出必须跟着重置，否则旧判定会勾新行。 */
+const dedupInfo = ref<LabDedupConclusion | null>(null)
 const maskNotice = computed(() => {
   const info = maskInfo.value
   if (!info?.applied || !info.count) {
@@ -1643,12 +1682,15 @@ async function run(): Promise<void> {
   refs.value = []
   reviewRequired.value = false
   maskInfo.value = null
+  dedupInfo.value = null
   const startedAt = Date.now()
   try {
     await streamPost(
       `/lab/${capability.value}/stream`,
       {
         variables: buildVariables(),
+        // 去重比对域跟着当前项目：不传就只剩功能点，没选功能点时库里一条也比对不上
+        projectId: appStore.currentProjectId ?? undefined,
         moduleId: moduleId.value ?? undefined,
         attachmentIds: images.value.map((item) => item.attachmentId),
         templateId: useTemplate.value && templateId.value ? templateId.value : undefined,
@@ -1687,6 +1729,7 @@ async function run(): Promise<void> {
           }
           finished.value = true
           reviewRequired.value = frame.reviewRequired === true
+          dedupInfo.value = readDedupConclusion(frame.dedup)
           latencyMs.value = Date.now() - startedAt
           // 用例类能力同步生成 Excel 产出，产出面板里直接可下载
           void prepareExcelArtifact()
@@ -1814,9 +1857,28 @@ async function confirmSaveKnowledge(): Promise<void> {
   }
 }
 
+/** 采纳弹窗里的一行：用例载荷 + 本次判重命中（没命中就没有 dupHit）。 */
+interface AdoptRow extends AdoptCaseItem {
+  dupHit?: LabDedupHit
+}
+
+/** done 帧里的 dedup 是未知类型：不是对象就当作本次没做判定。 */
+function readDedupConclusion(raw: unknown): LabDedupConclusion | null {
+  if (!raw || typeof raw !== 'object') {
+    return null
+  }
+  return raw as LabDedupConclusion
+}
+
 const adoptVisible = ref(false)
 const adopting = ref(false)
-const adoptRows = ref<AdoptCaseItem[]>([])
+const adoptRows = ref<AdoptRow[]>([])
+/** 当前勾选集：默认不含疑似重复，用户可自行恢复。 */
+const adoptSelection = ref<AdoptRow[]>([])
+const adoptTable = ref<{
+  clearSelection: () => void
+  toggleRowSelection: (row: AdoptRow, selected: boolean) => void
+} | null>(null)
 const requirementOptions = ref<Requirement[]>([])
 const adoptModuleOptions = ref<ModuleOption[]>([])
 const adoptCaseVersionOptions = ref<Array<{ label: string; value: number }>>([])
@@ -1916,14 +1978,110 @@ function toAdoptItems(raw: unknown): AdoptCaseItem[] {
   return items
 }
 
+/**
+ * 把本次判重命中贴到采纳行上。
+ * 不用 hit.index：它对齐的是收尾后的产出数组，而 toAdoptItems 还会再滤掉没标题的条目，
+ * 下标到这里已经二次错位。标题是去重的比对主键，同标题的副本一起标——宁可多标，不漏标。
+ */
+function withDupMarks(rows: AdoptCaseItem[]): AdoptRow[] {
+  // 已被增量模式摘走的命中不在产出里，剩下的才需要让人复核
+  const hits = (dedupInfo.value?.items ?? []).filter((hit) => hit.dropped !== true)
+  const byTitle = new Map<string, LabDedupHit>()
+  for (const hit of hits) {
+    const key = String(hit.title ?? '').trim()
+    if (key && !byTitle.has(key)) {
+      byTitle.set(key, hit)
+    }
+  }
+  return rows.map((row) => {
+    const hit = byTitle.get(String(row.title ?? '').trim())
+    return hit ? { ...row, dupHit: hit } : { ...row }
+  })
+}
+
+const adoptSuspectRows = computed(() => adoptRows.value.filter((row) => row.dupHit))
+
+/** 疑似重复是否已全部勾回：决定按钮是「恢复」还是「取消勾选」。 */
+const adoptSuspectsRestored = computed(
+  () =>
+    adoptSuspectRows.value.length > 0 &&
+    adoptSuspectRows.value.every((row) => adoptSelection.value.includes(row)),
+)
+
+/** 判定口径与比对基数：让用户知道少勾的这几条是按什么判出来的。 */
+const adoptDedupText = computed(() => {
+  const info = dedupInfo.value
+  if (!info || !(Number(info.hitCount ?? 0) || adoptSuspectRows.value.length)) {
+    return ''
+  }
+  const label = String(info.modeLabel || info.mode || '标记')
+  const hits = Number(info.hitCount ?? 0)
+  const shown = (info.items ?? []).length
+  const base =
+    `判定口径「${label}」：比对产出 ${Number(info.compared ?? 0)} 条、` +
+    `库内基线 ${Number(info.existingTotal ?? 0)} 条，命中 ${hits} 条`
+  return hits > shown ? `${base}，另有 ${hits - shown} 条未逐条列出` : base
+})
+
+/** 勾选集默认排除疑似重复。 */
+function applyAdoptSelection(): void {
+  const table = adoptTable.value
+  if (!table) {
+    return
+  }
+  table.clearSelection()
+  for (const row of adoptRows.value) {
+    table.toggleRowSelection(row, !row.dupHit)
+  }
+}
+
+/** 表格实例要等弹窗渲染完才拿到，重试几次比赌一个 nextTick 稳。 */
+async function applyAdoptSelectionWhenMounted(): Promise<void> {
+  for (let tick = 0; tick < 3; tick += 1) {
+    await nextTick()
+    if (adoptTable.value) {
+      applyAdoptSelection()
+      return
+    }
+  }
+}
+
+function onAdoptSelectionChange(rows: AdoptRow[]): void {
+  adoptSelection.value = rows
+}
+
+/** 同一个开关负责恢复与反向取消，只动命中行。 */
+function toggleAdoptSuspects(): void {
+  const table = adoptTable.value
+  if (!table) {
+    return
+  }
+  const pick = !adoptSuspectsRestored.value
+  for (const row of adoptSuspectRows.value) {
+    table.toggleRowSelection(row, pick)
+  }
+  ElMessage.success(
+    pick ? `已恢复勾选 ${adoptSuspectRows.value.length} 条疑似重复` : '已取消勾选疑似重复',
+  )
+}
+
+/** 命中依据说人话：撞了谁、像到多少、为什么算重复。 */
+function dupHitTip(hit: LabDedupHit): string {
+  const where = hit.source === 'batch' ? '本批次' : '库内'
+  const percent = Math.round(Number(hit.similarity ?? 0) * 100)
+  const target = hit.matchedTitle || hit.matchedRef || '未知用例'
+  return `${hit.reason || '标题或步骤高度相似'}｜相似度 ${percent}%｜撞于 ${where}「${target}」`
+}
+
 async function openAdopt(): Promise<void> {
   try {
     const parsed = JSON.parse(output.value) as unknown
-    adoptRows.value = toAdoptItems(parsed)
+    adoptRows.value = withDupMarks(toAdoptItems(parsed))
   } catch {
     adoptRows.value = []
     ElMessage.warning('产出不是合法 JSON，无法自动采纳')
   }
+  adoptSelection.value = []
   if (!adoptRows.value.length) {
     adoptVisible.value = true
     return
@@ -1935,11 +2093,16 @@ async function openAdopt(): Promise<void> {
     adoptForm.versionId = versionId.value
   }
   adoptVisible.value = true
+  await applyAdoptSelectionWhenMounted()
 }
 
 async function confirmAdopt(): Promise<void> {
   if (!adoptForm.projectId) {
     ElMessage.warning('请先选择项目')
+    return
+  }
+  if (!adoptSelection.value.length) {
+    ElMessage.warning('请先勾选要采纳的用例')
     return
   }
   adopting.value = true
@@ -1949,7 +2112,7 @@ async function confirmAdopt(): Promise<void> {
       moduleId: adoptForm.moduleId,
       requirementId: adoptForm.requirementId,
       versionId: adoptForm.versionId,
-      cases: adoptRows.value,
+      cases: adoptSelection.value,
     })
     ElMessage.success(`已采纳 ${result.count} 条用例`)
     adoptVisible.value = false
@@ -2626,6 +2789,31 @@ watch(
 
 .adopt-alert {
   margin-top: 12px;
+}
+
+/* GAP-29：去重结论贴着采纳表，勾没勾上少的条数要当场看得见 */
+.adopt-dedup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--aitp-note-warning) 16%, transparent);
+  border-left: 3px solid var(--aitp-note-warning);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--aitp-note-warning) 5%, var(--aitp-panel));
+}
+
+.adopt-dedup__text {
+  flex: 1;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.adopt-dup-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .mask-preview {

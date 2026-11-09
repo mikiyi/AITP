@@ -15,6 +15,7 @@ from typing import Any
 
 from ..common.pagination import MAX_PAGE_SIZE, Page, RowDict, build_page
 from .base import BaseRepository
+from .numbering import begin_claim
 
 #: 四类脚本
 CATEGORY_WEB = "web"
@@ -116,8 +117,13 @@ class AutomationScriptRepository(BaseRepository):
     searchable = ["name", "script_no", "description", "framework", "file_name"]
 
     def next_script_no(self, category: str) -> str:
-        """按类别前缀取下一个可用编号；软删的编号可以被复用。"""
+        """按类别前缀取下一个可用编号；软删的编号可以被复用。
+
+        script_no 上有全局唯一索引（uk_biz_automation_script_no），
+        取号必须与紧随其后的插入同处一个写事务，见 numbering.begin_claim。
+        """
         prefix = CATEGORY_PREFIX.get(category, "AUTO")
+        begin_claim(self.conn)
         rows = self.conn.execute(
             "SELECT script_no FROM biz_automation_script WHERE is_deleted = 0"
         ).fetchall()
@@ -160,6 +166,8 @@ class AutomationRunRepository(BaseRepository):
     searchable = ["run_no", "script_no", "script_name"]
 
     def next_run_no(self) -> str:
+        """run_no 同样带全局唯一索引，取号与插入共用一个写事务。"""
+        begin_claim(self.conn)
         rows = self.conn.execute(
             "SELECT run_no FROM biz_automation_run WHERE is_deleted = 0"
         ).fetchall()

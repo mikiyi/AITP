@@ -151,26 +151,8 @@ def run_case(
     return payload
 
 
-def run_all(
-    conn: sqlite3.Connection,
-    *,
-    project_id: int | None = None,
-    profile_id: int | None = None,
-) -> dict[str, Any]:
-    """跑一遍全部启用的案例，返回通过率。"""
-    repo = ValidationCaseRepository(conn)
-    cases = repo.enabled_cases()
-    results: list[dict[str, Any]] = []
-    for row in cases:
-        payload = run_case(
-            conn, int(row["id"]), project_id=project_id, profile_id=profile_id,
-        )
-        results.append({
-            "id": row["id"],
-            "name": row.get("name"),
-            "passed": payload["passed"],
-            "errors": payload["errors"],
-        })
+def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """把逐条案例的结果汇成通过率汇总，全量跑批按这个口径产出任务结果。"""
     passed = sum(1 for item in results if item["passed"])
     return {
         "total": len(results),

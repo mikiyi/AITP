@@ -11,6 +11,7 @@ from typing import Any
 
 from ..common.pagination import Page, RowDict, RowList
 from .base import BaseRepository
+from .numbering import begin_claim
 
 #: 清单状态
 REGRESSION_DRAFT = "draft"
@@ -62,12 +63,32 @@ class RegressionRepository(BaseRepository):
         counts = {result: 0 for result in ITEM_RESULTS}
         for row in rows:
             counts[str(row["result"])] = int(row["c"])
+        # GAP-33：自动执行占比要能统计——分子是「已真跑的自动条目」，分母是全部条目
+        auto = self.conn.execute(
+            "SELECT COUNT(*) AS total,"
+            " SUM(CASE WHEN result <> 'not_executed' THEN 1 ELSE 0 END) AS ran,"
+            " SUM(CASE WHEN evidence_id IS NOT NULL THEN 1 ELSE 0 END) AS evidenced"
+            " FROM biz_regression_item"
+            " WHERE regression_id = ? AND is_deleted = 0 AND exec_mode = 'auto'",
+            (pk,),
+        ).fetchone()
+        counts["total"] = sum(counts[key] for key in ITEM_RESULTS)
+        counts["autoTotal"] = int(auto["total"] or 0)
+        counts["autoExecuted"] = int(auto["ran"] or 0)
+        counts["autoEvidenced"] = int(auto["evidenced"] or 0)
+        counts["manualTotal"] = counts["total"] - counts["autoTotal"]
+        counts["executed"] = counts[ITEM_PASSED] + counts[ITEM_FAILED] + counts[ITEM_BLOCKED]
+        counts["evidenced"] = int(self.conn.execute(
+            "SELECT COUNT(*) FROM biz_regression_item"
+            " WHERE regression_id = ? AND is_deleted = 0 AND evidence_id IS NOT NULL",
+            (pk,),
+        ).fetchone()[0])
         return counts
 
     def sync_status(self, pk: int) -> str:
         """按明细结果回推整单状态。"""
         counts = self.stats_of(pk)
-        total = sum(counts.values())
+        total = sum(counts[result] for result in ITEM_RESULTS)
         if total == 0:
             status = REGRESSION_DRAFT
         elif counts[ITEM_NOT_EXECUTED] > 0:
@@ -96,6 +117,12 @@ class RegressionItemRepository(BaseRepository):
         return [dict(row) for row in rows]
 
     def next_seq(self, regression_id: int) -> int:
+        """明细序号取号：读放进写事务，避免并发追加拿到同一个 seq（同 GAP-26 编号口径）。
+
+        seq 本身没有唯一索引，撞号不会报错，但会让两条回归点排在同一位、
+        前端按 seq 定位时丢一条——所以按「不重复、不丢号」同标准处理。
+        """
+        begin_claim(self.conn)
         row = self.conn.execute(
             "SELECT COALESCE(MAX(seq), 0) FROM biz_regression_item"
             " WHERE regression_id = ? AND is_deleted = 0",
@@ -164,4 +191,9 @@ def item_summary(row: dict[str, Any]) -> dict[str, Any]:
         "executedBy": row.get("executed_by"),
         "executedAt": row.get("executed_at"),
         "createdAt": row.get("created_at"),
+        # GAP-33：执行方式与真跑定位字段（execMode=auto 的条目由服务端真跑回写）
+        "execMode": row.get("exec_mode") or "manual",
+        "caseId": row.get("case_id"),
+        "envId": row.get("env_id"),
+        "evidenceId": row.get("evidence_id"),
     }

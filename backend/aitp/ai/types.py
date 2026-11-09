@@ -26,6 +26,10 @@ class ResolvedAIConfig:
     locality: str = "custom"
     #: 凭证缺失时的可操作提示（本地 Key 模式会写明变量名与作用域）
     credential_hint: str = ""
+    #: GAP-30 档案级 token 单价（微元 / 1000 token）；两项都为 0 = 未配价，只报 token 不报钱
+    price_input_micros: int = 0
+    price_output_micros: int = 0
+    price_currency: str = "CNY"
 
     @property
     def has_api_key(self) -> bool:

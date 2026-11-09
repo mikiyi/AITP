@@ -325,6 +325,10 @@ _IMAGE_MODES: dict[str, tuple[str, object]] = {
     "JPEG": ("RGB", (72, 120, 200)),
 }
 
+#: Pillow 对这些格式只支持到某个最小边长：ICO 低于 16 时写出的是条目数为 0 的空头，
+#: 文件头合法但任何解码器都打不开，所以不能沿用通用的 8 起点。
+_MIN_IMAGE_SIDE: dict[str, int] = {"ICO": 16}
+
 
 def _payload_image(fmt: FileFormat, target: int) -> BuiltFile:
     from PIL import Image
@@ -332,7 +336,7 @@ def _payload_image(fmt: FileFormat, target: int) -> BuiltFile:
     pillow_format = fmt.builder.split(":", 1)[1] if ":" in fmt.builder else "PNG"
     mode, color = _IMAGE_MODES.get(pillow_format, ("RGB", (72, 120, 200)))
     # 边长只在「放大后仍明显小于请求大小」时增加：小请求保持最小结构，大请求少补些填充
-    side = 8
+    side = _MIN_IMAGE_SIDE.get(pillow_format, 8)
     while side < 512 and (side + 8) ** 2 * 4 <= target * 3 // 5:
         side += 8
     image = Image.new(mode, (side, side), color)  # type: ignore[arg-type]

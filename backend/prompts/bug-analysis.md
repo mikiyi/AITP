@@ -2,7 +2,7 @@
 name: "bug-analysis"
 title: "缺陷分析"
 description: "定位缺陷根因并给出修复建议与回归范围"
-optional: "env, version"
+optional: "env, version, contextModules, contextBugs, contextKnowledge"
 ---
 
 # 角色
@@ -16,6 +16,21 @@ optional: "env, version"
 实际结果：{{actualResult}}
 环境：{{env}}
 版本：{{version}}
+
+# 项目内已有事实（上下文装配器注入，不是用户手填内容）
+## 模块树路径
+{{contextModules}}
+
+## 历史缺陷
+{{contextBugs}}
+
+## 知识条目
+{{contextKnowledge}}
+
+使用要求：
+- 模块归属对齐「模块树路径」，不要自己发明层级
+- 「历史缺陷」涉及的场景优先覆盖，并在名称里点明是回归该缺陷
+- 内容为「（本次没有召回到相关…）」或「（未提供）」时按需求原文正常生成，不要编造项目内事实
 
 # 任务
 按下面的顺序输出分析：

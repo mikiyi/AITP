@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 CAP_REQUIREMENT_CONFIRM = "requirement_confirm"
@@ -67,6 +67,51 @@ TEMPLATE_CAPABILITIES = (
 AUTOMATION_CAPABILITIES = (CAP_AUTOMATION_SCRIPT, CAP_PERFORMANCE_SCRIPT)
 
 
+#: 上下文种类（GAP-27）：能力声明需要哪几类项目内事实，
+#: 具体召回与上限实现见 `services/context_assembler.py`。
+CTX_MODULE = "module"
+CTX_CASE = "case"
+CTX_BUG = "bug"
+CTX_KNOWLEDGE = "knowledge"
+
+#: 上下文档位：与 `services/context_assembler.py` 的 TIER_* 同一套取值
+TIER_LITE = "lite"
+TIER_STANDARD = "standard"
+TIER_FULL = "full"
+
+#: 上下文注入提示词的变量名：与 `services/context_assembler.py` 的 VARIABLE_OF_KIND 同一套，
+#: 只并入该能力实际声明的种类（没声明的种类模板里不出现，避免注入无意义的「未召回到」段落）。
+#: 模板（backend/prompts/*.md）必须有同名 optional 占位，`scripts/check_prompts.py` 校验两边一致。
+CONTEXT_VARIABLE_OF_KIND: dict[str, str] = {
+    CTX_MODULE: "contextModules",
+    CTX_CASE: "contextCases",
+    CTX_BUG: "contextBugs",
+    CTX_KNOWLEDGE: "contextKnowledge",
+}
+
+#: 固定顺序，保证同一声明在不同进程里得到同一变量表
+CONTEXT_VARIABLES: tuple[str, ...] = (
+    "contextModules", "contextCases", "contextBugs", "contextKnowledge",
+)
+
+
+def context_variables_of(kinds: tuple[str, ...]) -> tuple[str, ...]:
+    """声明的上下文种类 → 提示词占位变量名（按 CONTEXT_VARIABLES 的顺序）。"""
+    wanted = {CONTEXT_VARIABLE_OF_KIND[kind] for kind in kinds if kind in CONTEXT_VARIABLE_OF_KIND}
+    return tuple(name for name in CONTEXT_VARIABLES if name in wanted)
+
+
+def _with_context_variables(spec: "CapabilitySpec") -> "CapabilitySpec":
+    """声明了上下文种类 → 自动带上对应占位变量，避免声明与模板两头对不上。"""
+    if not spec.context_kinds:
+        return spec
+    extra = tuple(
+        name for name in context_variables_of(tuple(spec.context_kinds))
+        if name not in spec.variables
+    )
+    return replace(spec, variables=tuple(spec.variables) + extra)
+
+
 def features_of(code: str, spec: "CapabilitySpec") -> list[dict[str, str]]:
     """卡片上展示的能力特性；只列真实支持的功能，避免文案与实际不符。"""
     items: list[dict[str, str]] = []
@@ -103,6 +148,10 @@ class CapabilitySpec:
     mindmap: bool = False
     adoptable: bool = False
     category: str = CATEGORY_CORE
+    #: 本能力需要哪些项目上下文（GAP-27）：module/case/bug/knowledge；空 = 不装配
+    context_kinds: tuple[str, ...] = field(default_factory=tuple)
+    #: 上下文档位覆盖（lite/standard/full）；留空按系统配置或默认「标准」档
+    context_tier: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -116,6 +165,8 @@ class CapabilitySpec:
             "mindmap": self.mindmap,
             "adoptable": self.adoptable,
             "category": self.category,
+            "contextKinds": list(self.context_kinds),
+            "contextTier": self.context_tier,
             "features": features_of(self.code, self),
         }
 
@@ -127,6 +178,7 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
          "确认", "待确认", "clarify", "歧义"),
         prompt_code="requirement-confirm",
         variables=("requirement", "projectName"),
+        context_kinds=(CTX_MODULE, CTX_KNOWLEDGE),
     ),
     CAP_TESTPOINT_GENERATION: CapabilitySpec(
         CAP_TESTPOINT_GENERATION, "测试点脑图", "从需求拆出测试点大纲，可导出 Xmind 脑图文件",
@@ -135,6 +187,7 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
         variables=("requirement", "projectName", "moduleCount", "outputTemplate"),
         output_format=OUTPUT_JSON,
         mindmap=True,
+        context_kinds=(CTX_MODULE, CTX_CASE, CTX_KNOWLEDGE),
     ),
     CAP_CASE_GENERATION: CapabilitySpec(
         CAP_CASE_GENERATION, "用例生成", "生成可执行的测试用例",
@@ -143,6 +196,7 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
         variables=("requirement", "caseTypes", "count", "projectName", "outputTemplate"),
         output_format=OUTPUT_JSON,
         adoptable=True,
+        context_kinds=(CTX_MODULE, CTX_CASE, CTX_BUG, CTX_KNOWLEDGE),
     ),
     CAP_XMIND_TO_CASE: CapabilitySpec(
         CAP_XMIND_TO_CASE, "XMind 转用例", "把 xmind 大纲转成测试用例",
@@ -151,6 +205,7 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
         variables=("xmindOutline", "caseTypes", "projectName", "outputTemplate"),
         output_format=OUTPUT_JSON,
         adoptable=True,
+        context_kinds=(CTX_MODULE, CTX_CASE),
     ),
     CAP_BUG_ANALYSIS: CapabilitySpec(
         CAP_BUG_ANALYSIS, "缺陷分析", "定位缺陷根因并给出修复建议",
@@ -161,6 +216,7 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
             "bugTitle", "bugDescription", "reproSteps",
             "expectedResult", "actualResult", "env", "version",
         ),
+        context_kinds=(CTX_MODULE, CTX_BUG, CTX_KNOWLEDGE),
     ),
     CAP_LOG_ANALYSIS: CapabilitySpec(
         CAP_LOG_ANALYSIS, "日志排查", "从日志中定位异常原因",
@@ -181,6 +237,7 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
         variables=("changeScope", "affectedModules", "projectName"),
         output_format=OUTPUT_JSON,
         adoptable=True,
+        context_kinds=(CTX_MODULE, CTX_CASE, CTX_BUG),
     ),
     CAP_REPORT_GENERATION: CapabilitySpec(
         CAP_REPORT_GENERATION, "报告生成", "生成测试报告",
@@ -267,6 +324,12 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
 }
 
 CAPABILITY_CODES: tuple[str, ...] = tuple(CAPABILITIES.keys())
+
+#: 上下文声明与变量表同步：声明了 `context_kinds` 的能力自动并入 `CONTEXT_VARIABLES`，
+#: 模板（backend/prompts/*.md）必须同时提供这些 optional 占位，否则 check_prompts 会红。
+CAPABILITIES.update({
+    code: _with_context_variables(spec) for code, spec in CAPABILITIES.items()
+})
 
 #: 可以挂到功能点上的能力（提示词优化是工具，不占功能点能力位）
 BINDABLE_CAPABILITIES: tuple[str, ...] = (

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Any
 
 from flask import Blueprint, Response, request
@@ -10,6 +11,7 @@ from ..common.enums import REQUIREMENT_STATUS
 from ..common.validators import check_choice, optional_str, require_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
+from ..repositories.module_repo import ModuleRepository
 from ..repositories.requirement_repo import RequirementRepository
 from ..services import audit_service, tabular_export
 from .helpers import (
@@ -36,8 +38,10 @@ from .helpers import (
 
 bp = Blueprint("requirements", __name__)
 
-FILTERS = {"projectId": "project_id", "status": "status", "priority": "priority", "versionId": "version_id"}
-WRITE_FIELDS = {"title", "content", "source", "version", "status", "priority", "tags", "project_id", "version_id"}
+FILTERS = {"projectId": "project_id", "status": "status", "priority": "priority", "versionId": "version_id",
+           "moduleId": "module_id"}
+WRITE_FIELDS = {"title", "content", "source", "version", "status", "priority", "tags", "project_id",
+                "version_id", "module_id"}
 
 REQUIREMENT_TABULAR_COLUMNS: tuple[tuple[str, str], ...] = (
     ("reqNo", "需求编号"),
@@ -67,9 +71,21 @@ def _to_public(row: dict[str, Any]) -> dict[str, Any]:
         "priority": row.get("priority"),
         "tags": row.get("tags"),
         "aiTaskId": row.get("ai_task_id"),
+        # GAP-36：需求直挂功能点（模块/子模块/功能点三级里的任一节点），可为空
+        "moduleId": row.get("module_id"),
+        "modulePath": row.get("module_path") or "",
         "createdAt": row.get("created_at"),
         "updatedAt": row.get("updated_at"),
     }
+
+
+def _with_module_path(conn: sqlite3.Connection, item: dict[str, Any]) -> dict[str, Any]:
+    """GAP-36：把功能点 id 翻成「父/子/功能点」路径，追溯与需求页共用同一口径。"""
+    module_id = item.get("moduleId")
+    item["modulePath"] = (
+        ModuleRepository(conn).path_text(int(module_id), project_name="") if module_id else ""
+    )
+    return item
 
 
 @bp.get("")
@@ -80,7 +96,9 @@ def list_requirements() -> Response:
     filters = query_filters(FILTERS)
     page = repo.list(filters, keyword_of() or None, page_num=page_num, page_size=page_size)
     payload = page_payload(page)
-    payload["list"] = attach_version_codes(conn, [_to_public(row) for row in payload["list"]])
+    payload["list"] = attach_version_codes(
+        conn, [_with_module_path(conn, _to_public(row)) for row in payload["list"]]
+    )
     return ok(payload)
 
 
@@ -124,7 +142,7 @@ def get_requirement(pk: str) -> Response:
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "需求不存在")
     guard_project_scope(row, scope_arg(), "需求")
-    return ok(_to_public(row))
+    return ok(_with_module_path(conn, _to_public(row)))
 
 
 @bp.post("")
@@ -138,6 +156,10 @@ def create_requirement() -> Response:
         conn, "biz_project_version", data.get("versionId"), project_id, "项目版本", "versionId"
     )
     status = check_choice(data.get("status"), REQUIREMENT_STATUS, "status", "draft") or "draft"
+    # GAP-36：需求可直挂功能点（模块 / 子模块 / 功能点任一节点），不挂则为空
+    module_id = check_ref_project(
+        conn, "biz_module", data.get("moduleId"), project_id, "功能点", "moduleId"
+    )
     repo = RequirementRepository(conn)
     new_id = repo.insert({
         "project_id": project_id,
@@ -147,13 +169,14 @@ def create_requirement() -> Response:
         "source": optional_str(data.get("source"), "source", 200),
         "version": optional_str(data.get("version"), "version", 50),
         "version_id": version_id,
+        "module_id": module_id,
         "status": status,
         "priority": optional_str(data.get("priority"), "priority", 20),
         "tags": optional_str(data.get("tags"), "tags", 500),
     })
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_CREATE, audit_service.RESOURCE_REQUIREMENT, new_id, title)
-    return ok(_to_public(RequirementRepository(conn).get(new_id) or {}))
+    return ok(_with_module_path(conn, _to_public(RequirementRepository(conn).get(new_id) or {})))
 
 
 @bp.put("/<pk>")
@@ -172,6 +195,12 @@ def update_requirement(pk: str) -> Response:
             conn, "biz_project_version", data["versionId"],
             row.get("project_id"), "项目版本", "versionId",
         )
+    if "moduleId" in data or "module_id" in data:
+        # GAP-36：挂 / 换 / 摘功能点都走同一条项目归属校验（跨项目直接拒）
+        payload["module_id"] = check_ref_project(
+            conn, "biz_module", data.get("moduleId", data.get("module_id")),
+            row.get("project_id"), "功能点", "moduleId",
+        )
     payload.pop("projectId", None)
     payload.pop("project_id", None)
     if "status" in payload:
@@ -180,7 +209,7 @@ def update_requirement(pk: str) -> Response:
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_REQUIREMENT, target,
           str(payload.get("title", row.get("title", "")) or ""), {"fields": sorted(payload.keys())})
-    return ok(_to_public(repo.get(target) or {}))
+    return ok(_with_module_path(conn, _to_public(repo.get(target) or {})))
 
 
 @bp.delete("/<pk>")

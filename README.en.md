@@ -11,6 +11,28 @@ It folds the AI lab, test cases, defects, log analysis, SQL analysis, regression
 - AI settings are read from local environment variables, from in-app configuration, and from local models (Ollama).
 - When there is no cloud model, the model is unavailable, or the network is down, AITP degrades to local rules automatically and never blocks the main workflow.
 
+## Running demo
+
+Both demos below run on a **local Ollama mock model** (`docs/screenshots/` holds real screenshots, not mockups):
+
+**AI capability cards · test-case generation** — pick a capability card → fill in the requirement → the local model produces structured test cases (positive / exception / boundary / interface), exportable to Excel/Word or adopted as cases in one click:
+
+![AI capability test-case generation demo](docs/screenshots/demo-ai-capability.gif)
+
+**Knowledge-base Q&A assistant** — enter a knowledge item into the review pool → ask a question → the assistant searches the knowledge base first, then lets the model synthesize, with `[K1]`-style citation markers:
+
+![Knowledge-base Q&A assistant demo](docs/screenshots/demo-knowledge-assistant.gif)
+
+> The demo uses a local mock model as the default profile and consumes no cloud quota; point it at a cloud key and the same pipeline calls a real LLM.
+
+**Home dashboard** — data overview, knowledge-base Q&A entry, customizable cards:
+
+![Home dashboard](docs/screenshots/01-dashboard.png)
+
+**Test cases** — browse by function-point tree, filter, import/export, coverage matrix:
+
+![Test case list](docs/screenshots/02-cases.png)
+
 ---
 
 ## Quick start
@@ -59,7 +81,13 @@ The launcher checks the port first: if AITP is already running it just opens the
 
 ## Feature map
 
-Frontend: 45 routes / 46 page components. Backend: 33 blueprints / 310 endpoints, all under `/api/v1`.
+Frontend: 45 routes / 46 page components. Backend: 33 blueprints / 313 endpoints, all under `/api/v1`.
+
+### First-launch tour and demo project
+
+- On first launch with an empty database, the home page automatically opens a four-step tour: configure an AI model → load the demo project → run an AI generation → view reports and traceability. It can be skipped; once completed or skipped it no longer auto-opens, and upgrading an existing database does not disturb the user by default.
+- "Load demo project" appends the `DEMO-EC` sample (requirements / cases / defects / knowledge / reports + the executable API assertion script `AUTO-API-001`). It rebuilds only the demo itself, never touches existing data, and can be clicked repeatedly to rebuild; the empty project list also offers one-click loading.
+- "Reopen first-launch tour" at the top-right of the help page (`/help`) replays it anytime; state endpoint `GET/POST /api/v1/onboarding`, injection endpoint `POST /api/v1/onboarding/demo`.
 
 ### Home
 
@@ -113,26 +141,32 @@ Page: **Task list** (`/todos`)
 - **Capability cards are driven by the prompt library**
 - **Smart routing**: type one sentence and the best-matching capability is selected automatically
 - **Pre-flight check**: before running, it lists missing items, completeness, primary/auxiliary tasks and execution order
+- **Context assembly**: modules, existing cases, defects and knowledge are recalled per project/feature point and injected into the prompt; tiers are lite / standard / full, defaulting to standard (GAP-27)
+- **Output schema validation**: results are validated against a JSON Schema; missing or mistyped fields are blocked on the spot with a retryable Chinese message (GAP-28)
+- **Generation de-duplication**: new output is compared against cases already in the library, in "mark suspected" or "incremental against baseline" mode, and suspected items are unchecked by default (GAP-29)
+- **Cost accounting**: per-profile unit prices convert every call into tokens and money; daily/monthly budgets and per-call token limits are soft warnings that never block (GAP-30)
 - **Session records**: every run leaves a trace — input, output, model, usage and degradation
-- **Streaming output**: SSE increments; if the primary model fails, a degradation notice appears before switching models
+- **Streaming output**: the request returns a task id immediately and the frontend polls `framesUrl` for incremental frames (long connections no longer occupy sync workers); if the primary model fails, a degradation notice appears before switching models
 
 ### Test assets
 
 | Module | Capabilities |
 |---|---|
 | Projects | CRUD, current-project switching, status management |
-| Requirements | Maintenance, module linking, bulk delete, export |
+| Requirements | Maintenance, direct feature-point linking (module / sub-module / feature), bulk delete, export |
 | Test cases | CRUD, status transitions, xlsx import/export, bulk execution |
-| Defects | CRUD, state-machine transitions, linked test cases, log attachments |
+| Defects | CRUD, state-machine transitions, linked test cases, log attachments, drill-down into original execution evidence |
+| Assertion library | Reusable assertion rules shared per project/feature point, referenced from interface cases as `lib:<code>`, JSON Schema assertions with failure diffs |
 | Knowledge base | Pending pool → official library, versioning, review, reference protection, full-text search |
 | Test reports | Generation/adoption, ECharts charts, metric trends, export |
-| Regression checklist | CRUD, AI-generated regression items, per-item execution results written back |
+| Execution and evidence | Interface / automation / manual / regression runs each write one unified evidence snapshot, drillable from runs, defects and reports |
+| Regression checklist | CRUD, AI-generated regression items, auto items really executed by the server with evidence, manual items require evidence to pass |
 
 ### Workspace configuration
 
 | Page | Contents |
 |---|---|
-| AI configuration | Provider profile CRUD, API keys in the OS keystore, priority ordering, real self-check, model list |
+| AI configuration | Provider profile CRUD, API keys in the OS keystore, priority ordering, real self-check, model list, profile unit prices and call cost, context tier and de-duplication mode, soft budget thresholds |
 | Knowledge base settings | Storage directory, file mode, rebuild index on startup |
 | Module tree | Three-level structure and capability binding |
 | System settings | Read/write all configuration items |
@@ -174,6 +208,16 @@ Three-level priority: **workspace configuration (database) > environment variabl
 
 ---
 
+## Performance and reliability
+
+- **Lists never dump whole tables**: list APIs paginate server-side (`pageNum` / `pageSize`, max 100 per page) and the case tree continues by `afterId` cursor; tables switch to a virtual window past a row threshold so only viewport rows render
+- **Long work leaves the request thread**: bulk validation run-all, large exports and AI streaming run as background tasks — the API returns a task id and progress/results are polled
+- **Write hardening**: in-process write serialization with bounded `SQLITE_BUSY` retries; generated business numbers are claimed inside the same transaction so concurrent creates cannot collide on unique keys
+- **Observability**: every request carries a `traceId` through response headers and structured logs; logs record only errors and slow requests; `/api/v1/health` reports real database latency, write queue and AI configuration state
+- **No silent failures**: a caught exception is either logged with a `traceId` and continued, or converted into a wrapped error code — never a bare `pass`; the frontend shows a visible error with a retry entry instead of a blank screen
+
+---
+
 ## Security boundaries
 
 - **Local only**: binds `127.0.0.1` by default
@@ -187,14 +231,107 @@ Three-level priority: **workspace configuration (database) > environment variabl
 
 ## Quality gates
 
+One command runs every deterministic gate (the runner auto-discovers `backend/scripts/check_*.py`
+plus `smoke_api.py`, executes them in lexicographic order, prints a summary table, and exits
+non-zero on any failure):
+
 ```bash
-python -m mypy                          # backend type gate
-python backend/scripts/smoke_api.py     # API smoke test
-python backend/scripts/check_security.py     # secrets / injection / path security regression
-python backend/scripts/check_db.py           # migration and data-layer regression
-python backend/scripts/check_fts.py          # full-text search regression
-cd frontend && npm run build   # vue-tsc --noEmit && vite build
+python backend/scripts/run_all_checks.py                                  # full run, 300s default per-script timeout
+python backend/scripts/run_all_checks.py --list                           # list scripts that would run
+python backend/scripts/run_all_checks.py --only check_db,check_fts        # substring filter, comma-separated
+python backend/scripts/run_all_checks.py --skip-name check_walkthrough --timeout 600
+python backend/scripts/run_all_checks.py --json logs/gates.json           # JSON report for CI archiving
+cd frontend && npm run build                                              # frontend gate (vue-tsc --noEmit && vite build)
 ```
+
+- The runner probes `http://127.0.0.1:8760/api/v1/health` first (override with `--base-url` or
+  `AITP_BASE_URL`). If the probe fails it warns explicitly and marks service-dependent scripts
+  (`check_isolation_matrix`) as FAIL with "start the local service first"
+  (`python backend/run.py`). It never auto-starts the service and never pretends to pass.
+- `check_ai_live` is permanently excluded by the runner: it calls the real SenseTime model API,
+  burns quota and is non-deterministic; run it manually when needed.
+- `--isolated`: no need to start the service first. The runner takes a consistent snapshot of the
+  live database through the SQLite backup API (read-only access to the real file), boots a
+  throwaway service on a free port with its database and log in a temp directory, and injects
+  `AITP_BASE_URL` plus those paths into every child process. On exit the runner kills the process
+  tree and deletes the temp directory. The secret key and prompts still point at the real paths,
+  otherwise encrypted columns in the snapshot cannot be decrypted; the flag is mutually exclusive
+  with `--base-url` and is not what CI needs (a clean runner has no live database to snapshot).
+  The measured reason to use it: without the flag, HTTP-driven gates such as `check_isolation_matrix`
+  leave soft-deleted rows in the live database (a full suite added +2/+7/+4/+6 rows, all `is_deleted=1`);
+  with it the same gate reports `PASS=191 FAIL=0` and the live database delta is zero.
+- Any new gate script dropped into `backend/scripts` named `check_*.py` is picked up
+  automatically without touching the runner.
+
+Gate inventory (45 entries = 44 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
+scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 44 items actually
+execute):
+
+| Script | Covers | When it fails, look at |
+| --- | --- | --- |
+| `check_ai_live.py` | Live SenseTime model full-path test (**never in the runner**: real calls, burns quota, non-deterministic) | run it manually; see env vars in the script header |
+| `check_ai_masking.py` | AI outbound masking (phone / ID / email / bank card / API key) | `backend/aitp/ai/masking` rules and profile config |
+| `check_ai_cost.py` | AI cost accounting: per-profile unit prices and micro-unit conversion, daily/monthly budgets and per-call token soft threshold, over-budget only warns and never blocks (GAP-30) | `backend/aitp/ai/cost.py` and the price fields of `sys_ai_profile` |
+| `check_attachments.py` | Attachments: document import + image watermark removal | attachment endpoints, Pillow, mock server output |
+| `check_automation.py` | Automation script assets and execution engine | execution records and engine log (`data/aitp.log`) |
+| `check_automation_writeback.py` | Automation result writeback to cases/rounds (GAP-07) | writeback service and round state machine |
+| `check_backup_schedule.py` | Scheduled backups and retention (GAP-13) | backup service and `data/` retention logic |
+| `check_ci_boundary.py` | CI token access boundary: route allowlist, project scope, expiry, revocation, audit source (GAP-24) | CI token auth checks and audit source marking |
+| `check_ci_notifications.py` | CI triggers and webhook notifications (GAP-10), self-hosted HTTP collector | token hashing, channel scoping, delivery records |
+| `check_context_assembler.py` | Context assembly: three budget tiers, recall of modules/cases/defects/knowledge per project and feature point, preview and real build share one code path (GAP-27) | `backend/aitp/services/context_assembler.py` tiers and recall |
+| `check_db.py` | Data layer: PRAGMA, FK constraints, seed volume, soft delete, concurrent writes | `backend/aitp/db` migrations and connection config |
+| `check_db_concurrency.py` | Concurrent writes and id allocation: 16 parallel creates never collide on a unique key, reported success count equals rows landed, write-lock statistics (GAP-26) | `backend/aitp/db/write_guard.py` and each repository's id allocation |
+| `check_dedup.py` | Generation dedup rules: normalization, threshold bands, mark vs increment behaviour, payload index alignment (GAP-29) | `backend/aitp/services/dedup_service.py` |
+| `check_env_config.py` | Test environment config: CRUD, secret masking, health probe, unique default | env config endpoints and secret store |
+| `check_error_boundary.py` | Error governance and frontend fallback: exceptions never swallowed, errors carry a traceId, long work leaves the request thread, empty states and retry (GAP-26) | the `except Exception` handling and `validation_jobs` |
+| `check_execution_evidence.py` | Unified execution-evidence protocol: required-field matrix across the four execution paths, snapshots and missing-data degradation (GAP-32) | `execution_protocol.py` and `biz_execution_evidence` |
+| `check_export_caps.py` | Export claims match implementation: Excel/Word allowlist from one source, Chinese degradation when unsupported (GAP-37) | the `capability_codes` allowlist and the help pages |
+| `check_fts.py` | FTS5 hybrid search: Chinese short-word fallback, injection guard, index sync | search service and index rebuild logic |
+| `check_functional_matrix.py` | Functional matrix: projects x boundaries x full paths (temp DB, self-contained) | locate the module endpoint by failed item name |
+| `check_global_search.py` | Global search capability boundaries | global search and per-module indexes |
+| `check_home_cards.py` | Home card customization: default layout, dirty-config cleanup, show/hide ordering | home config read/write and cleaning |
+| `check_interface_runner.py` | Interface runner: request assembly, assertions, timeouts, same-origin limit, batch queue | execution engine and round writeback |
+| `check_isolation_matrix.py` | Multi-project x multi-version data isolation audit (HTTP, long-running) | requires a running local service; rerun with `AITP_ACCESS_TOKEN` |
+| `check_kb_ask.py` | Knowledge-base Q&A recall fallback (natural language must retrieve formal entries) | KB retrieval and `knowledge/` storage |
+| `check_knowledge_governance.py` | P8 knowledge governance: approval, versioning, reference protection, reindex | governance services and Markdown persistence |
+| `check_lab.py` | P6 AI lab | lab capability list and mock server output |
+| `check_observability.py` | Observability: traceId across logs and response headers, only failures/slow requests logged (GAP-23) | `backend/aitp/observability` and log format |
+| `check_onboarding.py` | First-run onboarding state (GAP-18) | migration 045 and the onboarding API |
+| `check_output_schema.py` | Output structure validation: JSON Schema for four capabilities, blocking missing fields and type mismatches, retry semantics (GAP-28) | `backend/aitp/ai/output_schema.py` and the capability mapping |
+| `check_pagination.py` | List pagination and cursor continuation: no endpoint dumps whole tables, `total` matches row count, case tree pages by `afterId` (GAP-25) | `common/pagination.py` and the list endpoints |
+| `check_portability.py` | Cross-platform delivery: preflight, PDF CJK fonts, secret-store fallback, script portability | printed platform-specific checks (never writes the real DB) |
+| `check_prompt_regression.py` | Prompt-effect regression set: offline mock batch plus six-metric baseline (pass rate, retention rate, completeness, duplicate rate, issue count, prompt size) so edits are comparable (GAP-31) | `backend/prompts/regression/` samples and baseline file |
+| `check_prompts.py` | Prompt library: parseable, variables complete, no render leftovers, capability alignment | `backend/prompts` YAML and capability mapping |
+| `check_report_evidence.py` | Report failure samples and evidence drill-down: sample count matches real failures, all three export formats carry the chosen samples, Chinese degradation when no snapshot, and case-level-only snapshots resolve identically across report / drill-down / bug views (GAP-35) | the `failure-samples` routes in `api/reports.py` and `execution_protocol.latest_evidence_for_run_case` |
+| `check_report_trends.py` | Report trends and version diff (GAP-12) | report export and trend aggregation |
+| `check_routing.py` | Routing regression: 18 capability cards, each representative input must route correctly | routing rules and card config |
+| `check_secret_residue.py` | GAP-22 secret-at-rest closure: reference storage, residue scan, migrate/rollback, dual-read | secret reference table and residue scan (temp DB only) |
+| `check_stream_polling.py` | Streaming short-poll contract on both ends: launch returns only taskId plus the frames route, frame order and cursor, buffer-expiry fallback, and the frontend really consuming `mode:"poll"` and sending the current project (GAP-26 / GAP-29) | `api/lab.py` stream/frames and `frontend/src/api/stream.ts` |
+| `check_security.py` | Security and compliance: secrets, injection, path safety, same-origin guard | `backend/aitp/common` security utilities and middleware |
+| `check_task_labels.py` | Task-type labels: registered kinds and the label table agree in both directions, filter dropdown shares one source (GAP-37) | `KIND_LABELS` in `services/job_queue.py` |
+| `check_test_data.py` | Test data generation (file branch) | generation service and exported files |
+| `check_test_execution.py` | Execution loop: plan -> round -> batch results -> defect -> traceability -> release gate | locate the blueprint by failed step name |
+| `check_types.py` | Type gate: mypy --strict over the backend plus real `vue-tsc --noEmit`; `--require-frontend` fails CI without frontend deps | the file:line reported by mypy / TypeScript |
+| `check_walkthrough.py` | Fixed walkthrough: routing order + fallback order + behavioral-safety rules + structured records + global search | per-step assertion output |
+| `smoke_api.py` | P3 API smoke: all blueprints' key paths on a temp DB | the failure list printed at the end |
+
+General triage: every script prints `[FAIL]` lines item by item and ends with `PASS=n FAIL=n`;
+rerun a failing script alone with `python -X utf8 backend/scripts/<name>.py`, or rely on the
+output tail the runner prints for failed scripts.
+
+### CI and protected branches (manual remote setup)
+
+The repo ships `.github/workflows/gates.yml` and `.workflow/gates.yml` (Gitee Go): install
+dependencies, build the frontend, start the local service, run `run_all_checks.py`, and upload
+the JSON report as an artifact. Neither workflow can be executed locally; treat the first remote
+run as the source of truth. On CI `check_isolation_matrix` is excluded via `--skip-name`
+(long-running audit, timing-sensitive), and `check_ai_live` is permanently excluded by the runner.
+
+- GitHub: Settings -> Branches -> branch protection rule, enable "Require status checks to pass"
+  and select the check named `gates` (must match the job name in the workflow).
+- Gitee: enable Gitee Go for the repository (Settings -> Gitee Go), then require the pipeline
+  check named `gates` for merge requests (matching the job name in `.workflow/gates.yml`;
+  exact fields follow official Gitee Go docs).
 
 ---
 
@@ -203,7 +340,7 @@ cd frontend && npm run build   # vue-tsc --noEmit && vite build
 ```
 backend/
   aitp/
-    api/          33 blueprints / 310 endpoints
+    api/          33 blueprints / 313 endpoints
     ai/           resolver, client, masking, adapters
     common/       constants, validation, pagination, keystore, security utilities
     db/           connections and migrations

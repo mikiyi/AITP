@@ -1,5 +1,5 @@
 import { handleAuthRequired } from './auth'
-import { ApiError, API_BASE, ErrorCode, explainCode, type ApiEnvelope } from './request'
+import { ApiError, API_BASE, ErrorCode, explainCode, get, type ApiEnvelope } from './request'
 import type { MaskInfo } from './types'
 
 /** SSE 帧类型，与后端 api/sse.py 的常量一一对应。 */
@@ -46,6 +46,9 @@ export interface StreamHandlers {
   /** 连接建立后调用，拿到 taskId / sessionId。 */
   onStart?: (frame: SseFrame) => void
 }
+
+/** 轮询上限：比后端单次调用的最长等待再宽一点，超时后让用户去历史产出看结果。 */
+const LONG_POLL_MS = 660_000
 
 function parseFrame(raw: string): SseFrame | null {
   const line = raw.trim()
@@ -95,15 +98,23 @@ export async function streamPost(
     const text = await response.text()
     let message = '流式响应异常'
     let code: number = ErrorCode.SUCCESS
+    let envelope: ApiEnvelope | null = null
     try {
-      const envelope = JSON.parse(text) as ApiEnvelope
+      envelope = JSON.parse(text) as ApiEnvelope
       code = envelope.code
       message = explainCode(envelope.code, envelope.message || message)
       if (code === ErrorCode.AUTH_REQUIRED) {
         handleAuthRequired()
+        return
       }
     } catch {
       message = text.slice(0, 200) || message
+    }
+    const poll = pollTargetOf(envelope)
+    if (poll) {
+      // GAP-26：后端不再挂长连接，改成发起 + 增量取帧，帧语义与 SSE 完全一致
+      await pollFrames(poll.framesUrl, poll.intervalMs, poll.start, handlers, signal)
+      return
     }
     handlers.onError?.(message, { type: 'error', seq: -1, errorCode: code, errorMessage: message })
     return
@@ -141,6 +152,93 @@ export async function streamPost(
       return
     }
     const message = err instanceof ApiError ? err.message : '流式连接中断'
+    handlers.onError?.(message, { type: 'error', seq: -1, errorMessage: message })
+  }
+}
+
+/** 轮询承载的每帧增量返回体，与后端 api/lab.py 的 frames 接口一一对应。 */
+interface FramesPayload {
+  frames?: SseFrame[]
+  lastSeq?: number
+  status?: string
+  finished?: boolean
+  truncated?: boolean
+  intervalMs?: number
+  expired?: boolean
+}
+
+/** 取帧地址已经带上了 /api/v1 前缀，接 get() 前要削成相对路径。 */
+function framesPathOf(framesUrl: string): string {
+  return framesUrl.startsWith(API_BASE) ? framesUrl.slice(API_BASE.length) : framesUrl
+}
+
+/** 发起响应是不是「改为轮询」的形态；不是就还按老的错误包封处理。 */
+function pollTargetOf(
+  envelope: ApiEnvelope | null,
+): { start: SseFrame; framesUrl: string; intervalMs: number } | null {
+  const data = envelope?.data
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return null
+  }
+  const record = data as Record<string, unknown>
+  if (record.mode !== 'poll' || typeof record.framesUrl !== 'string' || !record.framesUrl) {
+    return null
+  }
+  return {
+    // 长连接时代由服务端下发 start 帧，轮询时代这里补上，停止按钮才知道要取消哪个任务
+    start: { ...record, type: 'start', seq: 0 } as SseFrame,
+    framesUrl: record.framesUrl,
+    intervalMs: Number(record.intervalMs ?? 0) || 250,
+  }
+}
+
+/** 轮询取帧直到终局帧；帧派发与 SSE 分支共用一个 dispatch。 */
+async function pollFrames(
+  framesUrl: string,
+  intervalMs: number,
+  start: SseFrame,
+  handlers: StreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const path = framesPathOf(framesUrl)
+  const step = Math.max(100, intervalMs)
+  const deadline = Date.now() + LONG_POLL_MS
+  handlers.onStart?.(start)
+  let after = 0
+  let quiet = 0
+  let terminal = false
+  while (!terminal && !signal?.aborted && Date.now() < deadline) {
+    let payload: FramesPayload
+    try {
+      payload = await get<FramesPayload>(path, { after })
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : '取流式帧失败'
+      handlers.onError?.(message, { type: 'error', seq: -1, errorMessage: message })
+      return
+    }
+    const frames = payload.frames ?? []
+    for (const frame of frames) {
+      if (frame.type === 'done' || frame.type === 'error') {
+        terminal = true
+      }
+      dispatch(frame, handlers)
+      after = Math.max(after, Number(frame.seq ?? after))
+    }
+    after = Math.max(after, Number(payload.lastSeq ?? after))
+    quiet = frames.length ? 0 : quiet + 1
+    if (payload.finished && (terminal || quiet >= 2)) {
+      if (!terminal && !signal?.aborted) {
+        const message = '流式执行已结束，但没有取到产出帧'
+        handlers.onError?.(message, { type: 'error', seq: -1, errorMessage: message })
+      }
+      return
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, step)
+    })
+  }
+  if (!terminal && !signal?.aborted) {
+    const message = '流式执行等待超时，可在历史产出里查看结果'
     handlers.onError?.(message, { type: 'error', seq: -1, errorMessage: message })
   }
 }

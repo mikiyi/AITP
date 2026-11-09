@@ -68,6 +68,7 @@ def get_regression(pk: str) -> Response:
     payload = regression_summary(detail)
     payload["items"] = [item_summary(row) for row in detail.get("items", [])]
     payload["stats"] = repo.stats_of(path_int(pk))
+    payload["coverage"] = regression_service.coverage(payload["stats"])
     attach_version_codes(conn, [payload])
     return ok(payload)
 
@@ -175,17 +176,22 @@ def delete_item(pk: str, item_id: str) -> Response:
 
 @bp.post("/<pk>/execute")
 def execute_items(pk: str) -> Response:
-    """在线执行：批量回写每条回归点的执行结果。"""
+    """在线执行：自动条目由服务端真跑，手工条目批量回写且必须带证据。"""
     conn = db()
     data = body()
     results = data.get("results")
     if not isinstance(results, list) or not results:
         raise AppError(ErrorCode.PARAM_ERROR, "参数 results 必须是非空数组")
     target = path_int(pk)
-    payload = regression_service.execute_items(conn, target, results)
+    payload = regression_service.execute_items(
+        conn, target, results,
+        env_id=optional_int(data.get("envId"), "envId"),
+        executed_by=str(data.get("executedBy") or "local")[:64],
+    )
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_REGRESSION,
-          target, "", {"updated": len(payload.get("updated") or [])})
+          target, "", {"updated": len(payload.get("updated") or []),
+                       "executed": len(payload.get("executed") or [])})
     return ok(payload)
 
 

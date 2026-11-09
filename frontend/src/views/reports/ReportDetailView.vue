@@ -130,6 +130,82 @@
       </div>
     </div>
 
+    <div v-loading="samplesLoading" class="panel panel-pad">
+      <div class="section-title">
+        失败样本与执行证据
+        <el-tag size="small" effect="plain">范围内失败 {{ sampleTotal }} 条</el-tag>
+        <el-tag size="small" effect="plain">有证据 {{ evidenceCount }} 条</el-tag>
+        <el-tag v-if="sampleSelected.length" size="small" type="warning" effect="plain">
+          已保存所选 {{ sampleSelected.length }} 条
+        </el-tag>
+      </div>
+      <p class="samples-tip">
+        这里只列本报告统计范围内真实失败的轮次用例。勾选后保存，报告预览与 Markdown / HTML / PDF
+        导出只带这些样本的证据；不保存或清空选择则按全量失败样本导出。
+      </p>
+      <el-table
+        ref="samplesTable"
+        :data="samples"
+        size="small"
+        border
+        max-height="420"
+        row-key="runCaseId"
+        @selection-change="onSampleChange"
+      >
+        <el-table-column type="selection" width="42" reserve-selection />
+        <el-table-column prop="caseNo" label="用例编号" width="110" show-overflow-tooltip />
+        <el-table-column prop="title" label="失败用例" min-width="170" show-overflow-tooltip />
+        <el-table-column prop="module" label="模块" width="120" show-overflow-tooltip />
+        <el-table-column label="结论" width="76">
+          <template #default="scope">
+            <el-tag :type="scope.row.result === 'failed' ? 'danger' : 'warning'" size="small" effect="plain">
+              {{ scope.row.resultLabel || scope.row.result }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="失败要点" min-width="200" show-overflow-tooltip>
+          <template #default="scope">{{ scope.row.failurePoints.join('；') || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="证据" width="96">
+          <template #default="scope">
+            <span v-if="scope.row.hasEvidence" class="ev-ok">EV-{{ scope.row.evidenceId }}</span>
+            <el-tooltip v-else content="这条样本没有执行证据快照，通常是手工判定失败且没有留痕" placement="top">
+              <span class="ev-none">无快照</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column label="关联缺陷" width="110" show-overflow-tooltip>
+          <template #default="scope">{{ scope.row.bugNo || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="104" fixed="right">
+          <template #default="scope">
+            <el-button
+              v-if="scope.row.hasEvidence"
+              link
+              type="primary"
+              size="small"
+              @click="openEvidence(scope.row)"
+            >
+              查看证据
+            </el-button>
+            <span v-else class="ev-none">—</span>
+          </template>
+        </el-table-column>
+        <template #empty>
+          <span class="samples-tip">{{ sampleHint }}</span>
+        </template>
+      </el-table>
+      <div class="samples-actions">
+        <el-button size="small" :loading="samplesLoading" @click="loadSamples">刷新样本</el-button>
+        <el-button size="small" type="primary" :loading="savingSamples" @click="saveSelection">
+          保存所选（{{ picked.length }}）
+        </el-button>
+        <el-button size="small" :loading="savingSamples" @click="clearSelection">回到全量</el-button>
+      </div>
+    </div>
+
+    <EvidenceDrawer v-model="evidenceVisible" :locator="evidenceLocator" title="失败样本执行证据" />
+
     <el-dialog v-model="editVisible" title="编辑报告" width="720px">
       <el-form label-width="90px">
         <el-form-item label="标题">
@@ -160,11 +236,12 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Back, Box, Edit, Promotion, Refresh } from '@element-plus/icons-vue'
 import MarkdownView from '@/components/MarkdownView.vue'
 import MetricCard from '@/components/MetricCard.vue'
+import EvidenceDrawer from '@/components/EvidenceDrawer.vue'
 import ReportCharts from '@/components/ReportCharts.vue'
 import ReportTrendPanel from '@/components/ReportTrendPanel.vue'
 import { reportApi } from '@/api'
 import { dateTimeText } from '@/utils/format'
-import type { Report, ReportItem, ReportStats } from '@/api/types'
+import type { Report, ReportFailureSample, ReportFailureSamples, ReportItem, ReportStats } from '@/api/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -192,6 +269,89 @@ const metrics = computed(
       openBugs: 0,
     },
 )
+
+const samples = ref<ReportFailureSample[]>([])
+const sampleTotal = ref(0)
+const sampleSelected = ref<number[]>([])
+const sampleHint = ref('本次统计范围内没有失败样本，报告不附带执行证据。')
+const samplesLoading = ref(false)
+const savingSamples = ref(false)
+const picked = ref<ReportFailureSample[]>([])
+const samplesTable = ref<{ clearSelection: () => void; toggleRowSelection: (row: ReportFailureSample, selected: boolean) => void } | null>(null)
+const evidenceVisible = ref(false)
+const evidenceLocator = ref<Record<string, string | number>>({})
+
+const evidenceCount = computed(() => samples.value.filter((item) => item.hasEvidence).length)
+
+function applySamples(data: ReportFailureSamples): void {
+  samples.value = data.list ?? []
+  sampleTotal.value = Number(data.total ?? 0)
+  sampleSelected.value = (data.selected ?? []).map((id) => Number(id))
+  sampleHint.value = data.hint || '本次统计范围内没有失败样本，报告不附带执行证据。'
+  picked.value = []
+  // 后端保存过的「所选样本」要能回显：先清空再按 runCaseId 勾回，避免刷新后选择丢失
+  samplesTable.value?.clearSelection()
+  const wanted = new Set(sampleSelected.value)
+  samples.value
+    .filter((row) => wanted.has(Number(row.runCaseId)))
+    .forEach((row) => samplesTable.value?.toggleRowSelection(row, true))
+}
+
+async function loadSamples(): Promise<void> {
+  if (!report.value) {
+    return
+  }
+  samplesLoading.value = true
+  try {
+    applySamples(await reportApi.failureSamples(report.value.id))
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '加载失败样本失败')
+  } finally {
+    samplesLoading.value = false
+  }
+}
+
+function onSampleChange(rows: ReportFailureSample[]): void {
+  picked.value = rows
+}
+
+async function selectSamples(ids: number[], successText: string): Promise<void> {
+  if (!report.value) {
+    return
+  }
+  savingSamples.value = true
+  try {
+    applySamples(await reportApi.selectSamples(report.value.id, ids))
+    ElMessage.success(successText)
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '保存所选样本失败')
+  } finally {
+    savingSamples.value = false
+  }
+}
+
+function saveSelection(): void {
+  if (!picked.value.length) {
+    ElMessage.warning('先勾选要保存的失败样本；恢复全量口径请点「回到全量」')
+    return
+  }
+  void selectSamples(
+    picked.value.map((row) => Number(row.runCaseId)),
+    `已保存 ${picked.value.length} 条所选样本，预览与导出只带这些证据`,
+  )
+}
+
+function clearSelection(): void {
+  void selectSamples([], '已回到全量失败样本口径')
+}
+
+function openEvidence(row: ReportFailureSample): void {
+  // 有证据号按证据取，没有就按轮次用例取：查不到时抽屉给中文降级，不弹错
+  evidenceLocator.value = row.evidenceId
+    ? { evidenceId: Number(row.evidenceId) }
+    : { runCaseId: Number(row.runCaseId) }
+  evidenceVisible.value = true
+}
 
 const editVisible = ref(false)
 const editForm = reactive({ title: '', periodStart: '', periodEnd: '', content: '' })
@@ -277,6 +437,7 @@ async function load(): Promise<void> {
       ...item,
       enabled: items.value.some((entry) => entry.section === item.value),
     }))
+    void loadSamples()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载报告失败')
   } finally {
@@ -467,5 +628,29 @@ onMounted(() => {
 
 .report-item__title {
   font-weight: 600;
+}
+
+.samples-tip {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+}
+
+.samples-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ev-ok {
+  font-size: 12px;
+  color: var(--el-color-success);
+}
+
+.ev-none {
+  font-size: 12px;
+  color: var(--el-text-color-placeholder);
 }
 </style>

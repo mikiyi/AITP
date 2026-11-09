@@ -41,10 +41,17 @@ STATUS_LABELS = {
     TASK_CANCELLED: "已取消",
 }
 
+#: 任务类型的中文标签只在这里登记：注册 handler 的那个模块不许再用导入副作用往这里塞标签
+#: （`api/tasks.py` 的类型下拉与任务详情的 kindLabel 都以本表为准，漏一条就往外吐英文 kind）。
+#: 新增 kind 时必须同时在这里补标签，`check_task_labels.py` 会比对「已注册 kind」与「已登记标签」。
 KIND_LABELS: dict[str, str] = {
     "automation.run": "自动化脚本执行",
     "interface.batch_run": "接口用例批量执行",
     "knowledge.organize": "知识库自动整理",
+    "backup.auto": "定时整包备份",
+    "data.export": "数据导出",
+    "notification.webhook": "Webhook 通知",
+    "validation.run_all": "案例验证全量跑批",
 }
 
 #: 并发上限配置键；默认 2，单用户本机够用又不至于互相拖死

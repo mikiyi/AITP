@@ -27,7 +27,11 @@ def encode(payload: dict[str, Any]) -> str:
 
 
 class SeqCounter:
-    """单调递增的帧序号。"""
+    """单调递增的帧序号。
+
+    payload() 出帧对象（轮询承载用），frame() 出 SSE 文本（encode 用）；
+    两种承载共用同一份 seq 与字段，前端拿到的是同一批帧，不用区分来源。
+    """
 
     __slots__ = ("_value",)
 
@@ -38,7 +42,10 @@ class SeqCounter:
         self._value += 1
         return self._value
 
+    def payload(self, frame_type: str, **fields: Any) -> dict[str, Any]:
+        frame: dict[str, Any] = {"seq": self.next(), "type": frame_type}
+        frame.update(fields)
+        return frame
+
     def frame(self, frame_type: str, **fields: Any) -> str:
-        payload: dict[str, Any] = {"seq": self.next(), "type": frame_type}
-        payload.update(fields)
-        return encode(payload)
+        return encode(self.payload(frame_type, **fields))

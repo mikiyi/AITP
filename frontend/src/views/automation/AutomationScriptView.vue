@@ -929,14 +929,25 @@ watch(category, () => {
 
 .framework-hint {
   width: 100%;
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--el-color-warning);
+  margin: 8px 0 0;
+  padding: 9px 12px 9px 13px;
+  border: 1px solid color-mix(in srgb, var(--aitp-note-warning) 16%, transparent);
+  border-left: 3px solid var(--aitp-note-warning);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--aitp-note-warning) 5%, var(--aitp-panel));
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--aitp-text-weak);
 }
 
 .framework-hint p {
   margin: 2px 0;
   line-height: 1.6;
+}
+
+.framework-hint p:first-child {
+  font-weight: 600;
+  color: var(--aitp-text);
 }
 
 .framework-hint__cmd {

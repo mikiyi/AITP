@@ -192,6 +192,79 @@ def _audit_count(workdir: pathlib.Path, env_id: int) -> int:
     return count
 
 
+def section_multi_app(api: Api, env_id: int, workdir: pathlib.Path) -> None:
+    """多台应用服务器 + 国产 / 非关系库类型。"""
+    listing = api.data("GET", f"{V1}/test-envs")
+    types = listing["dbTypes"]
+    ports = listing["dbDefaultPorts"]
+    labels = listing.get("dbTypeLabels") or {}
+    for db_type in ("dm", "kingbase", "highgo", "opengauss", "gaussdb", "oceanbase",
+                    "tidb", "gbase", "oscar", "clickhouse"):
+        check(f"国产库类型 {db_type} 可选", db_type in types, str(types))
+    for db_type in ("mongodb", "redis", "elasticsearch", "cassandra", "influxdb"):
+        check(f"非关系库类型 {db_type} 可选", db_type in types, str(types))
+    check("国产库默认端口", ports.get("dm") == 5236 and ports.get("kingbase") == 54321
+          and ports.get("oceanbase") == 2881, str(ports))
+    check("非关系库默认端口", ports.get("mongodb") == 27017 and ports.get("redis") == 6379
+          and ports.get("elasticsearch") == 9200, str(ports))
+    check("类型展示名来自服务端", labels.get("kingbase") == "人大金仓 KingbaseES"
+          and labels.get("mongodb") == "MongoDB", str(labels)[:200])
+
+    up = {"baseUrl": "http://127.0.0.1:8760", "healthPath": "/api/v1/health", "metricsUrl": ""}
+    # 空行应被丢弃，避免前端「新增一台」留下空记录
+    trimmed = api.data("PUT", f"{V1}/test-envs/{env_id}", {
+        "app": {"servers": [up, {"baseUrl": "", "healthPath": "", "metricsUrl": ""}]},
+    })
+    check("空的应用服务器行不落库", len(trimmed["app"]["servers"]) == 1, str(trimmed["app"]))
+
+    updated = api.data("PUT", f"{V1}/test-envs/{env_id}", {
+        "app": {"servers": [
+            up,
+            {"baseUrl": "http://127.0.0.1:8760", "healthPath": "/api/v1/meta/enums",
+             "metricsUrl": ""},
+        ]},
+        "db": {"type": "dm", "host": "", "port": ""},
+    })
+    check("两台应用服务器落库", len(updated["app"]["servers"]) == 2, str(updated["app"]))
+    check("首台沿用兼容字段", updated["app"]["baseUrl"] == up["baseUrl"]
+          and updated["app"]["servers"][1]["healthPath"] == "/api/v1/meta/enums",
+          str(updated["app"]))
+    check("国产库类型与默认端口", updated["db"]["type"] == "dm" and updated["db"]["port"] == 5236,
+          str(updated["db"]))
+
+    probed = api.data("POST", f"{V1}/test-envs/{env_id}/probe")
+    check("探测逐台返回", len(probed["app"].get("servers") or []) == 2, str(probed["app"])[:200])
+    check("多台全可达判整体可达", probed["app"].get("ok") is True, str(probed["app"])[:200])
+
+    history = api.data("GET", f"{V1}/test-envs/health-history")
+    item: JsonDict = next(
+        (row for row in history.get("list", []) if row.get("envId") == env_id), {})
+    check("历史按台给出曲线", len(item.get("appServers") or []) == 2, str(item)[:200])
+
+    mixed = api.data("PUT", f"{V1}/test-envs/{env_id}", {
+        "app": {"servers": [up, {"baseUrl": "http://127.0.0.1:1", "healthPath": "/x",
+                                 "metricsUrl": ""}]},
+    })
+    check("一台异常仍保留两台", len(mixed["app"]["servers"]) == 2, str(mixed["app"]))
+    down = api.data("POST", f"{V1}/test-envs/{env_id}/probe")
+    check("多台部分异常判整体异常", down["app"].get("ok") is False
+          and (down["app"].get("servers") or [])[1].get("ok") is False
+          and "1/2" in str(down["app"].get("message") or ""), str(down["app"])[:200])
+
+    nosql = api.data("PUT", f"{V1}/test-envs/{env_id}", {
+        "db": {"type": "redis", "host": "", "port": ""},
+    })
+    check("非关系库类型与默认端口", nosql["db"]["type"] == "redis" and nosql["db"]["port"] == 6379,
+          str(nosql["db"]))
+
+    # 还原成单台 + 本机 MySQL，后面的探测断言按原口径继续
+    api.data("PUT", f"{V1}/test-envs/{env_id}", {
+        "app": {"servers": [up]},
+        "db": {"type": "mysql", "host": "127.0.0.1", "port": 3306, "name": "shop",
+               "username": "qa"},
+    })
+
+
 def section_probe(api: Api, env_id: int, workdir: pathlib.Path) -> None:
     """探测纯本机：可达目标返回 ok，不可达返回明确业务结果而非内部错误，并带资源指标。"""
     result = api.data("POST", f"{V1}/test-envs/{env_id}/probe")
@@ -251,6 +324,7 @@ def main() -> int:
     section_password_secret(api, env_id, workdir)
     section_metrics_url(api, env_id)
     section_default_unique(api)
+    section_multi_app(api, env_id, workdir)
     section_probe(api, env_id, workdir)
     section_isolation(api)
 

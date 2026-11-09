@@ -1,9 +1,10 @@
 """AI 实验室 API：能力执行、流式输出、智能路由、会话与任务。
 
 统一契约：
-- POST /lab/{capability}/run     同步执行，返回产出物与用量
-- POST /lab/{capability}/stream  流式执行，SSE 帧带单调 seq
-- POST /lab/route                自由文本 → 能力候选 + 功能点候选
+- POST /lab/{capability}/run      同步执行，返回产出物与用量
+- POST /lab/{capability}/stream   发起流式执行，立即返回任务号（帧改由轮询取，GAP-26）
+- GET  /lab/stream/{taskId}/frames 增量取流式帧
+- POST /lab/route                 自由文本 → 能力候选 + 功能点候选
 """
 
 from __future__ import annotations
@@ -11,11 +12,13 @@ from __future__ import annotations
 import logging
 import re
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, cast
 
-from flask import Blueprint, Response, current_app, request, stream_with_context
+from flask import Blueprint, Flask, Response, current_app, request
 
+from ..ai import cost as ai_cost
 from ..ai.capability_codes import (
     LAB_CAPABILITIES,
     LAB_EXTENDED_CAPABILITIES,
@@ -24,12 +27,16 @@ from ..ai.capability_codes import (
 )
 from ..ai.errors import AIError
 from ..ai.safety import mark_review_required, needs_human_review
+from ..ai.types import ResolvedAIConfig
 from ..common.constants import EGRESS_NONE, EGRESS_THIRD_PARTY
 from ..common.validators import optional_str, require_int, require_str
-from ..envelope import ok
+from ..db import write_guard
+from ..envelope import current_trace_id, ok
 from ..errors import AppError, ErrorCode
+from ..logging_setup import log_event
 from ..prompts.registry import list_templates
 from ..repositories.ai_session_repo import AISessionRepository, AITaskRepository
+from ..repositories.ai_profile_repo import AIProfileRepository
 from ..repositories.bug_repo import BugRepository
 from ..repositories.project_repo import ProjectRepository
 from ..repositories.requirement_repo import RequirementRepository
@@ -50,6 +57,7 @@ from ..services import (
     nav_badge_service,
     regression_service,
     output_exporter,
+    stream_broker,
     tabular_export,
     task_control,
 )
@@ -67,7 +75,6 @@ from .sse import (
     FRAME_REASONING,
     FRAME_START,
     FRAME_USAGE,
-    SSE_MIME,
     SeqCounter,
 )
 
@@ -79,7 +86,11 @@ logger = logging.getLogger(__name__)
 XMIND_MIME = "application/vnd.xmind"
 
 #: 请求体里不是提示词变量的字段
-META_FIELDS = {"variables", "sessionId", "profileId", "moduleId", "title", "attachmentIds", "templateId"}
+#: （contextTier / projectId 是 GAP-27 的装配参数，dedupMode 是 GAP-29 的去重口径）
+META_FIELDS = {
+    "variables", "sessionId", "profileId", "moduleId", "title", "attachmentIds",
+    "templateId", "contextTier", "projectId", "dedupMode",
+}
 
 
 # ---------------- 参数解析 ----------------
@@ -88,6 +99,22 @@ def _optional_int(value: Any, field: str) -> int | None:
     if value in (None, ""):
         return None
     return require_int(value, field)
+
+
+def _context_tier_of(data: dict[str, Any]) -> str | None:
+    """GAP-27 本次请求要求的上下文档位；非法值不在这里报错，由装配器回落默认档。"""
+    raw = data.get("contextTier")
+    if raw in (None, ""):
+        return None
+    return require_str(raw, "contextTier", 20)
+
+
+def _dedup_mode_of(data: dict[str, Any]) -> str | None:
+    """GAP-29 本次请求的去重口径；非法值由服务层回落 `mark`，不在入口报错。"""
+    raw = data.get("dedupMode")
+    if raw in (None, ""):
+        return None
+    return require_str(raw, "dedupMode", 20)
 
 
 def _variables_of(data: dict[str, Any]) -> dict[str, Any]:
@@ -164,8 +191,13 @@ def _finish_task(
     try:
         AITaskRepository(conn).finish(task_id, status, result, error_code, error_message)
         conn.commit()
-    except Exception:  # pragma: no cover - 落库失败不应影响已返回的响应
-        logger.warning("任务终态落库失败 task_id=%s status=%s", task_id, status, exc_info=True)
+    # 兜住的范围：写库（含进程内写锁排队超时）、文件/句柄、结果 JSON 序列化失败。
+    # 这里不兜 Exception，因为任务终态是审计入口，真正的编程错误要冒出来；
+    # 但请求已经返回，再抛只会让调用方（流式生产者线程）看到无意义的栈。
+    except (sqlite3.Error, OSError, ValueError) as exc:  # pragma: no cover
+        log_event(logger, "task_finish_failed", level=logging.WARNING,
+                  traceId=write_guard.log_trace_id(), taskId=task_id, status=status,
+                  error=str(exc))
     finally:
         conn.close()
 
@@ -211,8 +243,17 @@ def _write_record(
     latency_ms: int | None = None,
     route: list[dict[str, Any]] | None = None,
     mask: dict[str, Any] | None = None,
+    context: dict[str, Any] | None = None,
+    schema: dict[str, Any] | None = None,
+    dedup: dict[str, Any] | None = None,
+    cost: dict[str, Any] | None = None,
 ) -> int:
-    """把这次执行的结构化结论落库：证据、缺项、风险点。"""
+    """把这次执行的结构化结论落库：证据、缺项、风险点 + 主线 A 的四份结论。
+
+    `context/schema/dedup/cost` 对应 GAP-27/28/29/30。缺了它们，历史记录就只能回答
+    「产出了什么」，回答不了「当时模型看到什么、字段是否合规、有没有撞车、花了多少钱」，
+    而且这三列是空串时前端历史面板只能整体沉默。
+    """
     record = ai_record_service.build_record(
         conn,
         capability=capability,
@@ -229,6 +270,10 @@ def _write_record(
         prompt_code=prompt_code,
         latency_ms=latency_ms,
         mask=mask,
+        context=context,
+        schema=schema,
+        dedup=dedup,
+        cost=cost,
     )
     return ai_record_service.create_record(conn, record)
 
@@ -242,7 +287,13 @@ def _write_record_standalone(db_path: Path, **kwargs: Any) -> int:
         record_id = _write_record(conn, **kwargs)
         conn.commit()
         return record_id
-    except Exception:  # pragma: no cover - 落库失败不应影响已返回的响应
+    # 宽泛兜底只保留在"产出物已送达、记录只是副产物"这一条路径上：
+    # 落库失败（SQL 约束/文件读写/JSON 序列化）不能反过来污染已经返回的响应，
+    # 因此这里兜住 sqlite3.Error / OSError / ValueError 三类，并留痕而非静默 pass。
+    except (sqlite3.Error, OSError, ValueError) as exc:  # pragma: no cover
+        log_event(logger, "stream_record_failed", level=logging.WARNING,
+                  traceId=write_guard.log_trace_id(), taskId=kwargs.get("task_id"),
+                  capability=kwargs.get("capability"), error=str(exc))
         return 0
     finally:
         conn.close()
@@ -720,10 +771,12 @@ def run_capability(capability: str) -> Response:
 
     spec = lab_service.require_capability(capability)
     images = _resolve_images(_attachment_ids_of(data))
+    project_id = _optional_int(data.get("projectId"), "projectId")
     # 先校验（缺变量 / 功能点未启用 / 没有可用模型），失败时不落任务
     plan = lab_service.prepare_run(
         conn, capability, variables, module_id=module_id, profile_id=profile_id,
-        images=images,
+        images=images, context_tier=_context_tier_of(data), project_id=project_id,
+        dedup_mode=_dedup_mode_of(data),
     )
 
     session_id = _ensure_session(
@@ -731,13 +784,20 @@ def run_capability(capability: str) -> Response:
         capability,
     )
     task_id = _start_task(conn, capability, session_id, profile_id, module_id, variables,
-                      project_id=_optional_int(data.get("projectId"), "projectId"))
+                      project_id=project_id)
     commit(conn)
 
     try:
-        result = lab_service.execute_run(plan)
-    except Exception as exc:
+        result = lab_service.execute_run(plan, conn=conn)
+    # 这里必须兜住「一切失败」：模型调用可能抛 AIError、HTTP 层抛 requests/networkx 系异常、
+    # 落库抛 sqlite3.Error，逐类列举容易漏，漏了就会留下永远停在 running 的任务行。
+    # 兜住之后原样 raise，异常类型与栈不变，只是先把终态写进库；
+    # 最终仍由 middleware 的统一异常出口转成包封响应，不会被这里吞掉。
+    except Exception as exc:  # noqa: BLE001 - 记录终态后重抛，不吞异常
         code = exc.code if isinstance(exc, AIError) else ErrorCode.INTERNAL_ERROR
+        log_event(logger, "run_capability_failed", level=logging.WARNING,
+                  traceId=current_trace_id(), taskId=task_id, capability=capability,
+                  errorCode=int(code), error=str(exc)[:300])
         AITaskRepository(conn).finish(task_id, "failed", None, code, str(exc))
         commit(conn)
         raise
@@ -769,6 +829,10 @@ def run_capability(capability: str) -> Response:
         usage=result.usage,
         latency_ms=result.latency_ms,
         mask=result.mask,
+        context=result.context,
+        schema=result.schema,
+        dedup=result.dedup,
+        cost=result.cost,
     )
     commit(conn)
     payload["recordId"] = record_id
@@ -779,6 +843,13 @@ def run_capability(capability: str) -> Response:
 
 @bp.post("/<capability>/stream")
 def stream_capability(capability: str) -> Response:
+    """发起流式执行：请求立刻返回任务号，产出不在这个线程上跑（GAP-26）。
+
+    契约变化（只此一处）：响应不再是 SSE 长连接，而是普通包封
+    `{taskId, sessionId, mode:"poll", framesUrl, intervalMs}`；
+    帧本身一字未改，由 `GET /lab/stream/<taskId>/frames` 按 after 增量取走，
+    前端的帧处理逻辑保持不变。
+    """
     conn = db()
     data = body()
     variables = _variables_of(data)
@@ -789,9 +860,12 @@ def stream_capability(capability: str) -> Response:
 
     spec = lab_service.require_capability(capability)
     images = _resolve_images(_attachment_ids_of(data))
+    # 流式路径同样要吃 projectId：去重比对域与上下文装配都按项目收敛，
+    # 漏传时库里一条也对不上，界面永远显示「没有重复」
+    project_id = _optional_int(data.get("projectId"), "projectId")
     events, plan = lab_service.stream_capability(
         conn, capability, variables, module_id=module_id, profile_id=profile_id,
-        images=images,
+        images=images, project_id=project_id, dedup_mode=_dedup_mode_of(data),
     )
 
     session_id = _ensure_session(
@@ -799,148 +873,361 @@ def stream_capability(capability: str) -> Response:
         capability,
     )
     task_id = _start_task(conn, capability, session_id, profile_id, module_id, variables,
-                      project_id=_optional_int(data.get("projectId"), "projectId"))
+                      project_id=project_id)
     commit(conn)
 
     db_path = Path(current_app.config["AITP_DB_PATH"])
+    if stream_broker.active_streams() >= stream_broker.MAX_ACTIVE_STREAMS:
+        # 先把刚建的任务判掉，否则它会一直挂在 running，列表显示「执行中」而实际没人跑
+        _finish_task(db_path, task_id, "failed", None, ErrorCode.ILLEGAL_OPERATION,
+                     "流式执行并发已满，请稍后重试")
+        raise AppError(
+            ErrorCode.ILLEGAL_OPERATION,
+            f"同时进行的流式执行已达上限（{stream_broker.MAX_ACTIVE_STREAMS} 路），请稍后再试",
+            {"activeStreams": stream_broker.active_streams(), "limit": stream_broker.MAX_ACTIVE_STREAMS},
+        )
+
     control_key = f"lab:{task_id}"
-    prompt_code = plan.binding.prompt_code
-    module_path = plan.binding.module_path
-    # 数据外发边界：首选模型是第三方时，输入会离开本机，前端据此提示用户注意敏感数据
-    first_candidate = plan.candidates[0] if plan.candidates else None
-    egress = first_candidate.egress if first_candidate else EGRESS_NONE
-    egress_warning = lab_service.EGRESS_WARNING if egress == EGRESS_THIRD_PARTY else ""
+    # 在发起请求这一刻就登记取消通道：等生产者线程再 register 会有窗口，
+    # 用户点「停止」落在窗口里时 task_control.cancel 会找不到 key 而空转
+    task_control.register(control_key)
 
-    def generate() -> Iterator[str]:
-        task_control.register(control_key)
-        counter = SeqCounter()
-        collected: list[str] = []
-        usage: dict[str, Any] = {}
-        model = ""
-        output = ""
-        status = "success"
-        error_code: int | None = None
-        error_message: str | None = None
-        # 云端候选真正发出去后由 mask 帧覆盖；本地候选保持「未脱敏」
-        mask_info: dict[str, Any] = {
-            "enabled": plan.mask_enabled,
-            "applied": False,
-            "types": [],
-            "count": 0,
+    job = _StreamJob(
+        capability=capability,
+        label=spec.label,
+        output_format=spec.output_format,
+        task_id=task_id,
+        session_id=int(session_id),
+        control_key=control_key,
+        db_path=db_path,
+        variables=variables,
+        refs=plan.refs,
+        mask_enabled=plan.mask_enabled,
+        prompt_code=plan.binding.prompt_code,
+        module_path=plan.binding.module_path,
+        egress=plan.candidates[0].egress if plan.candidates else EGRESS_NONE,
+        plan=plan,
+        events=events,
+        trace_id=current_trace_id(),
+    )
+    job.egress_warning = lab_service.EGRESS_WARNING if job.egress == EGRESS_THIRD_PARTY else ""
+
+    sink = stream_broker.open_stream(task_id, current_trace_id())
+    # Flask 的 current_app 是 LocalProxy，类型上没有 _get_current_object；
+    # 后台线程要自己压 app 上下文，只能拿真实对象，故此处按 Any 取一次再收窄回 Flask。
+    app = cast(Flask, cast(Any, current_app)._get_current_object())  # noqa: SLF001
+    stream_broker.submit(task_id, lambda: _run_stream_job(app, job, sink))
+
+    return ok({
+        "taskId": task_id,
+        "sessionId": session_id,
+        "capability": capability,
+        "label": spec.label,
+        "mode": "poll",
+        "framesUrl": f"/api/v1/lab/stream/{task_id}/frames",
+        "intervalMs": stream_broker.POLL_INTERVAL_MS,
+        "egress": job.egress,
+        "egressWarning": job.egress_warning,
+    }, "流式执行已开始")
+
+
+@dataclass(slots=True)
+class _StreamJob:
+    """一次流式执行需要的全部上下文：线程里不能再碰 flask.g，所以提前取好。"""
+
+    capability: str
+    label: str
+    output_format: str
+    task_id: int
+    session_id: int
+    control_key: str
+    db_path: Path
+    variables: dict[str, Any]
+    refs: list[dict[str, Any]]
+    mask_enabled: bool
+    prompt_code: str
+    module_path: str
+    egress: str
+    #: 准备结果：流式收尾要用它跑「校验 → 去重 → 成本」，与同步链路同一套口径
+    plan: lab_service.RunPlan
+    events: Iterator[Any]
+    egress_warning: str = ""
+    trace_id: str = ""
+
+
+def _usage_with_retry(usage: dict[str, Any], retry_usage: dict[str, Any]) -> dict[str, Any]:
+    """把自动修正那一次调用的用量并进来：成本口径不能只算第一次（与同步链路一致）。"""
+    if not retry_usage:
+        return dict(usage)
+    merged = dict(usage)
+    for key in ("promptTokens", "completionTokens", "totalTokens"):
+        merged[key] = int(usage.get(key) or 0) + int(retry_usage.get(key) or 0)
+    if not merged.get("totalTokens"):
+        merged["totalTokens"] = int(merged.get("promptTokens") or 0) + int(
+            merged.get("completionTokens") or 0)
+    merged["estimated"] = bool(usage.get("estimated")) or bool(retry_usage.get("estimated"))
+    return merged
+
+
+def _stream_config_of(plan: lab_service.RunPlan, model: str) -> ResolvedAIConfig:
+    """流式命中的是哪个候选：按模型名回认，认不出取首选；没有候选就给空配置（=未配价）。"""
+    for candidate in plan.candidates:
+        if model and candidate.model == model:
+            return candidate
+    if plan.candidates:
+        return plan.candidates[0]
+    return ResolvedAIConfig(provider="custom", protocol="", base_url="", model=model)
+
+
+def _finalize_stream_run(
+    job: _StreamJob, text: str, usage: dict[str, Any], model: str
+) -> dict[str, Any]:
+    """流式收尾：把同步链路的「解析 → 校验 → 规范化 → 去重 → 成本」接回活链路。
+
+    历史上 `lab_service.finalize_stream_output` 定义了却没有任何调用点，
+    走流式的 JSON 产出既不校验也不去重，四份结论（GAP-27/28/29/30）全空。
+    收尾本身失败只留痕：帧已经吐出去了，不能反过来把已经到手的产出判死。
+    """
+    from ..db.connection import get_standalone_conn
+
+    empty = {"text": text, "usage": usage, "context": {}, "schema": {}, "dedup": {}, "cost": {}}
+    try:
+        conn = get_standalone_conn(job.db_path)
+    except (sqlite3.Error, OSError, ValueError) as exc:  # pragma: no cover - 连接都建不出来时
+        log_event(logger, "stream_finalize_conn_failed", level=logging.WARNING,
+                  traceId=job.trace_id or "-", taskId=job.task_id, error=str(exc))
+        return empty
+    try:
+        finalization = lab_service.finalize_stream_output(job.plan, text, conn=conn)
+        chosen_model = finalization.retry_model or model
+        merged_usage = _usage_with_retry(usage, finalization.retry_usage)
+        cost_payload = lab_service.build_cost_payload(
+            job.plan,
+            merged_usage,
+            _stream_config_of(job.plan, chosen_model),
+            chosen_model,
+            conn=conn,
+        )
+        return {
+            "text": finalization.output or text,
+            "usage": merged_usage,
+            "context": job.plan.context.as_dict() if job.plan.context is not None else {},
+            "schema": lab_service.schema_payload_of(finalization),
+            "dedup": lab_service.dedup_payload_of(finalization, job.plan),
+            "cost": cost_payload,
         }
+    except (AIError, AppError, sqlite3.Error, OSError, ValueError) as exc:
+        log_event(logger, "stream_finalize_failed", level=logging.WARNING,
+                  traceId=job.trace_id or "-", taskId=job.task_id,
+                  capability=job.capability, error=str(exc))
+        return empty
+    finally:
+        conn.close()
 
-        try:
-            yield counter.frame(
+
+def _run_stream_job(app: Flask, job: _StreamJob, sink: stream_broker.StreamSink) -> None:
+    """在 aitp-stream-* 线程上把事件流转成帧写进缓冲，并在结束时落库。
+
+    原 SSE 生成器的分支结构一字未改，只把 `yield frame` 换成 `sink.emit(payload)`；
+    少掉的是 GeneratorExit 一条——客户端断开不再能在这里感知，
+    取消改由 /lab/tasks/<id>/cancel 显式送信号（见 cancel_task）。
+    """
+    write_guard.trace_hint(job.trace_id)
+    counter = SeqCounter()
+    collected: list[str] = []
+    usage: dict[str, Any] = {}
+    model = ""
+    output = ""
+    status = "success"
+    error_code: int | None = None
+    error_message: str | None = None
+    # 云端候选真正发出去后由 mask 帧覆盖；本地候选保持「未脱敏」
+    mask_info: dict[str, Any] = {
+        "enabled": job.mask_enabled,
+        "applied": False,
+        "types": [],
+        "count": 0,
+    }
+    try:
+        with app.app_context():
+            sink.emit(counter.payload(
                 FRAME_START,
-                taskId=task_id,
-                sessionId=session_id,
-                capability=capability,
-                label=spec.label,
-                promptCode=prompt_code,
-                modulePath=module_path,
-                egress=egress,
-                egressWarning=egress_warning,
-                refs=plan.refs,
+                taskId=job.task_id,
+                sessionId=job.session_id,
+                capability=job.capability,
+                label=job.label,
+                promptCode=job.prompt_code,
+                modulePath=job.module_path,
+                egress=job.egress,
+                egressWarning=job.egress_warning,
+                refs=job.refs,
                 mask=mask_info,
-            )
-            for event in events:
-                if task_control.is_cancelled(control_key):
-                    # 取消要真的停下来：模型那边继续吐字就是继续耗时和计费
-                    status = "cancelled"
-                    error_message = "用户取消"
-                    yield counter.frame(FRAME_ERROR, errorCode=None, errorMessage=error_message)
-                    break
-                if event.type == FRAME_MASK:
-                    mask_info = dict(event.extra)
-                    yield counter.frame(FRAME_MASK, **mask_info)
-                elif event.type == FRAME_DELTA:
-                    if event.content:
-                        collected.append(event.content)
-                    yield counter.frame(FRAME_DELTA, content=event.content)
-                elif event.type == FRAME_REASONING:
-                    yield counter.frame(FRAME_REASONING, content=event.content)
-                elif event.type == FRAME_USAGE:
-                    if event.usage is not None:
-                        usage = event.usage.as_dict()
-                    if event.model:
-                        model = event.model
-                    yield counter.frame(FRAME_USAGE, usage=usage, model=model)
-                elif event.type == FRAME_DEGRADE:
-                    yield counter.frame(FRAME_DEGRADE, **event.extra)
-                elif event.type == FRAME_ERROR:
-                    status = "failed"
-                    error_code = event.error_code
-                    error_message = event.error_message or "AI 调用失败"
-                    yield counter.frame(
-                        FRAME_ERROR,
-                        errorCode=error_code,
-                        errorMessage=error_message,
-                        extra=event.extra,
+            ))
+            try:
+                for event in job.events:
+                    if task_control.is_cancelled(job.control_key):
+                        # 取消要真的停下来：模型那边继续吐字就是继续耗时和计费
+                        status = "cancelled"
+                        error_message = "用户取消"
+                        sink.emit(counter.payload(
+                            FRAME_ERROR, errorCode=None, errorMessage=error_message))
+                        break
+                    if event.type == FRAME_MASK:
+                        mask_info = dict(event.extra)
+                        sink.emit(counter.payload(FRAME_MASK, **mask_info))
+                    elif event.type == FRAME_DELTA:
+                        if event.content:
+                            collected.append(event.content)
+                        sink.emit(counter.payload(FRAME_DELTA, content=event.content))
+                    elif event.type == FRAME_REASONING:
+                        sink.emit(counter.payload(FRAME_REASONING, content=event.content))
+                    elif event.type == FRAME_USAGE:
+                        if event.usage is not None:
+                            usage = event.usage.as_dict()
+                        if event.model:
+                            model = event.model
+                        sink.emit(counter.payload(FRAME_USAGE, usage=usage, model=model))
+                    elif event.type == FRAME_DEGRADE:
+                        sink.emit(counter.payload(FRAME_DEGRADE, **event.extra))
+                    elif event.type == FRAME_ERROR:
+                        status = "failed"
+                        error_code = event.error_code
+                        error_message = event.error_message or "AI 调用失败"
+                        sink.emit(counter.payload(
+                            FRAME_ERROR,
+                            errorCode=error_code,
+                            errorMessage=error_message,
+                            extra=event.extra,
+                        ))
+                        break
+                    elif event.type == FRAME_DONE:
+                        if event.usage is not None:
+                            usage = event.usage.as_dict()
+                        if event.model:
+                            model = event.model
+            except (AIError, AppError, sqlite3.Error, OSError, ValueError) as exc:
+                # 兜住的范围：模型侧异常（含降级到底后抛出的最后错误）、业务异常、
+                # 写库异常、网络与编解码异常。产出线程里没有 HTTP 响应可抛，
+                # 唯一的正确处置是转成一个 error 帧让前端能看到失败原因。
+                status = "failed"
+                error_code = exc.code if isinstance(exc, (AIError, AppError)) else ErrorCode.INTERNAL_ERROR
+                error_message = str(exc)
+                log_event(logger, "stream_producer_failed", level=logging.WARNING,
+                          traceId=job.trace_id or "-", taskId=job.task_id,
+                          capability=job.capability, error=error_message)
+                sink.emit(counter.payload(
+                    FRAME_ERROR, errorCode=error_code, errorMessage=error_message))
+            else:
+                if status == "success":
+                    conclusions = _finalize_stream_run(job, "".join(collected), usage, model)
+                    output = str(conclusions["text"] or "")
+                    usage = dict(conclusions["usage"])
+                    review_required = needs_human_review(output)
+                    # JSON 产出物不能追加复核标记，否则前端无法解析结构化结果
+                    if review_required and job.output_format != OUTPUT_JSON:
+                        output = mark_review_required(output)
+                    # 记录先落库再发 done 帧：前端收到 done 后会立刻刷新「历史产出」，
+                    # 放到收尾里会晚于 done 帧，列表刷新时还看不到这一条。
+                    record_id = _write_record_standalone(
+                        job.db_path,
+                        capability=job.capability,
+                        output=output,
+                        variables=job.variables,
+                        refs=job.refs,
+                        review_required=review_required,
+                        model=model,
+                        task_id=job.task_id,
+                        session_id=job.session_id,
+                        prompt_code=job.prompt_code,
+                        usage=usage,
+                        mask=mask_info,
+                        context=conclusions["context"],
+                        schema=conclusions["schema"],
+                        dedup=conclusions["dedup"],
+                        cost=conclusions["cost"],
                     )
-                    break
-                elif event.type == FRAME_DONE:
-                    if event.usage is not None:
-                        usage = event.usage.as_dict()
-                    if event.model:
-                        model = event.model
-        except GeneratorExit:
-            # 客户端断开：任务标记为已取消
-            status = "cancelled"
-            raise
-        except Exception as exc:  # noqa: BLE001 - 错误转成单个 error 帧
-            status = "failed"
-            error_code = exc.code if isinstance(exc, AIError) else ErrorCode.INTERNAL_ERROR
-            error_message = str(exc)
-            yield counter.frame(FRAME_ERROR, errorCode=error_code, errorMessage=error_message)
-        else:
-            if status == "success":
-                output = "".join(collected)
-                review_required = needs_human_review(output)
-                # JSON 产出物不能追加复核标记，否则前端无法解析结构化结果
-                if review_required and spec.output_format != OUTPUT_JSON:
-                    output = mark_review_required(output)
-                # 记录先落库再发 done 帧：前端收到 done 后会立刻刷新「历史产出」，
-                # 放到 finally 里会晚于 done 帧，列表刷新时还看不到这一条。
-                _write_record_standalone(
-                    db_path,
-                    capability=capability,
-                    output=output,
-                    variables=variables,
-                    refs=plan.refs,
-                    review_required=review_required,
-                    model=model,
-                    task_id=task_id,
-                    session_id=session_id,
-                    prompt_code=prompt_code,
-                    usage=usage,
-                    mask=mask_info,
-                )
-                yield counter.frame(
-                    FRAME_DONE,
-                    output=output,
-                    usage=usage,
-                    model=model,
-                    refs=plan.refs,
-                    reviewRequired=review_required,
-                    mask=mask_info,
-                )
-        finally:
-            task_control.release(control_key)
-            if not output:
-                output = "".join(collected)
-            _finish_task(
-                db_path, task_id, status,
-                result={"output": output, "usage": usage, "model": model},
-                error_code=error_code,
-                error_message=error_message,
-            )
-            _record_message(db_path, session_id, output, prompt_code, model, usage, status)
+                    sink.emit(counter.payload(
+                        FRAME_DONE,
+                        output=output,
+                        usage=usage,
+                        model=model,
+                        refs=job.refs,
+                        reviewRequired=review_required,
+                        recordId=record_id,
+                        mask=mask_info,
+                        # 主线 A 四份结论：流式与同步现在给的是同一套字段
+                        context=conclusions["context"],
+                        schema=conclusions["schema"],
+                        dedup=conclusions["dedup"],
+                        cost=conclusions["cost"],
+                    ))
+    finally:
+        task_control.release(job.control_key)
+        if not output:
+            output = "".join(collected)
+        _finish_task(
+            job.db_path, job.task_id, status,
+            result={"output": output, "usage": usage, "model": model},
+            error_code=error_code,
+            error_message=error_message,
+        )
+        _record_message(job.db_path, job.session_id, output, job.prompt_code, model, usage, status)
+        sink.finish(status)
+        write_guard.trace_hint(None)
 
-    response = Response(stream_with_context(generate()), mimetype=SSE_MIME)
-    response.headers["Cache-Control"] = "no-cache"
-    response.headers["X-Accel-Buffering"] = "no"
-    response.headers["X-AITP-Task-Id"] = str(task_id)
-    return response
+
+@bp.get("/stream/<int:task_id>/frames")
+def stream_frames(task_id: int) -> Response:
+    """取增量帧：拿到当下已有的帧就返回，绝不挂在服务器上等模型（这是换承载的意义）。"""
+    after = int(request.args.get("after") or 0)
+    payload = stream_broker.read_frames(task_id, after)
+    if payload is not None:
+        return ok(payload)
+    return ok(_expired_stream_payload(task_id, after))
+
+
+def _expired_stream_payload(task_id: int, after: int) -> dict[str, Any]:
+    """缓冲区命中不到时的回落：把库里的任务终态还原成一帧，前端不至于空转到超时。
+
+    命中场景只有两种：服务重启（缓冲是进程内的，帧随进程没了）与
+    结束超过 BUFFER_TTL_S 才第一次来取。两种都该给出终局答案而不是 404。
+    """
+    conn = db()
+    repo = AITaskRepository(conn)
+    row = repo.get(task_id)
+    if not row:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "流式任务不存在")
+    status = str(row.get("status") or "failed")
+    finished = status not in ("pending", "running")
+    frames: list[dict[str, Any]] = []
+    if finished:
+        result = loads(row.get("result_json"), {}) or {}
+        if status == "success":
+            frames.append({
+                "seq": after + 1,
+                "type": FRAME_DONE,
+                "output": str(result.get("output") or ""),
+                "usage": result.get("usage") or {},
+                "model": str(result.get("model") or ""),
+                "reviewRequired": False,
+            })
+        else:
+            frames.append({
+                "seq": after + 1,
+                "type": FRAME_ERROR,
+                "errorCode": row.get("error_code"),
+                "errorMessage": str(row.get("error_message") or "流式缓冲已过期，产出请查看任务详情"),
+            })
+    return {
+        "taskId": task_id,
+        "frames": frames,
+        "lastSeq": after + (1 if frames else 0),
+        "status": status,
+        "finished": finished,
+        "truncated": True,
+        "intervalMs": stream_broker.POLL_INTERVAL_MS,
+        "expired": True,
+    }
 
 
 def _record_message(
@@ -964,10 +1251,12 @@ def _record_message(
             prompt_code=prompt_code, model=model, usage=usage,
         )
         conn.commit()
-    except Exception:  # pragma: no cover
-        logger.warning(
-            "助手消息落库失败 session_id=%s prompt=%s", session_id, prompt_code, exc_info=True
-        )
+    # 兜住的范围：会话消息是产出的第三份副本（产出记录与任务终态都已落库），
+    # 它失败不该让生产者线程带着未释放的缓冲区退出，故只留痕不重抛。
+    except (sqlite3.Error, OSError, ValueError) as exc:  # pragma: no cover
+        log_event(logger, "assistant_message_failed", level=logging.WARNING,
+                  traceId=write_guard.log_trace_id(), sessionId=session_id,
+                  promptCode=prompt_code, error=str(exc))
     finally:
         conn.close()
 
@@ -1286,3 +1575,165 @@ def cancel_task(pk: str) -> Response:
     # 顺序编排则在每一步边界重读库状态（见 composite_service）
     interrupted = task_control.cancel(f"lab:{target}")
     return ok({"id": target, "status": "cancelled", "interrupted": interrupted})
+
+
+# ---------------- 成本与预算（GAP-30） ----------------
+
+#: 逐日趋势最多回溯多少天：够覆盖一个迭代，又不让一次请求扫穿整库
+MAX_TREND_DAYS = 90
+
+
+def _query_int(name: str, default: int = 0) -> int:
+    raw = request.args.get(name)
+    if raw in (None, ""):
+        return default
+    return require_int(raw, name, default)
+
+
+def _price_field(data: dict[str, Any], row: dict[str, Any], camel: str, snake: str) -> int:
+    """单价字段：没给就保留库里的现值，给了就必须是非负整数微元。"""
+    if camel not in data and snake not in data:
+        try:
+            return ai_cost.normalize_price_micros(row.get(snake), camel)
+        except ValueError:
+            return 0
+    raw = data[camel] if camel in data else data[snake]
+    try:
+        return ai_cost.normalize_price_micros(raw, camel)
+    except ValueError as exc:
+        raise AppError(ErrorCode.PARAM_ERROR, str(exc)) from None
+
+
+@bp.get("/cost/summary")
+def cost_summary() -> Response:
+    """成本视图：今日 / 本月 / 选定范围的总花费，按能力、项目、档案拆分，带软预算状态。
+
+    过滤参数都可省：`projectId` 顺着任务收敛（记录表本身没有项目列），
+    `capability` 必须是已注册能力，`days` 给出逐日趋势（上限 90 天）。
+    """
+    conn = db()
+    project_id = _optional_int(request.args.get("projectId"), "projectId")
+    capability = optional_str(request.args.get("capability"), "capability", 60)
+    if capability:
+        lab_service.require_capability(capability)
+    days = max(0, min(MAX_TREND_DAYS, _query_int("days", 0)))
+    return ok(ai_cost.summary(
+        conn, project_id=project_id, capability=capability, days=days,
+    ))
+
+
+@bp.get("/cost/budget")
+def cost_budget() -> Response:
+    """预算当前状态：日/月软阈值、告警比例、单次调用 token 软上限与提示文案。"""
+    conn = db()
+    project_id = _optional_int(request.args.get("projectId"), "projectId")
+    capability = optional_str(request.args.get("capability"), "capability", 60)
+    if capability:
+        lab_service.require_capability(capability)
+    return ok(ai_cost.budget_status(conn, project_id=project_id, capability=capability))
+
+
+@bp.put("/cost/budget")
+def cost_budget_update() -> Response:
+    """写预算软阈值。`callTokens` 可按能力 / 按项目覆盖（作用域由请求体决定）。"""
+    conn = db()
+    data = body()
+    changed: dict[str, int] = {}
+    messages: list[str] = []
+    for field, key, description in (
+        ("dailyMicros", ai_cost.CONFIG_DAILY, "每日 AI 花费软阈值（微元），0=不设限，超了只提醒不拦截"),
+        ("monthlyMicros", ai_cost.CONFIG_MONTHLY, "每月 AI 花费软阈值（微元），0=不设限，超了只提醒不拦截"),
+        ("warnRatio", ai_cost.CONFIG_WARN_RATIO, "花费达到软阈值的百分之几时开始提示（1~100）"),
+    ):
+        if field in data:
+            value = require_int(data.get(field), field)
+            if value < 0:
+                raise AppError(ErrorCode.PARAM_ERROR, f"参数 {field} 不能为负数；0 表示不设限")
+            if field == "warnRatio" and not (
+                ai_cost.MIN_WARN_RATIO <= value <= ai_cost.MAX_WARN_RATIO
+            ):
+                raise AppError(ErrorCode.PARAM_ERROR, "参数 warnRatio 必须在 1~100 之间")
+            ai_cost.set_int_config(conn, key, value, description)
+            changed[field] = value
+    if "callTokens" in data:
+        value = require_int(data.get("callTokens"), "callTokens")
+        if value < 0:
+            raise AppError(ErrorCode.PARAM_ERROR, "参数 callTokens 不能为负数；0 表示不设限")
+        scope_capability = optional_str(data.get("capability"), "capability", 60)
+        scope_project = _optional_int(data.get("projectId"), "projectId")
+        if scope_capability:
+            lab_service.require_capability(scope_capability)
+            key = f"{ai_cost.CALL_TOKENS_CAP_PREFIX}{scope_capability}"
+            messages.append(f"能力「{label_of(scope_capability)}」")
+        elif scope_project:
+            if ProjectRepository(conn).get(scope_project) is None:
+                raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "项目不存在")
+            key = f"{ai_cost.CALL_TOKENS_PROJECT_PREFIX}{scope_project}"
+            messages.append(f"项目 #{scope_project}")
+        else:
+            key = ai_cost.CONFIG_CALL_TOKENS
+            messages.append("全局")
+        ai_cost.set_int_config(
+            conn, key, value, "单次调用 token 软上限（仅提示，不拦截、不降级）",
+        )
+        changed["callTokens"] = value
+        changed[f"callTokens@{key}"] = value
+    if not changed:
+        raise AppError(ErrorCode.PARAM_ERROR, "没有需要更新的预算项")
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_CONFIG, audit_service.RESOURCE_SYSTEM_CONFIG,
+          None, "AI 预算软阈值", {"changed": sorted(changed), "scope": messages})
+    return ok(ai_cost.budget_status(conn), "预算设置已更新（软阈值，只提示不拦截）")
+
+
+@bp.get("/cost/prices")
+def cost_prices() -> Response:
+    """各模型档案的 token 单价与累计花费：AI 设置页的成本区数据源。"""
+    conn = db()
+    return ok({
+        "currency": ai_cost.currency_of(conn),
+        "microsPerYuan": ai_cost.MICROS_PER_YUAN,
+        "priceUnit": "微元 / 1000 token",
+        "profiles": ai_cost.price_table(conn),
+    })
+
+
+@bp.put("/cost/prices/<int:profile_id>")
+def cost_price_update(profile_id: int) -> Response:
+    """按档案写 token 单价（微元 / 1000 token）。
+
+    与 `PUT /settings/ai/profiles/<pk>` 写的是同一批列（`sys_ai_profile.price_*`，
+    迁移 047），GAP-30 收口后档案接口也已能吃这三个字段，所以两条路只有分工不同：
+    本接口回给前端「单价 + 该档案累计花费」一行看全，档案接口负责档案本身的增改；
+    两边都不做第二套折算口径。
+    """
+    conn = db()
+    repo = AIProfileRepository(conn)
+    row = repo.get(profile_id)
+    if not row:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "模型档案不存在")
+    data = body()
+    price = ai_cost.TokenPrice(
+        input_micros=_price_field(data, row, "priceInputMicros", "price_input_micros"),
+        output_micros=_price_field(data, row, "priceOutputMicros", "price_output_micros"),
+        currency=ai_cost.normalize_currency(
+            data.get("priceCurrency") or data.get("price_currency") or row.get("price_currency")
+        ),
+    )
+    repo.update(profile_id, {
+        "price_input_micros": price.input_micros,
+        "price_output_micros": price.output_micros,
+        "price_currency": price.currency,
+    })
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_CONFIG, audit_service.RESOURCE_AI_PROFILE,
+          profile_id, str(row.get("name") or ""), {
+              "priceInputMicros": price.input_micros,
+              "priceOutputMicros": price.output_micros,
+              "priceCurrency": price.currency,
+          })
+    payload = next((item for item in ai_cost.price_table(conn)
+                    if item["profileId"] == profile_id), None)
+    if payload is None:  # pragma: no cover - 刚更新过的档案不可能读不回来
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "模型档案不存在")
+    return ok(payload, "单价已更新")

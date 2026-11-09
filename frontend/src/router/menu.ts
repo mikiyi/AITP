@@ -175,6 +175,7 @@ export const MENU_NODES: MenuNode[] = [
       { path: '/settings/automation', title: '自动化管理设置', icon: SetUp },
       { path: '/settings/performance', title: '性能测试管理设置', icon: TrendCharts },
       { path: '/settings/ci', title: 'CI 与通知', icon: Bell },
+      { path: '/settings/assertions', title: '断言库', icon: CircleCheck },
       { path: '/settings/home-cards', title: '首页卡片定制', icon: Grid },
       { path: '/settings/backup', title: '数据备份与还原设置', icon: FolderOpened },
     ],

@@ -159,6 +159,14 @@
           </el-descriptions-item>
         </el-descriptions>
 
+        <el-descriptions v-if="detail.coverage" :column="2" border class="detail-coverage">
+          <el-descriptions-item v-for="row in coverageRows" :key="row.label" :label="row.label">
+            <span class="coverage-rate">{{ row.rateText }}</span>
+            <span class="muted coverage-parts">{{ row.part }}/{{ row.whole }} 条</span>
+            <div class="muted coverage-hint">{{ row.hint }}</div>
+          </el-descriptions-item>
+        </el-descriptions>
+
         <div class="toolbar detail-toolbar">
           <el-button type="primary" :icon="MagicStick" :loading="generating" @click="generate">
             AI 生成回归点
@@ -179,12 +187,29 @@
           <el-table-column prop="module" label="模块" width="130" show-overflow-tooltip />
           <el-table-column prop="priority" label="优先级" width="86" align="center" />
           <el-table-column prop="verifyTarget" label="验证目标" min-width="180" show-overflow-tooltip />
+          <el-table-column label="执行方式" width="92" align="center">
+            <template #default="scope">
+              <el-tooltip
+                :content="
+                  scope.row.execMode === 'auto'
+                    ? '自动：提交时由服务端真跑，结论只认这次真实执行的结果与证据'
+                    : '手工：由执行人回写结论，标记「通过」必须附证据'
+                "
+                placement="top"
+              >
+                <el-tag :type="scope.row.execMode === 'auto' ? 'primary' : 'info'" size="small" effect="plain">
+                  {{ scope.row.execMode === 'auto' ? '自动' : '手工' }}
+                </el-tag>
+              </el-tooltip>
+            </template>
+          </el-table-column>
           <el-table-column label="结果" width="150">
             <template #default="scope">
               <el-select
                 v-model="scope.row.result"
                 size="small"
                 style="width: 110px"
+                :disabled="scope.row.execMode === 'auto'"
                 @change="markDirty(scope.row)"
               >
                 <el-option label="通过" value="passed" />
@@ -203,6 +228,29 @@
                 placeholder="备注"
                 @change="markDirty(scope.row)"
               />
+            </template>
+          </el-table-column>
+          <el-table-column label="证据" width="128">
+            <template #default="scope">
+              <el-button
+                v-if="scope.row.evidenceId"
+                link
+                type="success"
+                size="small"
+                @click="openItemEvidence(scope.row)"
+              >
+                EV-{{ scope.row.evidenceId }}
+              </el-button>
+              <el-button
+                v-else-if="scope.row.execMode !== 'auto'"
+                link
+                type="primary"
+                size="small"
+                @click="openEvidenceForm(scope.row)"
+              >
+                {{ hasEvidence(scope.row) ? '已填证据' : '填证据' }}
+              </el-button>
+              <span v-else class="muted">真跑后生成</span>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="90" fixed="right">
@@ -244,6 +292,35 @@
         <el-button type="primary" :loading="savingItem" @click="saveItem">保存</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="evidenceVisible" title="手工回写证据" width="600px" append-to-body>
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="标记「通过」必须至少填一项证据；备注不算证据。还没验证的点请标「未执行」或「阻塞」。"
+      />
+      <el-form label-width="96px" style="margin-top: 12px">
+        <el-form-item label="回归点">
+          <span class="muted">{{ evidenceForm.title || '-' }}</span>
+        </el-form-item>
+        <el-form-item label="日志摘要">
+          <el-input v-model="evidenceForm.logSummary" type="textarea" :rows="3" placeholder="关键日志、命令输出片段" />
+        </el-form-item>
+        <el-form-item label="请求摘要">
+          <el-input v-model="evidenceForm.requestSummary" type="textarea" :rows="2" placeholder="方法 + 地址 + 关键参数" />
+        </el-form-item>
+        <el-form-item label="响应摘要">
+          <el-input v-model="evidenceForm.responseSummary" type="textarea" :rows="2" placeholder="状态码 + 关键返回字段" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="evidenceVisible = false">取消</el-button>
+        <el-button type="primary" @click="applyEvidence">保存证据</el-button>
+      </template>
+    </el-dialog>
+
+    <EvidenceDrawer v-model="itemEvidenceVisible" :locator="evidenceLocator" title="回归点执行证据" />
   </div>
 
     <AddToKnowledgeDialog
@@ -257,7 +334,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Check, MagicStick, Plus, Refresh, RefreshLeft } from '@element-plus/icons-vue'
 import { projectVersionApi, regressionApi } from '@/api'
@@ -267,6 +344,7 @@ import { useProjectScope } from '@/composables/useProjectScope'
 import type { Regression, RegressionItem } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
+import EvidenceDrawer from '@/components/EvidenceDrawer.vue'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 
 interface RegressionForm {
@@ -405,6 +483,42 @@ function statusTagType(status: string): 'success' | 'warning' | 'info' {
 function countResult(result: string): number {
   return items.value.filter((item) => item.result === result).length
 }
+
+/** 明细抽屉的执行覆盖：比率一律取服务端 coverage 口径，前端不再自己算分母。 */
+const coverageRows = computed(() => {
+  const coverage = detail.value?.coverage
+  const num = (value?: number) => (typeof value === 'number' ? value : 0)
+  return [
+    {
+      label: '执行覆盖率',
+      rateText: `${num(coverage?.executedRate)}%`,
+      part: num(coverage?.executed),
+      whole: num(coverage?.total),
+      hint: '已回写结果的回归点 / 全部回归点（手工与自动都算）',
+    },
+    {
+      label: '自动项占比',
+      rateText: `${num(coverage?.autoShare)}%`,
+      part: num(coverage?.autoTotal),
+      whole: num(coverage?.total),
+      hint: '标为自动执行的回归点占比，决定这份清单能真跑到什么程度',
+    },
+    {
+      label: '自动项真跑率',
+      rateText: `${num(coverage?.autoRate)}%`,
+      part: num(coverage?.autoExecuted),
+      whole: num(coverage?.autoTotal),
+      hint: '自动项里由服务端真实执行并落证据的占比',
+    },
+    {
+      label: '证据覆盖率',
+      rateText: `${num(coverage?.evidenceRate)}%`,
+      part: num(coverage?.evidenced),
+      whole: num(coverage?.executed),
+      hint: '已执行条目中带请求 / 响应摘要或附件证据的占比',
+    },
+  ]
+})
 
 async function load(): Promise<void> {
   loading.value = true
@@ -584,18 +698,78 @@ function markDirty(item: RegressionItem): void {
   item.executedAt = item.executedAt ?? new Date().toISOString()
 }
 
+const evidenceVisible = ref(false)
+const itemEvidenceVisible = ref(false)
+const evidenceLocator = ref<Record<string, string | number>>({})
+const evidenceForm = reactive({ itemId: 0, title: '', logSummary: '', requestSummary: '', responseSummary: '' })
+
+function hasEvidence(item: RegressionItem): boolean {
+  return !!(item.logSummary || item.requestSummary || item.responseSummary)
+}
+
+function openEvidenceForm(item: RegressionItem): void {
+  Object.assign(evidenceForm, {
+    itemId: Number(item.id),
+    title: item.title ?? '',
+    logSummary: item.logSummary ?? '',
+    requestSummary: item.requestSummary ?? '',
+    responseSummary: item.responseSummary ?? '',
+  })
+  evidenceVisible.value = true
+}
+
+function applyEvidence(): void {
+  const target = items.value.find((item) => Number(item.id) === evidenceForm.itemId)
+  if (!target) {
+    ElMessage.error('回归点已不在清单里，请刷新后重试')
+    return
+  }
+  target.logSummary = evidenceForm.logSummary
+  target.requestSummary = evidenceForm.requestSummary
+  target.responseSummary = evidenceForm.responseSummary
+  markDirty(target)
+  evidenceVisible.value = false
+}
+
+function openItemEvidence(item: RegressionItem): void {
+  // 有证据号按证据取；没有则按回归点定位，查不到时抽屉给中文降级
+  evidenceLocator.value = item.evidenceId
+    ? { evidenceId: Number(item.evidenceId) }
+    : { regressionItemId: Number(item.id) }
+  itemEvidenceVisible.value = true
+}
+
 async function submitResults(): Promise<void> {
   if (!detail.value) {
+    return
+  }
+  const missing = items.value.filter(
+    (item) => item.execMode !== 'auto' && item.result === 'passed' && !hasEvidence(item),
+  )
+  if (missing.length) {
+    ElMessage.warning(
+      `${missing.length} 条手工回归点标了「通过」但没有证据：${missing
+        .slice(0, 3)
+        .map((item) => String(item.title ?? item.id))
+        .join('、')}${missing.length > 3 ? ' 等' : ''}。请先「填证据」，或改标「未执行 / 阻塞」。`,
+    )
     return
   }
   const results = items.value.map((item) => ({
     itemId: item.id,
     result: item.result || 'not_executed',
     remark: item.remark || '',
+    logSummary: item.logSummary || '',
+    requestSummary: item.requestSummary || '',
+    responseSummary: item.responseSummary || '',
   }))
   try {
     const payload = await regressionApi.execute(detail.value.id, results)
-    ElMessage.success(`已回写 ${payload.updated.length} 条，跳过 ${payload.skipped.length} 条`)
+    const autoCount = (payload.executed ?? []).length
+    ElMessage.success(
+      `已回写 ${payload.updated.length} 条，跳过 ${payload.skipped.length} 条` +
+        (autoCount ? `；其中 ${autoCount} 条自动项由服务端真跑` : ''),
+    )
     await openDetail(detail.value)
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '提交失败')
@@ -626,5 +800,22 @@ onMounted(async () => {
 
 .detail-toolbar {
   margin: 12px 0;
+}
+
+.detail-coverage {
+  margin: 12px 0;
+}
+
+.detail-coverage .coverage-rate {
+  font-weight: 600;
+}
+
+.detail-coverage .coverage-parts {
+  margin-left: 6px;
+}
+
+.detail-coverage .coverage-hint {
+  font-size: 12px;
+  line-height: 1.5;
 }
 </style>

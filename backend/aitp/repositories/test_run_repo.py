@@ -12,6 +12,7 @@ from typing import Any, Iterable
 from ..common.pagination import RowDict, RowList
 from ..common.time_utils import utcnow_iso
 from .base import BaseRepository, dumps, loads
+from .numbering import begin_claim
 
 RUN_PENDING = "pending"
 RUN_RUNNING = "running"
@@ -158,6 +159,12 @@ class TestRunCaseRepository(BaseRepository):
         return {int(row["case_id"]) for row in rows}
 
     def next_seq(self, run_id: int) -> int:
+        """轮次内快照序号：与取号同事务，并发追加用例不会拿到重复 seq。
+
+        建轮次与追加用例都紧跟着一串 INSERT，写锁持到调用方 commit 为止，
+        持锁时长与这批写入本身一致（GAP-26 编号口径）。
+        """
+        begin_claim(self.conn)
         row = self.conn.execute(
             "SELECT COALESCE(MAX(seq), 0) FROM biz_test_run_case"
             " WHERE run_id = ? AND is_deleted = 0",

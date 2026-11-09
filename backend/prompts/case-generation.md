@@ -2,7 +2,7 @@
 name: "case-generation"
 title: "用例生成"
 description: "基于需求生成结构化测试用例，输出 JSON 数组"
-optional: "caseTypes, count, outputTemplate"
+optional: "caseTypes, count, outputTemplate, contextModules, contextCases, contextBugs, contextKnowledge"
 ---
 
 # 角色
@@ -14,6 +14,25 @@ optional: "caseTypes, count, outputTemplate"
 
 # 需求原文
 {{requirement}}
+
+# 项目内已有事实（上下文装配器注入，不是用户手填内容）
+## 模块树路径
+{{contextModules}}
+
+## 已有用例
+{{contextCases}}
+
+## 历史缺陷
+{{contextBugs}}
+
+## 知识条目
+{{contextKnowledge}}
+
+使用要求：
+- 模块归属对齐「模块树路径」，`tags` 里写出所属模块路径，不要自己发明层级
+- 与「已有用例」重复的场景不要再生成，只补它们没覆盖的场景；确需改写沿用同一条用例标题
+- 「历史缺陷」涉及的场景优先覆盖，并在标题里点明是回归该缺陷
+- 内容为「（本次没有召回到相关…）」或「（未提供）」时按需求原文正常生成，不要编造项目内事实
 
 # 任务
 生成 {{count}} 条测试用例，覆盖需求中的正常流程、业务规则、边界值、异常分支与权限场景。

@@ -7,7 +7,7 @@
         <el-button :icon="Refresh" @click="load">刷新</el-button>
         <el-button type="primary" :icon="Plus" @click="openCreate">新建案例</el-button>
         <el-button type="success" :icon="VideoPlay" :loading="runningAll" @click="runAll">
-          全量验证
+          {{ runProgress > 0 ? `全量验证 ${runProgress}%` : '全量验证' }}
         </el-button>
       </div>
     </div>
@@ -224,9 +224,9 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Refresh, VideoPlay } from '@element-plus/icons-vue'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
-import { validationApi } from '@/api'
+import { taskApi, validationApi } from '@/api'
 import { percentText } from '@/utils/format'
-import type { ValidationCase, ValidationResult } from '@/api/types'
+import type { ValidationCase, ValidationResult, ValidationRunSummary } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 import { useLabStore } from '@/stores/lab'
 
@@ -271,16 +271,11 @@ const cases = ref<ValidationCase[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const runningAll = ref(false)
+const runProgress = ref(0)
 const editVisible = ref(false)
 const resultVisible = ref(false)
 const result = ref<ValidationResult | null>(null)
-const lastRun = ref<{
-  total: number
-  passed: number
-  failed: number
-  passRate: number
-  results: Array<{ id: number; name: string; passed: boolean; errors: string[] }>
-} | null>(null)
+const lastRun = ref<ValidationRunSummary | null>(null)
 
 const variablesText = ref('{}')
 const expectedRoutesText = ref('')
@@ -426,20 +421,45 @@ async function runCase(row: ValidationCase): Promise<void> {
   }
 }
 
+/** 全量验证已改成后台任务：排队后轮询任务详情取汇总，超时则交给任务中心继续看。 */
+const RUN_POLL_INTERVAL_MS = 1200
+const RUN_POLL_MAX_TICKS = 300
+
+async function waitRunAll(taskId: number): Promise<ValidationRunSummary> {
+  for (let tick = 0; tick < RUN_POLL_MAX_TICKS; tick += 1) {
+    const task = await taskApi.get(taskId)
+    if (task.status === 'success') {
+      return task.result as unknown as ValidationRunSummary
+    }
+    if (task.status === 'failed' || task.status === 'cancelled') {
+      throw new Error(task.errorMessage || '全量验证未完成')
+    }
+    runProgress.value = Number(task.progress ?? 0)
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, RUN_POLL_INTERVAL_MS)
+    })
+  }
+  throw new Error('全量验证仍在后台执行，可到「任务中心」查看进度')
+}
+
 async function runAll(): Promise<void> {
   runningAll.value = true
+  runProgress.value = 0
   try {
-    lastRun.value = await validationApi.runAll({
+    const queued = await validationApi.runAll({
       projectId: appStore.currentProjectId ?? undefined,
     })
+    const summary = await waitRunAll(Number(queued.taskId))
+    lastRun.value = summary
     ElMessage.success(
-      `全量验证完成：通过 ${lastRun.value.passed}/${lastRun.value.total}`,
+      `全量验证完成：通过 ${summary.passed}/${summary.total}`,
     )
     await load()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '全量验证失败')
   } finally {
     runningAll.value = false
+    runProgress.value = 0
   }
 }
 

@@ -11,14 +11,15 @@
     <div class="panel panel-pad settings-block">
       <div class="settings-block__head">
         <h3>CI 触发令牌</h3>
-        <el-tag :type="ci?.enabled ? 'success' : 'info'" effect="plain" size="small">
-          {{ ci?.enabled ? '已启用' : '未启用' }}
+        <el-tag :type="ciStatusType(ci?.status ?? 'inactive')" effect="plain" size="small">
+          {{ ciStatusText[ci?.status ?? 'inactive'] }}
         </el-tag>
         <span v-if="ci?.lastUsedAt" class="muted">最近使用：{{ dateTimeText(ci.lastUsedAt) }}</span>
       </div>
       <p class="muted settings-block__hint">
         流水线用令牌调用 <code>POST /api/v1/ci/runs</code> 创建并执行测试轮次；令牌只在生成时显示一次，
-        本地只保存哈希，遗失后只能重新生成。该接口不需要本地访问口令，鉴权完全由令牌承担。
+        本地只保存哈希，遗失后只能重新生成。该接口可绕过本地访问口令，但必须先过「路由白名单 +
+        有效期 + 吊销」三重校验，令牌泄露不再等于全权访问。
       </p>
 
       <template v-if="ci?.enabled">
@@ -29,6 +30,14 @@
           </el-descriptions-item>
           <el-descriptions-item label="绑定项目">
             {{ projectName(ci.projectId) || '全部项目（未绑定）' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="状态">
+            <el-tag :type="ciStatusType(ci.status)" size="small" effect="plain">
+              {{ ciStatusText[ci.status] }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="到期时间">
+            {{ ci.expiresAt ? dateTimeText(ci.expiresAt) : '不过期' }}
           </el-descriptions-item>
           <el-descriptions-item label="创建时间">{{ dateTimeText(ci.createdAt) }}</el-descriptions-item>
           <el-descriptions-item label="触发地址" :span="2">
@@ -78,6 +87,48 @@
         </div>
         <div class="muted">刷新或离开页面后将无法再次查看；重新生成会让旧令牌立即失效。</div>
       </el-alert>
+
+      <div v-if="tokenList.length" class="token-history">
+        <div class="settings-block__head token-history__head">
+          <h4>令牌历史</h4>
+          <span class="muted">展示有效期与吊销状态；被吊销或过期的令牌会立即失效</span>
+        </div>
+        <el-table :data="tokenList" size="small" border>
+          <el-table-column prop="tokenPrefix" label="前缀" min-width="130">
+            <template #default="{ row }"><code>{{ row.tokenPrefix }}…</code></template>
+          </el-table-column>
+          <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
+          <el-table-column label="生效范围" width="150">
+            <template #default="{ row }">
+              {{ row.projectId ? projectName(row.projectId) : '全部项目' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="100" align="center">
+            <template #default="{ row }">
+              <el-tag :type="ciStatusType(row.status)" size="small" effect="plain">
+                {{ row.statusLabel }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="到期时间" width="170">
+            <template #default="{ row }">
+              {{ row.expiresAt ? dateTimeText(row.expiresAt) : '不过期' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="90" fixed="right" align="center">
+            <template #default="{ row }">
+              <el-button
+                link
+                type="danger"
+                :disabled="row.status !== 'active'"
+                @click="revokeOneToken(row)"
+              >
+                吊销
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
     </div>
 
     <div class="panel panel-pad settings-block">
@@ -185,9 +236,20 @@
             />
           </el-select>
         </el-form-item>
+        <el-form-item label="有效期">
+          <el-select v-model="tokenForm.expiresInDays" style="width: 100%">
+            <el-option
+              v-for="option in expiryOptions"
+              :key="String(option.value)"
+              :label="option.label"
+              :value="option.value"
+            />
+          </el-select>
+        </el-form-item>
       </el-form>
       <p class="muted dialog-hint">
-        绑定项目后，令牌只能触发该项目；留空则不限项目。生成新令牌会让旧令牌立即失效。
+        绑定项目后，令牌只能触发该项目；留空则不限项目。设定有效期后，过期令牌会立即失效。
+        生成新令牌会让旧令牌立即失效。
       </p>
       <template #footer>
         <el-button @click="tokenDialogVisible = false">取消</el-button>
@@ -260,12 +322,16 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Back, CopyDocument, Key, Plus, Refresh } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField } from '@/components/BaseProTable.vue'
 import { settingsApi } from '@/api'
-import type {
-  CiEventOption,
-  CiSettings,
-  NotificationChannel,
-  NotificationLog,
-} from '@/api/types'
+import {
+  getCiSettings,
+  issueCiToken,
+  listCiTokens,
+  revokeAllCiTokens,
+  revokeCiToken,
+  type CiSettings,
+  type CiTokenItem,
+} from '@/api/ci'
+import type { CiEventOption, NotificationChannel, NotificationLog } from '@/api/types'
 import { dateTimeText } from '@/utils/format'
 import { useAppStore } from '@/stores/app'
 
@@ -275,6 +341,7 @@ const router = useRouter()
 const appStore = useAppStore()
 
 const ci = ref<CiSettings | null>(null)
+const tokenList = ref<CiTokenItem[]>([])
 const channels = ref<NotificationChannel[]>([])
 const eventOptions = ref<CiEventOption[]>([])
 const loading = ref(false)
@@ -282,10 +349,20 @@ const channelsLoading = ref(false)
 const issuing = ref(false)
 const issuedToken = ref('')
 const tokenDialogVisible = ref(false)
-const tokenForm = reactive<{ name: string; projectId: number | null }>({
+const tokenForm = reactive<{ name: string; projectId: number | null; expiresInDays: number | null }>({
   name: 'CI 触发令牌',
   projectId: null,
+  expiresInDays: null,
 })
+
+// 有效期选项：null 表示不过期（旧令牌迁移后默认如此）。
+const expiryOptions = [
+  { label: '不过期', value: null as number | null },
+  { label: '30 天', value: 30 },
+  { label: '90 天', value: 90 },
+  { label: '180 天', value: 180 },
+  { label: '365 天', value: 365 },
+]
 
 const channelDialogVisible = ref(false)
 const channelSaving = ref(false)
@@ -393,10 +470,11 @@ function copyText(text: string, label: string): void {
 }
 
 async function loadCi(): Promise<void> {
-  ci.value = await settingsApi.ci()
+  ci.value = await getCiSettings()
   if (ci.value.events.length) {
     eventOptions.value = ci.value.events
   }
+  tokenList.value = (await listCiTokens()).list
 }
 
 async function loadChannels(): Promise<void> {
@@ -425,18 +503,21 @@ async function loadAll(): Promise<void> {
 function openTokenDialog(): void {
   tokenForm.name = ci.value?.name || 'CI 触发令牌'
   tokenForm.projectId = ci.value?.projectId ?? appStore.currentProjectId ?? null
+  tokenForm.expiresInDays = null
   tokenDialogVisible.value = true
 }
 
 async function issueToken(): Promise<void> {
   issuing.value = true
   try {
-    const payload = await settingsApi.issueCiToken({
+    const payload = await issueCiToken({
       name: tokenForm.name || undefined,
       projectId: tokenForm.projectId ?? undefined,
+      expiresInDays: tokenForm.expiresInDays ?? undefined,
     })
     ci.value = payload
     issuedToken.value = payload.token ?? ''
+    tokenList.value = (await listCiTokens()).list
     tokenDialogVisible.value = false
     ElMessage.success('CI 令牌已生成，旧令牌已失效')
   } catch (err) {
@@ -448,20 +529,57 @@ async function issueToken(): Promise<void> {
 
 async function revokeToken(): Promise<void> {
   try {
-    await ElMessageBox.confirm('吊销后流水线再调用 CI 接口会被拒绝。', '吊销 CI 令牌', {
-      type: 'warning',
-    })
+    await ElMessageBox.confirm(
+      '吊销后所有令牌再调用 CI 接口都会被拒绝。',
+      '吊销全部 CI 令牌',
+      { type: 'warning' },
+    )
   } catch {
     return
   }
   try {
-    await settingsApi.revokeCiToken()
+    await revokeAllCiTokens()
     issuedToken.value = ''
     await loadCi()
     ElMessage.success('CI 令牌已吊销')
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '吊销 CI 令牌失败')
   }
+}
+
+async function revokeOneToken(row: CiTokenItem): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      `吊销「${row.name || row.tokenPrefix || row.id}」后，该令牌再调用 CI 接口会被拒绝。`,
+      '吊销单个令牌',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await revokeCiToken(row.id)
+    await loadCi()
+    ElMessage.success('该令牌已吊销')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '吊销令牌失败')
+  }
+}
+
+type TagType = 'success' | 'warning' | 'danger' | 'info'
+
+function ciStatusType(status: CiSettings['status'] | CiTokenItem['status']): TagType {
+  if (status === 'active') return 'success'
+  if (status === 'expired') return 'warning'
+  if (status === 'revoked') return 'danger'
+  return 'info'
+}
+
+const ciStatusText: Record<string, string> = {
+  active: '有效',
+  expired: '已过期',
+  revoked: '已吊销',
+  inactive: '未启用',
 }
 
 function openChannelDialog(row?: NotificationChannel): void {
@@ -628,6 +746,19 @@ onActivated(loadAll)
 
 .token-alert {
   margin-top: 12px;
+}
+
+.token-history {
+  margin-top: 16px;
+}
+
+.token-history__head {
+  margin-bottom: 8px;
+}
+
+.token-history__head h4 {
+  margin: 0;
+  font-size: 13px;
 }
 
 .token-value {
