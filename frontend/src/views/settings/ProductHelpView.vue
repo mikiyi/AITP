@@ -203,7 +203,7 @@
               <li>用「自检」做真实调用验证：返回 ✓/✗、延迟、回复片段与中文可操作提示；未保存的配置与临时 Key 也能直接自检。</li>
               <li>本地大模型：启动 <code class="text-mono">ollama serve</code> 后选 <code class="text-mono">ollama_native</code> 档案，「模型列表」可直接拉取本机模型。</li>
               <li>外发脱敏：开启后发往云端模型的内容默认替换手机号、身份证、邮箱、银行卡号、API Key 与口令，点「预览」可以看到将要发出去的完整正文。</li>
-              <li>成本与预算：页面顶部实时显示今日 / 本月花费与调用次数；给档案配单价（每 1000 token 的微元数，1 元 = 1000000 微元）后按 token 折算金额，可设单次调用 token 上限与月预算做软提示（不拦截调用、不自动降级）。两个单价都留 0 就是未配价，此时只统计 token 不统计钱。</li>
+              <li>AI大模型成本与预算：页面下方实时显示今日 / 本月花费与调用次数；给档案配单价（每 1000 token 的微元数，1 元 = 1000000 微元）后按 token 折算金额，可设单次调用 token 上限与月预算做软提示（不拦截调用、不自动降级）。两个单价都留 0 就是未配价，此时只统计 token 不统计钱。</li>
               <li>不配任何模型也能用：能力会按本地规则降级并如实标注，不静默失败。也可让环境变量生效（参考 <code class="text-mono">.env.example</code>）。</li>
             </ol>
 
@@ -332,7 +332,6 @@
  * 正文数据与口径集中在同目录的 productHelpContent.ts，本文件只负责排版。
  */
 import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { Guide, MagicStick } from '@element-plus/icons-vue'
 import BrandName from '@/components/BrandName.vue'
 import type { DemoCase } from './productHelpContent'
@@ -352,11 +351,8 @@ import {
 
 const activeTab = ref('intro')
 
-const router = useRouter()
-
-/** 回首启引导：重置服务端状态并回到首页弹出引导（HomeView 监听该事件）。 */
+/** 回首启引导：重置服务端状态并弹引导（引导挂全局 AppLayout，自己会跳到第一步目标页）。 */
 async function reopenTour(): Promise<void> {
-  await router.push('/')
   window.dispatchEvent(new CustomEvent('aitp:reopen-tour'))
 }
 

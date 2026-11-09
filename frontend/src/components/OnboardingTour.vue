@@ -36,7 +36,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { onboardingApi, projectApi } from '@/api'
@@ -67,7 +67,7 @@ const STEPS = computed<Step[]>(() => [
     title: '第一步：配置 AI 模型',
     body: '用例生成、缺陷分析、知识库问答等 AI 能力都要先配好模型。<br>在「AI 设置」页添加供应商档案并填 Key；本地 Ollama 不需要 Key。<br>这一步现在跳过也可以，示例项目的浏览不依赖模型。',
     route: '/settings/ai',
-    target: '.ai-cost-summary',
+    target: '.ai-add-profile-btn',
     action: { label: '已了解，下一步', run: () => next() },
   },
   {
@@ -105,6 +105,8 @@ function finish(): void {
 
 /** 步骤变化时推进 current，再跳路由等目标元素出现，让高亮框落在正确的页面上。 */
 async function onChange(index: number): Promise<void> {
+  // 关闭时 el-tour 会把 current 复位到 0，这条复位不该带着页面跳到第一步
+  if (!open.value) return
   const clamped = Math.max(0, Math.min(index, STEPS.value.length - 1))
   if (clamped === current.value) return
   current.value = clamped
@@ -112,7 +114,7 @@ async function onChange(index: number): Promise<void> {
   if (router.currentRoute.value.path !== step.route) {
     await router.push(step.route)
   }
-  await waitFor(step.target)
+  await syncTarget(step.target)
 }
 
 function waitFor(selector: string, tries = 40): Promise<void> {
@@ -128,6 +130,67 @@ function waitFor(selector: string, tries = 40): Promise<void> {
   })
 }
 
+/**
+ * el-tour 只在打开 / 换步 / 窗口 resize 时测量目标，没有尺寸观察；
+ * 目标元素随后端数据到位才长高（如 AI 费用卡）时，高亮框会停在骨架尺寸。
+ * 这里等目标尺寸稳定再弹，并在弹出后补几次重测兜住慢接口。
+ */
+function waitStable(selector: string, maxMs = 3000): Promise<void> {
+  return new Promise((resolve) => {
+    const start = Date.now()
+    let last = ''
+    const tick = (): void => {
+      const el = document.querySelector(selector)
+      if (!el) return resolve()
+      const rect = el.getBoundingClientRect()
+      const sig = `${Math.round(rect.width)}x${Math.round(rect.height)}`
+      if (sig === last || Date.now() - start >= maxMs) return resolve()
+      last = sig
+      window.setTimeout(tick, 120)
+    }
+    window.setTimeout(tick, 120)
+  })
+}
+
+let remeasureTimers: number[] = []
+
+/** 页面数据到位后目标可能还在长高，补几次 resize 让 el-tour 重新测量高亮框。 */
+function scheduleRemeasure(): void {
+  remeasureTimers.forEach((timer) => window.clearTimeout(timer))
+  const fire = (): void => {
+    if (open.value) window.dispatchEvent(new Event('resize'))
+  }
+  remeasureTimers = [120, 600, 1500].map((delay) => window.setTimeout(fire, delay))
+}
+
+let sizeObserver: ResizeObserver | null = null
+
+function watchTargetResize(selector: string): void {
+  sizeObserver?.disconnect()
+  sizeObserver = null
+  const target = document.querySelector(selector)
+  if (!target) return
+  sizeObserver = new ResizeObserver(() => {
+    if (open.value) window.dispatchEvent(new Event('resize'))
+  })
+  sizeObserver.observe(target)
+}
+
+/** 等目标出现且尺寸稳定，再接管它的尺寸变化并补测。 */
+async function syncTarget(selector: string): Promise<void> {
+  await waitFor(selector)
+  await waitStable(selector)
+  watchTargetResize(selector)
+  scheduleRemeasure()
+}
+
+function stopWatchingTarget(): void {
+  sizeObserver?.disconnect()
+  sizeObserver = null
+  remeasureTimers.forEach((timer) => window.clearTimeout(timer))
+  remeasureTimers = []
+}
+
 /** 打开引导：先落到第一步的目标页（AI 设置），再弹出，避免第一步悬空在别的页面。 */
 async function startTour(): Promise<void> {
   current.value = 0
@@ -135,7 +198,7 @@ async function startTour(): Promise<void> {
   if (router.currentRoute.value.path !== first.route) {
     await router.push(first.route)
   }
-  await waitFor(first.target)
+  await syncTarget(first.target)
   open.value = true
 }
 
@@ -154,6 +217,7 @@ onMounted(async () => {
 
 async function settle(action: 'complete' | 'skip'): Promise<void> {
   open.value = false
+  stopWatchingTarget()
   try {
     await onboardingApi.update(action)
   } catch {
@@ -201,7 +265,9 @@ defineExpose({ reopen })
 watch(
   () => router.currentRoute.value.path,
   () => {
-    if (open.value) void waitFor(STEPS.value[current.value]?.target ?? '.page-header')
+    if (open.value) void syncTarget(STEPS.value[current.value]?.target ?? '.page-header')
   },
 )
+
+onBeforeUnmount(stopWatchingTarget)
 </script>

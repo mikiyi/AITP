@@ -575,7 +575,7 @@ def budget_status(
                 f"{_period_label(block['name'])} AI 花费 "
                 f"{block['costYuan']:.6f} {currency_of(conn)}，已超过软阈值 "
                 f"{block['limitYuan']:.6f}（{config.warn_ratio}% 起提醒）：不拦截调用，"
-                "可在「AI 设置 → 成本与预算」里调整阈值或补配单价。"
+                "可在「AI 设置 → AI大模型成本与预算」里调整阈值或补配单价。"
             )
         elif block["level"] == LEVEL_WARN and block["limitMicros"]:
             hints.append(

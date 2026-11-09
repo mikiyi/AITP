@@ -4,7 +4,7 @@
       <h2 class="page-title">AI 设置</h2>
       <div class="toolbar" style="margin: 0">
         <el-button :icon="Refresh" @click="loadAll">刷新</el-button>
-        <el-button type="primary" :icon="Plus" @click="openCreate">新增档案</el-button>
+        <el-button type="primary" :icon="Plus" class="ai-add-profile-btn" @click="openCreate">新增AI档案</el-button>
       </div>
     </div>
 
@@ -26,121 +26,14 @@
       title="还没有可用的 AI 模型"
     >
       <template #default>
-        AI 生成 / 分析类能力需要先配置模型：点右上角「新增档案」填供应商与 Key，或装本地 Ollama 后选本地模型（无需 Key）。
+        AI 生成 / 分析类能力需要先配置模型：点右上角「新增AI档案」填供应商与 Key，或装本地 Ollama 后选本地模型（无需 Key）。
         浏览示例项目不依赖模型，可先到「项目」页载入示例。
       </template>
     </el-alert>
 
-    <div class="panel panel-pad ai-cost-panel">
-      <div class="section-head">
-        <h3>成本与预算</h3>
-        <div class="toolbar" style="margin: 0">
-          <el-button size="small" :icon="Refresh" @click="loadCost">重载</el-button>
-          <el-button type="primary" size="small" :loading="savingCost" @click="saveCost">保存预算</el-button>
-        </div>
-      </div>
-      <div class="ai-cost-summary">
-        <span>今日花费 <b>{{ yuanText(costStatus?.today?.costMicros) }}</b>（{{ costStatus?.today?.calls ?? 0 }} 次）</span>
-        <span>本月花费 <b>{{ yuanText(costStatus?.month?.costMicros) }}</b>（{{ costStatus?.month?.calls ?? 0 }} 次）</span>
-        <span v-if="(costStatus?.month?.unpricedCalls ?? 0) > 0">
-          其中 {{ costStatus?.month?.unpricedCalls }} 次未配单价，只报 token 不报钱
-        </span>
-      </div>
-      <el-alert
-        v-for="(text, index) in costStatus?.warnings ?? []"
-        :key="index"
-        type="warning"
-        show-icon
-        :closable="false"
-        class="page-alert"
-      >
-        {{ text }}
-      </el-alert>
-      <el-form label-width="160px">
-        <el-form-item label="每日软阈值（元）">
-          <el-input-number v-model="dailyYuan" :min="0" :step="1" :precision="6" />
-        </el-form-item>
-        <el-form-item label="每月软阈值（元）">
-          <el-input-number v-model="monthlyYuan" :min="0" :step="1" :precision="6" />
-        </el-form-item>
-        <el-form-item label="提前告警比例（%）">
-          <el-input-number v-model="warnRatio" :min="1" :max="100" />
-        </el-form-item>
-        <el-form-item label="单次调用 token 上限">
-          <el-input-number v-model="callTokens" :min="0" :step="500" />
-          <div class="ai-config-hint">
-            <el-icon class="ai-config-hint__icon"><InfoFilled /></el-icon>
-            <span class="ai-config-hint__text">
-              阈值都是软阈值：0 表示不设限，达到告警比例或超出只会在这里与调用结果里提示，
-              不拦截调用、不自动降级。单价填「每 1000 token 的微元数」（1 元 = 1000000 微元），
-              两个都留 0 就是未配价，此时只统计 token 不统计钱。
-            </span>
-          </div>
-        </el-form-item>
-      </el-form>
-      <div class="ai-cost-price-title">模型档案单价</div>
-      <div v-for="row in priceRows" :key="row.profileId" class="ai-cost-price-row">
-        <span class="ai-cost-price-name">
-          {{ row.profileName }}
-          <small>{{ row.model }}</small>
-        </span>
-        <el-input-number v-model="row.priceInputMicros" :min="0" :step="100" size="small" controls-position="right" />
-        <el-input-number v-model="row.priceOutputMicros" :min="0" :step="100" size="small" controls-position="right" />
-        <el-select v-model="row.priceCurrency" size="small" class="ai-cost-price-currency">
-          <el-option label="CNY" value="CNY" />
-          <el-option label="USD" value="USD" />
-          <el-option label="EUR" value="EUR" />
-        </el-select>
-        <span class="ai-cost-price-spent">累计 {{ yuanText(row.costMicros) }} / {{ row.calls }} 次</span>
-        <el-button size="small" :loading="savingPriceId === row.profileId" @click="savePrice(row)">保存单价</el-button>
-      </div>
-    </div>
-
-    <div class="panel panel-pad ai-config-panel">
-      <div class="section-head">
-        <h3>AI 调用参数</h3>
-        <el-button type="primary" size="small" :loading="savingConfig" @click="saveAiConfig">保存</el-button>
-      </div>
-      <el-form label-width="160px">
-        <el-form-item label="自动降级">
-          <el-radio-group v-model="aiDegradeEnabled">
-            <el-radio :value="true">true</el-radio>
-            <el-radio :value="false">false</el-radio>
-          </el-radio-group>
-          <div class="ai-config-hint">
-            <el-icon class="ai-config-hint__icon"><InfoFilled /></el-icon>
-            <span class="ai-config-hint__text">
-              true：首选模型不可用时，按优先级自动换用下一个可用模型，页面只弹 3 秒提示；false：首选模型失败就直接报错，不自动切换。
-            </span>
-          </div>
-        </el-form-item>
-        <el-form-item label="外发脱敏">
-          <el-radio-group v-model="aiMaskEnabled">
-            <el-radio :value="true">true</el-radio>
-            <el-radio :value="false">false</el-radio>
-          </el-radio-group>
-          <div class="ai-config-hint">
-            <el-icon class="ai-config-hint__icon"><InfoFilled /></el-icon>
-            <span class="ai-config-hint__text">
-              true：调用云端模型前自动把手机号、身份证、邮箱、银行卡号、API Key、账号口令替换成占位文本，AI 记录只留类型与数量；false：原样发送。本地模型不出本机，始终不脱敏。
-            </span>
-          </div>
-        </el-form-item>
-        <el-form-item label="默认超时（秒）">
-          <el-input v-model="aiTimeoutDefault" placeholder="整数，单位秒，默认 60" style="width: 200px" />
-          <div class="ai-config-hint">
-            <el-icon class="ai-config-hint__icon"><InfoFilled /></el-icon>
-            <span class="ai-config-hint__text">
-              整数，单位秒，默认 60。单次 AI 调用超过这个时长即判定超时。云端接口一般 30~60，本地小模型可放宽到 120~300。
-            </span>
-          </div>
-        </el-form-item>
-      </el-form>
-    </div>
-
     <div class="panel panel-pad">
       <div class="section-head">
-        <h3>当前生效配置</h3>
+        <h3>当前生效AI配置</h3>
         <el-tag v-if="status.configured" type="success" effect="plain" size="small">已配置</el-tag>
         <el-tag v-else type="info" effect="plain" size="small">未配置</el-tag>
       </div>
@@ -240,7 +133,7 @@
     </div>
 
     <div class="panel panel-pad providers-block">
-      <h3>支持的供应商</h3>
+      <h3>AI大模型支持的供应商</h3>
       <el-table :data="providers" border size="small">
         <el-table-column prop="label" label="名称" width="140" />
         <el-table-column prop="name" label="标识" width="140" />
@@ -258,6 +151,113 @@
           </template>
         </el-table-column>
       </el-table>
+    </div>
+
+    <div class="panel panel-pad ai-config-panel">
+      <div class="section-head">
+        <h3>AI 调用参数</h3>
+        <el-button type="primary" size="small" :loading="savingConfig" @click="saveAiConfig">保存</el-button>
+      </div>
+      <el-form label-width="160px">
+        <el-form-item label="自动降级">
+          <el-radio-group v-model="aiDegradeEnabled">
+            <el-radio :value="true">true</el-radio>
+            <el-radio :value="false">false</el-radio>
+          </el-radio-group>
+          <div class="ai-config-hint">
+            <el-icon class="ai-config-hint__icon"><InfoFilled /></el-icon>
+            <span class="ai-config-hint__text">
+              true：首选模型不可用时，按优先级自动换用下一个可用模型，页面只弹 3 秒提示；false：首选模型失败就直接报错，不自动切换。
+            </span>
+          </div>
+        </el-form-item>
+        <el-form-item label="外发脱敏">
+          <el-radio-group v-model="aiMaskEnabled">
+            <el-radio :value="true">true</el-radio>
+            <el-radio :value="false">false</el-radio>
+          </el-radio-group>
+          <div class="ai-config-hint">
+            <el-icon class="ai-config-hint__icon"><InfoFilled /></el-icon>
+            <span class="ai-config-hint__text">
+              true：调用云端模型前自动把手机号、身份证、邮箱、银行卡号、API Key、账号口令替换成占位文本，AI 记录只留类型与数量；false：原样发送。本地模型不出本机，始终不脱敏。
+            </span>
+          </div>
+        </el-form-item>
+        <el-form-item label="默认超时（秒）">
+          <el-input v-model="aiTimeoutDefault" placeholder="整数，单位秒，默认 60" style="width: 200px" />
+          <div class="ai-config-hint">
+            <el-icon class="ai-config-hint__icon"><InfoFilled /></el-icon>
+            <span class="ai-config-hint__text">
+              整数，单位秒，默认 60。单次 AI 调用超过这个时长即判定超时。云端接口一般 30~60，本地小模型可放宽到 120~300。
+            </span>
+          </div>
+        </el-form-item>
+      </el-form>
+    </div>
+
+    <div class="panel panel-pad ai-cost-panel">
+      <div class="section-head">
+        <h3>AI大模型成本与预算</h3>
+        <div class="toolbar" style="margin: 0">
+          <el-button size="small" :icon="Refresh" @click="loadCost">重载</el-button>
+          <el-button type="primary" size="small" :loading="savingCost" @click="saveCost">保存预算</el-button>
+        </div>
+      </div>
+      <div class="ai-cost-summary">
+        <span>今日花费 <b>{{ yuanText(costStatus?.today?.costMicros) }}</b>（{{ costStatus?.today?.calls ?? 0 }} 次）</span>
+        <span>本月花费 <b>{{ yuanText(costStatus?.month?.costMicros) }}</b>（{{ costStatus?.month?.calls ?? 0 }} 次）</span>
+        <span v-if="(costStatus?.month?.unpricedCalls ?? 0) > 0">
+          其中 {{ costStatus?.month?.unpricedCalls }} 次未配单价，只报 token 不报钱
+        </span>
+      </div>
+      <el-alert
+        v-for="(text, index) in costStatus?.warnings ?? []"
+        :key="index"
+        type="warning"
+        show-icon
+        :closable="false"
+        class="page-alert"
+      >
+        {{ text }}
+      </el-alert>
+      <el-form label-width="160px">
+        <el-form-item label="每日软阈值（元）">
+          <el-input-number v-model="dailyYuan" :min="0" :step="1" :precision="6" />
+        </el-form-item>
+        <el-form-item label="每月软阈值（元）">
+          <el-input-number v-model="monthlyYuan" :min="0" :step="1" :precision="6" />
+        </el-form-item>
+        <el-form-item label="提前告警比例（%）">
+          <el-input-number v-model="warnRatio" :min="1" :max="100" />
+        </el-form-item>
+        <el-form-item label="单次调用 token 上限">
+          <el-input-number v-model="callTokens" :min="0" :step="500" />
+          <div class="ai-config-hint">
+            <el-icon class="ai-config-hint__icon"><InfoFilled /></el-icon>
+            <span class="ai-config-hint__text">
+              阈值都是软阈值：0 表示不设限，达到告警比例或超出只会在这里与调用结果里提示，
+              不拦截调用、不自动降级。单价填「每 1000 token 的微元数」（1 元 = 1000000 微元），
+              两个都留 0 就是未配价，此时只统计 token 不统计钱。
+            </span>
+          </div>
+        </el-form-item>
+      </el-form>
+      <div class="ai-cost-price-title">模型档案单价</div>
+      <div v-for="row in priceRows" :key="row.profileId" class="ai-cost-price-row">
+        <span class="ai-cost-price-name">
+          {{ row.profileName }}
+          <small>{{ row.model }}</small>
+        </span>
+        <el-input-number v-model="row.priceInputMicros" :min="0" :step="100" size="small" controls-position="right" />
+        <el-input-number v-model="row.priceOutputMicros" :min="0" :step="100" size="small" controls-position="right" />
+        <el-select v-model="row.priceCurrency" size="small" class="ai-cost-price-currency">
+          <el-option label="CNY" value="CNY" />
+          <el-option label="USD" value="USD" />
+          <el-option label="EUR" value="EUR" />
+        </el-select>
+        <span class="ai-cost-price-spent">累计 {{ yuanText(row.costMicros) }} / {{ row.calls }} 次</span>
+        <el-button size="small" :loading="savingPriceId === row.profileId" @click="savePrice(row)">保存单价</el-button>
+      </div>
     </div>
 
     <el-dialog v-model="dialogVisible" :title="editing ? '编辑 AI 档案' : '新增 AI 档案'" width="720px">
@@ -1169,7 +1169,7 @@ onActivated(() => {
 }
 
 .providers-block {
-  margin-top: 16px;
+  margin: 16px 0 14px;
 }
 
 .providers-block h3 {
