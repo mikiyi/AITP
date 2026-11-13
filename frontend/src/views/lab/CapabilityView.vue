@@ -12,7 +12,7 @@
     </div>
 
     <p v-if="spec" class="cap-sub">
-      <span class="cap-sub__prompt">{{ dataMode === 'files' ? '本地构造' : spec.promptCode }}</span>
+      <span class="cap-sub__prompt">{{ dataMode === 'files' ? '本地构造' : dataMode === 'samples' ? '本地脱敏' : spec.promptCode }}</span>
       <span class="cap-sub__desc">{{ capSubDesc }}</span>
     </p>
 
@@ -25,9 +25,11 @@
     >
       <el-radio-button value="sql">SQL 造数</el-radio-button>
       <el-radio-button value="files">测试文件生成</el-radio-button>
+      <el-radio-button value="samples">脱敏样本</el-radio-button>
     </el-radio-group>
 
     <TestDataFilesPanel v-if="dataMode === 'files'" :module-id="moduleId" />
+    <TestDataSamplesPanel v-else-if="dataMode === 'samples'" />
 
     <div v-else class="cap-layout">
       <div class="panel panel-pad cap-input">
@@ -815,6 +817,7 @@ import MarkdownView from '@/components/MarkdownView.vue'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import PromptOptimizer from '@/components/PromptOptimizer.vue'
 import TestDataFilesPanel from './TestDataFilesPanel.vue'
+import TestDataSamplesPanel from './TestDataSamplesPanel.vue'
 import { aiApi, automationApi, caseApi, knowledgeApi, labApi, moduleApi, projectVersionApi, recordApi, reportApi, requirementApi, templateApi } from '@/api'
 import { streamPost, type DegradeInfo } from '@/api/stream'
 import type {
@@ -863,7 +866,9 @@ const primaryField = computed(() => primaryFieldOf(capability.value))
 const capSubDesc = computed(() =>
   dataMode.value === 'files'
     ? '按格式、大小与命名规则在本机批量生成测试文件，不联网、不经过大模型'
-    : (spec.value?.promptDescription || spec.value?.goal || ''),
+    : dataMode.value === 'samples'
+      ? '导入生产样本后按字段规则在本机脱敏，只落脱敏副本；样本与方案都归当前项目'
+      : (spec.value?.promptDescription || spec.value?.goal || ''),
 )
 
 const values = reactive<Record<string, string>>({})
@@ -875,8 +880,8 @@ const moduleId = ref<number | null>(null)
 /** 本次产出归属的项目版本；采纳为需求/缺陷/用例/报告时自动带上。 */
 const versionId = ref<number | null>(null)
 const versionOptions = ref<Array<{ label: string; value: number }>>([])
-/** 测试数据生成的两条路径：SQL 造数走大模型，测试文件走本机构造。 */
-const dataMode = ref<'sql' | 'files'>('sql')
+/** 测试数据生成的三条路径：SQL 造数走大模型，文件走本机构造，样本走本地脱敏。 */
+const dataMode = ref<'sql' | 'files' | 'samples'>('sql')
 
 const running = ref(false)
 /** 本次执行是否由用户主动停止：停止后再收到错误帧不该当成失败弹红条。 */
@@ -1539,7 +1544,8 @@ function resetValues(): void {
   }
   const moduleQuery = Number(route.query.moduleId ?? 0)
   moduleId.value = moduleQuery > 0 ? moduleQuery : null
-  dataMode.value = route.query.mode === 'files' ? 'files' : 'sql'
+  const mode = route.query.mode
+  dataMode.value = mode === 'files' ? 'files' : mode === 'samples' ? 'samples' : 'sql'
   if (moduleId.value) {
     labStore.currentModuleId = moduleId.value
   }

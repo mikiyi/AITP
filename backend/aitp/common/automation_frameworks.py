@@ -181,7 +181,10 @@ def options_for(target: str | None, platforms: list[str] | None = None) -> list[
 def default_for(target: str | None, platforms: list[str] | None = None) -> str:
     """目标类型 + 平台下的默认框架：鸿蒙落到 Hypium，iOS / Android 落到 Appium。"""
     candidates = options_for(target, platforms)
-    return str(candidates[0]["code"]) if candidates else ""
+    # 平台专属框架优先于通用 runner（Pytest），否则 App 默认会落到 Pytest
+    bound = [item for item in candidates if item["platforms"]]
+    pool = bound or candidates
+    return str(pool[0]["code"]) if pool else ""
 
 
 def label_of(code: str | None) -> str:

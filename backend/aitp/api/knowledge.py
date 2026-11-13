@@ -24,7 +24,7 @@ from ..repositories.knowledge_draft_repo import (
     KnowledgeDraftRepository,
     source_type_label,
 )
-from ..repositories.base import loads
+from ..repositories.base import NULL_FILTER, loads
 from ..repositories.knowledge_ref_repo import KnowledgeRefRepository
 from ..repositories.knowledge_repo import KnowledgeRepository
 from ..repositories.knowledge_version_repo import KnowledgeVersionRepository
@@ -32,13 +32,15 @@ from ..services import (
     audit_service,
     knowledge_assistant_service,
     knowledge_category_service,
+    knowledge_reuse_service,
     knowledge_storage,
     prompt_usage,
     tabular_export,
 )
 from ..repositories.sys_config_repo import SysConfigRepository
 from .helpers import (audit, body, bool_arg, commit, db, download_response, keyword_of, page_args,
-                      page_payload, path_int, project_of_module, query_filters, tabular_format_of)
+                      page_payload, path_int, project_of_module, query_filters, require_project,
+                      tabular_format_of)
 
 bp = Blueprint("knowledge", __name__)
 logger = logging.getLogger(__name__)
@@ -269,6 +271,11 @@ def _article_public(row: dict[str, Any]) -> dict[str, Any]:
         "sourceType": row.get("source_type"),
         "sourceTypeLabel": source_type_label(str(row.get("source_type") or "")),
         "projectId": row.get("project_id"),
+        "sourceProjectId": row.get("source_project_id"),
+        "sourceProjectName": "",
+        "referencedProjects": [],
+        "promotedAt": row.get("promoted_at"),
+        "promotedBy": row.get("promoted_by") or "",
         "moduleId": row.get("module_id"),
         "sessionId": row.get("session_id"),
         "aiTaskId": row.get("ai_task_id"),
@@ -292,6 +299,72 @@ def _article_public(row: dict[str, Any]) -> dict[str, Any]:
         "createdAt": row.get("created_at"),
         "updatedAt": row.get("updated_at"),
     }
+
+
+def _attach_source_projects(conn: Any, payloads: list[dict[str, Any]]) -> None:
+    ids = {int(item["sourceProjectId"]) for item in payloads if item.get("sourceProjectId")}
+    if not ids:
+        return
+    placeholders = ", ".join("?" for _ in ids)
+    rows = conn.execute(
+        f"SELECT id, name FROM biz_project WHERE id IN ({placeholders})",  # noqa: S608
+        list(ids),
+    ).fetchall()
+    names = {int(row["id"]): str(row["name"] or "") for row in rows}
+    for item in payloads:
+        source_id = item.get("sourceProjectId")
+        if source_id:
+            item["sourceProjectName"] = names.get(int(source_id), "")
+
+
+def _attach_reference_projects(conn: Any, payloads: list[dict[str, Any]]) -> None:
+    """只读「复用项目」列：批量取每条知识被哪些项目引用（ref_type='project'）。"""
+    ids = [int(item["id"]) for item in payloads if item.get("id")]
+    if not ids:
+        return
+    placeholders = ", ".join("?" for _ in ids)
+    rows = conn.execute(
+        "SELECT r.article_id, r.ref_id, p.name FROM biz_knowledge_ref r"  # noqa: S608
+        " LEFT JOIN biz_project p ON p.id = r.ref_id"
+        f" WHERE r.ref_type = 'project' AND r.article_id IN ({placeholders})"
+        " ORDER BY r.id ASC",
+        ids,
+    ).fetchall()
+    by_article: dict[int, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_article.setdefault(int(row["article_id"]), []).append({
+            "projectId": int(row["ref_id"]),
+            "projectName": str(row["name"] or ""),
+        })
+    for item in payloads:
+        item["referencedProjects"] = by_article.get(int(item["id"]), [])
+
+
+def _apply_article_scope(conn: Any, filters: dict[str, Any]) -> None:
+    """合并视图的范围筛选：available=本项目+已引用 / project=仅本项目 / global=全局 / all=全部。"""
+    scope = str(request.args.get("scope") or "").strip()
+    raw_pid = request.args.get("projectId")
+    pid = int(raw_pid) if raw_pid not in (None, "") else None
+    if scope == "global":
+        filters["project_id"] = NULL_FILTER
+    elif scope == "project":
+        filters.pop("id", None)
+        if pid is not None:
+            filters["project_id"] = pid
+    elif scope == "available":
+        filters.pop("project_id", None)
+        if pid is not None:
+            own = [int(r[0]) for r in conn.execute(
+                "SELECT id FROM biz_knowledge_article WHERE project_id = ? AND is_deleted = 0",
+                (pid,),
+            )]
+            refs = KnowledgeRefRepository(conn).referenced_articles("project", pid)
+            filters["id"] = sorted(set(own) | set(refs)) or [-1]
+        else:
+            filters["id"] = [-1]
+    elif scope == "all":
+        filters.pop("project_id", None)
+        filters.pop("id", None)
 
 
 def _version_public(row: dict[str, Any]) -> dict[str, Any]:
@@ -443,7 +516,7 @@ def review_draft(pk: str) -> Response:
         file_path = _sync_file(conn, int(result["articleId"]))
         commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_REVIEW, audit_service.RESOURCE_KNOWLEDGE_DRAFT, target, "",
-          {"action": action, "articleId": result.get("articleId")})
+          {"action": action, "articleId": result.get("articleId"), "bugId": result.get("bugId")})
     result["filePath"] = file_path
     return ok(result)
 
@@ -487,9 +560,12 @@ def list_articles() -> Response:
         filters["review_status"] = status
     elif not status:
         filters["review_status"] = "published"
+    _apply_article_scope(conn, filters)
     page = repo.list(filters, keyword_of() or None, page_num=page_num, page_size=page_size)
     payload = page_payload(page)
     payload["list"] = [_article_public(row) for row in payload["list"]]
+    _attach_source_projects(conn, payload["list"])
+    _attach_reference_projects(conn, payload["list"])
     return ok(payload)
 
 
@@ -505,6 +581,7 @@ def export_articles() -> Response:
         filters["review_status"] = status
     elif not status:
         filters["review_status"] = "published"
+    _apply_article_scope(conn, filters)
     rows = repo.list_all(filters, keyword_of() or None, limit=10000)
     content, mimetype, extension = tabular_export.render(
         fmt, ARTICLE_TABULAR_COLUMNS, [_article_public(row) for row in rows]
@@ -533,6 +610,9 @@ def get_article(pk: str) -> Response:
         _version_public(row) for row in KnowledgeVersionRepository(conn).pending_versions(path_int(pk))
     ]
     payload["refs"] = KnowledgeRefRepository(conn).list_refs(path_int(pk))
+    _attach_source_projects(conn, [payload])
+    payload["projectRefs"] = [ref for ref in payload["refs"] if ref.get("refType") == "project"]
+    payload["isGlobal"] = payload.get("projectId") is None
     payload["organizeTask"] = knowledge_assistant_service.latest_task(
         conn, payload.get("organizeTaskId")
     )
@@ -627,6 +707,57 @@ def restore_article(pk: str) -> Response:
     audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_KNOWLEDGE_ARTICLE, target, "",
           {"restored": True})
     return ok(result)
+
+
+@bp.post("/articles/<pk>/promote")
+def promote_article(pk: str) -> Response:
+    """把项目知识提升为全局知识；正文不变，只改归属并保留来源项目。"""
+    conn = db()
+    data = body()
+    target = path_int(pk)
+    operator = optional_str(data.get("operator"), "operator", 64)
+    result = knowledge_reuse_service.promote_to_global(conn, target, operator)
+    commit(conn)
+    _sync_file(conn, target)
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_KNOWLEDGE_ARTICLE, target, "",
+          {"action": "promote_global", "sourceProjectId": result["sourceProjectId"]})
+    return ok(result)
+
+
+@bp.get("/articles/<pk>/references")
+def list_project_references(pk: str) -> Response:
+    conn = db()
+    target = path_int(pk)
+    if not KnowledgeRepository(conn).get(target):
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "知识条目不存在")
+    return ok(knowledge_reuse_service.project_refs(conn, target))
+
+
+@bp.post("/articles/<pk>/references")
+def add_project_reference(pk: str) -> Response:
+    """全局知识登记到目标项目；只建引用，不复制正文。"""
+    conn = db()
+    data = body()
+    target = path_int(pk)
+    project_id = require_project(conn, require_int(data.get("projectId"), "projectId"))
+    operator = optional_str(data.get("operator"), "operator", 64)
+    refs = knowledge_reuse_service.reference_project(conn, target, project_id, operator)
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_KNOWLEDGE_ARTICLE, target, "",
+          {"action": "reference_project", "projectId": project_id})
+    return ok({"articleId": target, "refs": refs})
+
+
+@bp.delete("/articles/<pk>/references/<int:project_id>")
+def remove_project_reference(pk: str, project_id: int) -> Response:
+    conn = db()
+    target = path_int(pk)
+    refs = knowledge_reuse_service.unreference_project(conn, target, project_id)
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_KNOWLEDGE_ARTICLE, target, "",
+          {"action": "unreference_project", "projectId": project_id})
+    return ok({"articleId": target, "refs": refs})
 
 
 @bp.get("/articles/<pk>/organize")

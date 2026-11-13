@@ -266,6 +266,9 @@
         </el-tabs>
       </div>
       <template #footer>
+        <a v-if="lastRun" :href="reportUrl(lastRun.id)" class="auto-report-link">
+          <el-button type="primary" plain :icon="Download">导出报告</el-button>
+        </a>
         <el-button @click="resultVisible = false">关闭</el-button>
       </template>
     </el-dialog>
@@ -309,9 +312,12 @@
           <template #default="{ row }">{{ dateTimeText(row.startedAt) }}</template>
         </el-table-column>
         <el-table-column prop="errorMessage" label="说明" min-width="180" show-overflow-tooltip />
-        <el-table-column label="操作" width="90">
+        <el-table-column label="操作" width="130">
           <template #default="{ row }">
             <el-button link type="primary" @click="openRunDetail(row)">详情</el-button>
+            <a :href="reportUrl(row.id)" class="auto-report-link">
+              <el-button link type="primary">报告</el-button>
+            </a>
           </template>
         </el-table-column>
       </el-table>
@@ -329,6 +335,7 @@
       :ref-id="knowledgePayload.refId"
       :ref-label="knowledgePayload.refLabel"
     />
+    <ProdConfirmDialog ref="prodDialog" />
 </template>
 
 <script setup lang="ts">
@@ -339,6 +346,7 @@ import { Download, Plus, Refresh } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import MetricCard from '@/components/MetricCard.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
+import ProdConfirmDialog from '@/components/ProdConfirmDialog.vue'
 import { automationApi, testEnvApi } from '@/api'
 import { dateTimeText } from '@/utils/format'
 import type {
@@ -355,6 +363,7 @@ const route = useRoute()
 const router = useRouter()
 
 const knowledgeVisible = ref(false)
+const prodDialog = ref<InstanceType<typeof ProdConfirmDialog> | null>(null)
 const knowledgePayload = reactive({
   title: '',
   content: '',
@@ -581,16 +590,7 @@ async function confirmProdEnv(row: AutomationScript): Promise<boolean> {
   if (!env || env.kind !== 'prod') {
     return true
   }
-  try {
-    await ElMessageBox.confirm(
-      `脚本绑定的是生产环境「${env.name}」，确认执行？`,
-      '生产环境确认',
-      { type: 'warning', confirmButtonText: '确认执行', cancelButtonText: '取消' },
-    )
-    return true
-  } catch {
-    return false
-  }
+  return (await prodDialog.value?.open(`脚本绑定的是生产环境「${env.name}」，确认执行？`)) ?? false
 }
 
 async function execute(row: AutomationScript): Promise<void> {
@@ -622,13 +622,10 @@ async function batchExecute(rows: Record<string, unknown>[]): Promise<void> {
     (row) => envs.value.find((env) => env.id === row.envId)?.kind === 'prod',
   ).length
   if (prodCount > 0) {
-    try {
-      await ElMessageBox.confirm(
-        `选中的脚本里有 ${prodCount} 个绑定了生产环境，确认批量执行？`,
-        '生产环境确认',
-        { type: 'warning', confirmButtonText: '确认执行', cancelButtonText: '取消' },
-      )
-    } catch {
+    const ok = (await prodDialog.value?.open(
+      `选中的脚本里有 ${prodCount} 个绑定了生产环境，确认批量执行？`,
+    )) ?? false
+    if (!ok) {
       return
     }
   }
@@ -786,6 +783,10 @@ async function openRunDetail(row: AutomationRun): Promise<void> {
 
 function artifactUrl(runId: number | string, path: string): string {
   return `/api/v1/automation/runs/${runId}/artifacts/download?path=${encodeURIComponent(path)}`
+}
+
+function reportUrl(runId: number | string): string {
+  return `/api/v1/automation/runs/${runId}/report`
 }
 
 function formatSize(size: number): string {
@@ -988,6 +989,11 @@ watch(category, () => {
 }
 
 .auto-artifacts__link {
+  text-decoration: none;
+}
+
+.auto-report-link {
+  margin: 0 12px;
   text-decoration: none;
 }
 

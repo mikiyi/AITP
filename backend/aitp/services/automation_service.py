@@ -573,6 +573,100 @@ def artifact_file(db_path: Path, run_no: str, relative: str) -> Path | None:
 
 
 # ---------------------------------------------------------------------
+# 执行报告导出
+# ---------------------------------------------------------------------
+
+def parse_jtl(path: Path) -> dict[str, Any] | None:
+    """解析 JMeter CSV 结果（.jtl），汇总样本/失败/错误率/耗时/吞吐。"""
+    import csv
+
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            reader = csv.DictReader(handle)
+            rows = list(reader)
+    except OSError:
+        return None
+    if not rows or "elapsed" not in (rows[0] or {}):
+        return None
+    elapsed: list[int] = []
+    failures = 0
+    stamps: list[int] = []
+    for row in rows:
+        try:
+            elapsed.append(int(row.get("elapsed") or 0))
+            stamps.append(int(row.get("timeStamp") or 0))
+        except (TypeError, ValueError):
+            continue
+        if str(row.get("success", "true")).lower() == "false":
+            failures += 1
+    if not elapsed:
+        return None
+    total = len(elapsed)
+    span_s = (max(stamps) - min(stamps)) / 1000.0 if stamps and max(stamps) > min(stamps) else 0
+    return {
+        "samples": total,
+        "failures": failures,
+        "errorRate": round(failures * 100.0 / total, 2),
+        "avgMs": round(sum(elapsed) / total, 1),
+        "minMs": min(elapsed),
+        "maxMs": max(elapsed),
+        "throughput": round(total / span_s, 2) if span_s > 0 else None,
+    }
+
+
+def build_run_report(
+    row: dict[str, Any],
+    script: dict[str, Any] | None,
+    artifacts: list[dict[str, Any]],
+    jtl: dict[str, Any] | None,
+    case_results: list[dict[str, Any]],
+) -> str:
+    """把一次自动化执行汇总成 Markdown 报告，供查看/导出。"""
+    from ..common.automation_frameworks import label_of
+    from ..repositories.automation_repo import CATEGORY_LABEL, run_summary
+
+    info = run_summary(row)
+    lines = [
+        f"# 自动化执行报告 · {info['scriptName'] or info['runNo']}",
+        "",
+        "## 一、执行概要",
+        f"- 执行编号：{info['runNo']}",
+        f"- 脚本：{info['scriptName']}（{info['scriptNo']}）",
+        f"- 类别：{CATEGORY_LABEL.get(info['category'], info['category'])}",
+        f"- 框架：{label_of((script or {}).get('framework')) or '-'}",
+        f"- 状态：{info['status']}　退出码：{info['exitCode']}",
+        f"- 耗时：{info['durationMs']} ms",
+        f"- 开始：{info['startedAt']}　结束：{info['finishedAt']}",
+        f"- 命令行：`{info['commandLine']}`",
+    ]
+    if jtl:
+        lines += [
+            "",
+            "## 二、性能摘要（JMeter）",
+            f"- 样本数：{jtl['samples']}　失败：{jtl['failures']}　错误率：{jtl['errorRate']}%",
+            f"- 平均响应：{jtl['avgMs']} ms　最小：{jtl['minMs']} ms　最大：{jtl['maxMs']} ms",
+            f"- 吞吐：{jtl['throughput'] if jtl['throughput'] is not None else '-'} 请求/秒",
+        ]
+    if case_results:
+        passed = sum(1 for c in case_results if c.get("result") == "passed")
+        lines += [
+            "",
+            "## 三、用例回写",
+            f"- 回写用例 {len(case_results)} 条，通过 {passed} 条。",
+        ]
+        for c in case_results[:50]:
+            lines.append(f"  - {c.get('caseNo') or c.get('caseId')}：{c.get('result')}")
+    lines += ["", "## 标准输出", "```", (info["stdout"] or "（无）").rstrip(), "```"]
+    if info["stderr"]:
+        lines += ["", "## 标准错误", "```", info["stderr"].rstrip(), "```"]
+    if artifacts:
+        lines += ["", "## 产物清单"]
+        lines += [f"- {a['path']}（{a['size']} B）" for a in artifacts[:50]]
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------
 # 执行
 # ---------------------------------------------------------------------
 
@@ -712,6 +806,8 @@ def execute_script(
     timeout_seconds: int | None = None,
     test_run_id: int | None = None,
     cancel_check: Callable[[], bool] | None = None,
+    extra_env: dict[str, str] | None = None,
+    env_id: int | None = None,
 ) -> dict[str, Any]:
     """执行一个脚本，返回执行记录。失败也返回记录，不抛业务异常。
 
@@ -734,6 +830,7 @@ def execute_script(
         "status": RUN_STATUS_RUNNING,
         "started_at": started_at,
         "test_run_id": test_run_id,
+        "env_id": env_id,
     })
     conn.commit()
 
@@ -767,7 +864,7 @@ def execute_script(
             cwd=str(run_dir),
             env=_child_env(
                 run_dir=run_dir, script_dir=script_dir,
-                script=script, test_run_id=test_run_id,
+                script=script, test_run_id=test_run_id, extra_env=extra_env,
             ),
             limit=limit,
             cancel_check=cancel_check,
@@ -901,7 +998,8 @@ def _as_text(value: Any) -> str:
 
 def _child_env(*, run_dir: Path | None = None, script_dir: Path | None = None,
                script: dict[str, Any] | None = None,
-               test_run_id: int | None = None) -> dict[str, str]:
+               test_run_id: int | None = None,
+               extra_env: dict[str, str] | None = None) -> dict[str, str]:
     """子进程环境：继承系统环境，但去掉可能带凭据的 AI 变量。
 
     自动化脚本是用户自己的代码，但没必要让它顺手拿到 AI 密钥。
@@ -926,6 +1024,9 @@ def _child_env(*, run_dir: Path | None = None, script_dir: Path | None = None,
         env["AITP_CATEGORY"] = str(script.get("category") or "")
     if test_run_id:
         env["AITP_TEST_RUN_ID"] = str(test_run_id)
+    if extra_env:
+        # 执行矩阵按格子注入环境/端/浏览器；key 只接受字符串，值统一转文本
+        env.update({str(key): str(value) for key, value in extra_env.items()})
     return env
 
 

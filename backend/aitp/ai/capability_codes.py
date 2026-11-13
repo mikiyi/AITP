@@ -36,6 +36,9 @@ CAP_PERFORMANCE_SCRIPT = "performance_script"
 # 测试数据生成：SQL 分支走大模型，文件分支全程本地
 CAP_TEST_DATA_GENERATION = "test_data_generation"
 
+# GAP-45：Web 探索性测试（MCP 驱动 + 人工审核 + 证据包）
+CAP_EXPLORATORY_WEB = "exploratory_web"
+
 # 顺序执行的父记录不是可执行能力，只用于把整条流水线归成一条记录
 CAP_COMPOSITE = "composite"
 
@@ -321,6 +324,14 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
         prompt_code="test-data-generation",
         variables=("dialect", "intent", "projectName", "schemaDesc", "rowCount"),
     ),
+    CAP_EXPLORATORY_WEB: CapabilitySpec(
+        CAP_EXPLORATORY_WEB, "Web 探索性测试",
+        "MCP 驱动浏览器按「读快照→决策→动作→观测」循环探索，留证据包，产物进待审池人工审核",
+        ("探索", "探索性", "探索性测试", "agentic", "边看边测", "无脚本测试",
+         "网页探索", "web探索", "explore", "exploratory", "人工审核", "证据包"),
+        prompt_code="exploratory-web",
+        variables=("projectName", "targetUrl", "maxSteps", "maxSeconds"),
+    ),
 }
 
 CAPABILITY_CODES: tuple[str, ...] = tuple(CAPABILITIES.keys())
@@ -339,6 +350,7 @@ BINDABLE_CAPABILITIES: tuple[str, ...] = (
     CAP_API_TEST_DESIGN, CAP_TEST_PLAN,
     CAP_CASE_REVIEW, CAP_BUG_CLASSIFICATION, CAP_RISK_ASSESSMENT,
     CAP_AUTOMATION_SCRIPT, CAP_PERFORMANCE_SCRIPT, CAP_TEST_DATA_GENERATION,
+    CAP_EXPLORATORY_WEB,
 )
 
 #: AI 实验室首页展示的主能力（质量闭环主干）
@@ -349,6 +361,7 @@ LAB_CAPABILITIES: tuple[str, ...] = (
     CAP_API_TEST_DESIGN, CAP_TEST_PLAN,
     CAP_CASE_REVIEW, CAP_BUG_CLASSIFICATION, CAP_RISK_ASSESSMENT,
     CAP_AUTOMATION_SCRIPT, CAP_PERFORMANCE_SCRIPT, CAP_TEST_DATA_GENERATION,
+    CAP_EXPLORATORY_WEB,
     CAP_PROMPT_OPTIMIZE,
 )
 

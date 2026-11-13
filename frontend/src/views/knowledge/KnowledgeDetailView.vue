@@ -12,6 +12,22 @@
         >
           编辑
         </el-button>
+        <el-button
+          v-if="detail?.reviewStatus === 'published' && detail?.projectId != null"
+          type="success"
+          :icon="Top"
+          @click="promoteToGlobal"
+        >
+          提升为全局
+        </el-button>
+        <el-button
+          v-if="detail?.isGlobal && canReferenceCurrent"
+          type="primary"
+          :icon="Link"
+          @click="referenceCurrentProject"
+        >
+          引用到本项目
+        </el-button>
         <el-button v-if="detail?.reviewStatus === 'published'" type="warning" :icon="Remove" @click="revoke">
           撤销
         </el-button>
@@ -35,6 +51,9 @@
             </el-tag>
             <el-tag :type="articleStatusType" size="small" effect="plain">
               {{ articleStatusLabel }}
+            </el-tag>
+            <el-tag v-if="detail.isGlobal" type="success" size="small" effect="plain">
+              全局知识<template v-if="detail.sourceProjectName"> · 来自{{ detail.sourceProjectName }}</template>
             </el-tag>
             <el-tag size="small" effect="plain">v{{ detail.currentVersion ?? 1 }}</el-tag>
             <el-tag
@@ -64,6 +83,10 @@
           <el-descriptions-item label="标签">{{ detail.tags || '-' }}</el-descriptions-item>
           <el-descriptions-item label="功能点">{{ detail.moduleId ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="文件">{{ detail.filePath || '未落盘' }}</el-descriptions-item>
+          <el-descriptions-item label="归属">
+            {{ detail.isGlobal ? `全局知识（来源：${detail.sourceProjectName || '未记录'}）` : '当前项目' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="更新时间">{{ dateTimeText(detail.updatedAt) }}</el-descriptions-item>
           <el-descriptions-item label="来源">{{ detail.sourceTypeLabel || '-' }}</el-descriptions-item>
           <el-descriptions-item label="回答时间">{{ dateTimeText(detail.answeredAt) }}</el-descriptions-item>
           <el-descriptions-item label="回答模型">{{ detail.answerModel || '-' }}</el-descriptions-item>
@@ -139,12 +162,30 @@
 
       <div class="panel panel-pad">
         <div class="section-title">引用清单</div>
+        <p v-if="detail.isGlobal" class="muted refs-hint">
+          被项目引用时只登记关系、不复制正文；先解除全部项目引用，才能删除或撤销本条目。
+        </p>
         <el-table :data="refs" size="small" border empty-text="暂无下游引用">
-          <el-table-column prop="refType" label="引用类型" width="130" />
+          <el-table-column label="引用类型" width="130">
+            <template #default="{ row }">{{ refTypeLabel(row.refType) }}</template>
+          </el-table-column>
           <el-table-column prop="label" label="引用来源" min-width="220" />
           <el-table-column prop="refId" label="标识" width="100" />
           <el-table-column label="时间" width="170">
             <template #default="{ row }">{{ dateTimeText(row.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="120">
+            <template #default="{ row }">
+              <el-button
+                v-if="row.refType === 'project'"
+                link
+                type="danger"
+                @click="unreference(row.refId)"
+              >
+                解除引用
+              </el-button>
+              <span v-else class="muted">-</span>
+            </template>
           </el-table-column>
         </el-table>
       </div>
@@ -164,16 +205,18 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Back, DocumentCopy, Edit, Remove } from '@element-plus/icons-vue'
+import { Back, DocumentCopy, Edit, Link, Remove, Top } from '@element-plus/icons-vue'
 import MarkdownView from '@/components/MarkdownView.vue'
 import { knowledgeApi } from '@/api'
 import type { KnowledgeArticle, KnowledgeRef } from '@/api/types'
 import { dateTimeText } from '@/utils/format'
 import { useReferenceGuard } from '@/composables/useReferenceGuard'
 import ReferenceBlockDialog from '@/components/ReferenceBlockDialog.vue'
+import { useAppStore } from '@/stores/app'
 
 const route = useRoute()
 const router = useRouter()
+const appStore = useAppStore()
 const id = computed(() => Number(route.params.id))
 
 const detail = ref<KnowledgeArticle | null>(null)
@@ -218,6 +261,81 @@ const articleStatusType = computed<'success' | 'warning' | 'info'>(() => {
 const hasPendingProposal = computed(
   () => Number(detail.value?.draftVersion ?? 0) > Number(detail.value?.currentVersion ?? 1),
 )
+
+const REF_TYPE_LABELS: Record<string, string> = {
+  report: '测试报告',
+  article: '知识条目',
+  task: 'AI 任务',
+  case: '测试用例',
+  bug: '缺陷',
+  module: '功能点',
+  project: '项目引用',
+}
+
+function refTypeLabel(type: string): string {
+  return REF_TYPE_LABELS[type] || type
+}
+
+const canReferenceCurrent = computed(() => {
+  const projectId = appStore.currentProjectId
+  if (!projectId || !detail.value?.isGlobal) {
+    return false
+  }
+  const sourceId = detail.value?.sourceProjectId ?? detail.value?.projectId
+  return sourceId == null || Number(sourceId) !== Number(projectId)
+})
+
+async function promoteToGlobal(): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      '提升为全局知识后所有项目可见，正文仍只保留一份，并保留来源项目。',
+      '提升为全局知识',
+      { type: 'warning', confirmButtonText: '提升' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await knowledgeApi.promoteArticle(id.value)
+    ElMessage.success('已提升为全局知识')
+    await load()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '提升失败')
+  }
+}
+
+async function referenceCurrentProject(): Promise<void> {
+  const projectId = appStore.currentProjectId
+  if (!projectId) {
+    ElMessage.warning('请先在顶部选择项目')
+    return
+  }
+  try {
+    await knowledgeApi.referenceProject(id.value, Number(projectId))
+    ElMessage.success('已引用到当前项目')
+    await load()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '引用失败')
+  }
+}
+
+async function unreference(projectId: number): Promise<void> {
+  try {
+    await ElMessageBox.confirm('解除该项目的引用？解除后对方将不再看到这条全局知识。', '解除引用', {
+      type: 'warning',
+      confirmButtonText: '解除',
+    })
+  } catch {
+    return
+  }
+  try {
+    await knowledgeApi.unreferenceProject(id.value, projectId)
+    ElMessage.success('已解除引用')
+    await load()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '解除失败')
+  }
+}
 
 const form = reactive({ title: '', content: '', summary: '' })
 
@@ -300,6 +418,11 @@ onMounted(() => {
   font-weight: 600;
   font-size: 13px;
   margin-bottom: 8px;
+}
+
+.refs-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
 }
 
 .provenance-alert {

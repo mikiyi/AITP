@@ -186,6 +186,30 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '自动化脚本', hidden: true },
   },
   {
+    path: '/execution-matrices',
+    name: 'execution-matrices',
+    component: () => import('@/views/execution/ExecutionMatrixListView.vue'),
+    meta: { title: '执行矩阵', icon: 'Grid' },
+  },
+  {
+    path: '/execution-matrices/:id',
+    name: 'execution-matrix-detail',
+    component: () => import('@/views/execution/ExecutionMatrixDetailView.vue'),
+    meta: { title: '执行矩阵明细', hidden: true },
+  },
+  {
+    path: '/exploratory',
+    name: 'exploratory',
+    component: () => import('@/views/exploratory/ExploratoryListView.vue'),
+    meta: { title: 'Web 探索性测试', icon: 'Aim' },
+  },
+  {
+    path: '/exploratory/:id',
+    name: 'exploratory-detail',
+    component: () => import('@/views/exploratory/ExploratoryDetailView.vue'),
+    meta: { title: '探索会话明细', hidden: true },
+  },
+  {
     path: '/settings',
     name: 'settings',
     component: () => import('@/views/settings/SettingsView.vue'),
@@ -219,7 +243,7 @@ const routes: RouteRecordRaw[] = [
     path: '/settings/versions',
     name: 'settings-versions',
     component: () => import('@/views/settings/VersionManageView.vue'),
-    meta: { title: '项目版本管理', hidden: true },
+    meta: { title: '版本', hidden: true },
   },
   {
     path: '/settings/templates',
@@ -232,6 +256,30 @@ const routes: RouteRecordRaw[] = [
     name: 'settings-backup',
     component: () => import('@/views/settings/BackupSettingsView.vue'),
     meta: { title: '数据备份与还原设置', hidden: true },
+  },
+  {
+    path: '/settings/retention',
+    name: 'settings-retention',
+    component: () => import('@/views/settings/RetentionSettingsView.vue'),
+    meta: { title: '数据留存与归档', hidden: true },
+  },
+  {
+    path: '/settings/exploratory',
+    name: 'settings-exploratory',
+    component: () => import('@/views/exploratory/ExploratorySettingsView.vue'),
+    meta: { title: '探索性测试设置', hidden: true },
+  },
+  {
+    path: '/settings/packages',
+    name: 'settings-packages',
+    component: () => import('@/views/settings/ProjectPackageView.vue'),
+    meta: { title: '项目资产包', hidden: true },
+  },
+  {
+    path: '/settings/external-imports',
+    name: 'settings-external-imports',
+    component: () => import('@/views/settings/ExternalImportView.vue'),
+    meta: { title: '外部平台导入', hidden: true },
   },
   {
     path: '/settings/automation',

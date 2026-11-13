@@ -360,8 +360,9 @@ def section_protocol(api: Api, conn: sqlite3.Connection, project_id: int,
     ).fetchone()[0])
     check("一次执行一份证据（重跑不重复堆快照）", count == rows, f"证据={count} 执行={rows}")
     matrix = execution_protocol.field_matrix(conn, project_id)
-    check("证据字段矩阵按四类来源给达标率",
-          len(matrix["bySource"]) == 4 and all("requiredFields" in item for item in matrix["bySource"]),
+    check("证据字段矩阵按全部来源给达标率",
+          len(matrix["bySource"]) == len(execution_protocol.SOURCE_TYPES)
+          and all("requiredFields" in item for item in matrix["bySource"]),
           str(matrix)[:300])
     check("字段矩阵有正向达标条目", matrix["compliant"] >= 1, str(matrix)[:200])
 
@@ -896,8 +897,11 @@ def main() -> int:
         section_retention(api, conn, project_id, env_id)
 
         counts = execution_protocol.evidence_counts(conn, project_id)
+        # 探索性来源由 check_exploratory_web.py 专门覆盖，这里只要求传统四类落库
+        legacy_sources = [key for key in execution_protocol.SOURCE_TYPES
+                          if key != execution_protocol.SOURCE_EXPLORATORY]
         check("四类来源都有证据落库",
-              all(counts[key] >= 1 for key in execution_protocol.SOURCE_TYPES), str(counts))
+              all(counts[key] >= 1 for key in legacy_sources), str(counts))
         conn.close()
     finally:
         try:

@@ -38,6 +38,7 @@ from ..ai.capability_codes import (
 from ..ai.capability_codes import TIER_FULL as CTX_TIER_FULL
 from ..ai.capability_codes import TIER_LITE as CTX_TIER_LITE
 from ..ai.capability_codes import TIER_STANDARD as CTX_TIER_STANDARD
+from ..common.knowledge_lexicon import expand_synonyms
 from ..db.fts import hybrid_search, tokenize
 from ..logging_setup import log_event
 from ..repositories.module_repo import ModuleRepository
@@ -545,6 +546,7 @@ def _knowledge_blocks(
                 page_num=1,
                 page_size=limit,
                 fallback_on_empty=True,
+                synonyms=expand_synonyms(token),
             )
         except sqlite3.Error as exc:  # noqa: BLE001 - 检索失败只影响上下文厚度
             log_event(logger, "context_knowledge_failed", level=logging.WARNING,

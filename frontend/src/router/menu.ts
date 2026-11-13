@@ -1,17 +1,23 @@
 import type { Component } from 'vue'
 import {
+  Aim,
   Bell,
+  Box,
+  Briefcase,
   Calendar,
-  ChatDotRound,
+  ChatLineRound,
+  Checked,
   CircleCheck,
   Collection,
+  CollectionTag,
   Connection,
   Cpu,
   DataAnalysis,
-  DataBoard,
   DataLine,
   Document,
-  Files,
+  DocumentAdd,
+  DocumentChecked,
+  DocumentCopy,
   Finished,
   Folder,
   FolderOpened,
@@ -21,21 +27,28 @@ import {
   Link,
   List,
   Lock,
+  Memo,
   Menu,
   Monitor,
   Notebook,
   Odometer,
+  Postcard,
   Promotion,
   QuestionFilled,
   Reading,
   Refresh,
   SetUp,
   Setting,
+  Share,
   Sort,
   Stopwatch,
+  Suitcase,
+  Switch,
   Tickets,
   Timer,
   TrendCharts,
+  Upload,
+  VideoPlay,
   Warning,
 } from '@element-plus/icons-vue'
 import AiLabIcon from '@/components/AiLabIcon.vue'
@@ -71,19 +84,28 @@ export type MenuNode = MenuItemNode | MenuGroupNode
  * 侧边导航结构。
  * 侧边栏渲染、当前项高亮、面包屑分组都从这里取，避免两处各写一份导致对不上。
  *
- * 分组按测试工作流排：首页（入口）→ AI 实验室（智能辅助）→ 任务清单 / 队列（待办）
- * → 预案（开跑前圈范围）→ 资产（输入）→ 质量分析（结论）→ 自动化（手段）→ 知识库（沉淀）→ 设置（配置）
- * → 帮助文档（说明书，一级菜单，放在设置下面）。
+ * 分组按测试工作流排：首页（入口）→ AI 实验室（智能辅助）→ 任务中心（待办/后台）
+ * → 测试预案（开跑前圈范围）→ 测试资产（输入本体）→ 质量结论（报告/追溯/SQL）
+ * → 自动化脚本（按目标管脚本）→ 执行与探索（矩阵/探索/执行配置）→ 知识库（沉淀）
+ * → 数据与迁移（资产包/外部导入）→ 设置（仅全局偏好）→ 帮助文档。
  *
- * 预案与质量分析分开：测试计划 / 回归清单是「开跑前圈定用例范围与回归口径」的预案页，
- * 追溯与准入 / 测试报告是「跑完看结论」的分析页，混在一个组里名字对不上内容。
+ * IA 原则：资产只放"输入本体"，结论独立成「质量结论」；脚本资产与执行编排分两组；
+ * 域配置（环境/自动化/性能/探索/知识库/模块树/断言）下沉到业务域，设置只留全局项；
+ * 合并入口（AI 记录、执行配置）用页内子页签切换，路由保持不变以兼容旧链接。
  *
- * 图标约定：优先选「看一眼就知道是干什么」的图形——
- * 仪表盘=总览、箭头排序=顺序执行、对话框=会话、工单=记录、
- * 文件夹=项目、文档=需求、对勾=用例、警告三角=缺陷、
- * 书本=知识库、循环箭头=回归、图表=报告、对勾圆=验证沙箱、
- * 启动=测试预案、看板=质量分析、装配=自动化、显示器内嵌 AI=AI 实验室。
- * 设置项：CPU=AI、收藏夹=知识库、菜单=模块树、装配=自动化、趋势图=性能测试。
+ * 图标约定（两条硬规则）：
+ * 1) 图标与菜单内容契合——看图标大致能猜到点进去做什么；
+ * 2) 全导航图标不重复——每个一级 / 二级入口各用一个独立图形。
+ * 例：仪表盘=能力总览、排序=顺序执行、笔记本=提示词库、对勾圆=验证沙箱、
+ * 圆对话框=会话记录、线对话框=问答助手、工单=执行记录、清单=效能List、计时=任务队列、
+ * 火箭=测试预案、日历=测试计划、循环箭头=回归清单、公文包=测试资产、文件夹=项目、
+ * 文档副本=版本、文档=需求、完成勾=用例、警告三角=缺陷、柱图=测试报告、折线=SQL 分析、
+ * 分享节点=追溯与准入、装配=自动化、显示器=Web、手机=App、链接=接口、秒表=性能、
+ * 网格=执行矩阵、瞄准=探索性测试、书本=知识库、收藏夹=知识库管理、
+ * 齿轮=设置、卡片=首页卡片定制、备忘录=操作日志、锁=访问口令、CPU=AI 设置、
+ * 收藏标签=知识库设置、菜单树=模块树、文档加=模板、连接=环境、滑杆=自动化设置、
+ * 直方图=性能设置、铃铛=CI 通知、文档勾=断言库、开文件夹=备份、箱子=留存归档、
+ * 罗盘=探索设置、行李箱=资产包、上传=外部导入、问号=帮助。
  */
 export const MENU_NODES: MenuNode[] = [
   { type: 'item', path: '/', title: '首页', icon: HomeFilled },
@@ -94,15 +116,22 @@ export const MENU_NODES: MenuNode[] = [
     icon: AiLabIcon,
     children: [
       { path: '/lab', title: '能力总览', icon: Odometer },
-      { path: '/lab/pipeline', title: '顺序执行', icon: Sort },
+      { path: '/lab/pipeline', title: 'AI 流水线', icon: Sort },
       { path: '/lab/prompts', title: '提示词库', icon: Notebook },
       { path: '/workbench/validation', title: '验证沙箱', icon: CircleCheck },
-      { path: '/lab/sessions', title: '会话记录', icon: ChatDotRound },
-      { path: '/lab/records', title: '执行记录', icon: Tickets },
+      { path: '/lab/records', title: 'AI 记录', icon: Tickets },
     ],
   },
-  { type: 'item', path: '/todos', title: '效能List', icon: List },
-  { type: 'item', path: '/tasks', title: '任务队列', icon: Timer },
+  {
+    type: 'group',
+    key: 'task',
+    title: '任务中心',
+    icon: Checked,
+    children: [
+      { path: '/todos', title: '我的待办', icon: List },
+      { path: '/tasks', title: '后台任务', icon: Timer },
+    ],
+  },
   {
     type: 'group',
     key: 'plan',
@@ -117,36 +146,49 @@ export const MENU_NODES: MenuNode[] = [
     type: 'group',
     key: 'asset',
     title: '测试资产',
-    icon: Files,
+    icon: Briefcase,
     children: [
       { path: '/projects', title: '项目', icon: Folder },
-      { path: '/settings/versions', title: '项目版本管理', icon: Files },
+      { path: '/settings/versions', title: '版本', icon: DocumentCopy },
+      { path: '/settings/modules', title: '功能点', icon: Menu },
       { path: '/requirements', title: '需求', icon: Document },
       { path: '/test-cases', title: '测试用例', icon: Finished },
       { path: '/bugs', title: '缺陷', icon: Warning },
-      { path: '/sql-analyses', title: 'SQL 分析', icon: DataLine },
+      { path: '/settings/assertions', title: '断言库', icon: DocumentChecked },
     ],
   },
   {
     type: 'group',
     key: 'quality',
-    title: '质量分析',
-    icon: DataBoard,
+    title: '质量结论',
+    icon: TrendCharts,
     children: [
-      { path: '/traceability', title: '追溯与准入', icon: TrendCharts },
       { path: '/reports', title: '测试报告', icon: DataAnalysis },
+      { path: '/traceability', title: '追溯与准入', icon: Share },
+      { path: '/sql-analyses', title: 'SQL 分析', icon: DataLine },
     ],
   },
   {
     type: 'group',
-    key: 'automation',
-    title: '自动化',
+    key: 'autscript',
+    title: '自动化脚本',
     icon: SetUp,
     children: [
-      { path: '/automation/web', title: 'Web 自动化管理', icon: Monitor },
-      { path: '/automation/app', title: 'App 自动化管理', icon: Iphone },
-      { path: '/automation/api', title: '接口自动化管理', icon: Link },
-      { path: '/automation/performance', title: '性能测试管理', icon: Stopwatch },
+      { path: '/automation/web', title: 'Web 自动化', icon: Monitor },
+      { path: '/automation/app', title: 'App 自动化', icon: Iphone },
+      { path: '/automation/api', title: '接口自动化', icon: Link },
+      { path: '/automation/performance', title: '性能测试', icon: Stopwatch },
+    ],
+  },
+  {
+    type: 'group',
+    key: 'exec',
+    title: '执行与探索',
+    icon: VideoPlay,
+    children: [
+      { path: '/execution-matrices', title: '执行矩阵', icon: Grid },
+      { path: '/exploratory', title: '探索性测试', icon: Aim },
+      { path: '/settings/environments', title: '执行配置', icon: Connection },
     ],
   },
   {
@@ -156,7 +198,18 @@ export const MENU_NODES: MenuNode[] = [
     icon: Reading,
     children: [
       { path: '/knowledge', title: '知识库管理', icon: Collection },
-      { path: '/knowledge/assistant', title: '知识库问答助手', icon: ChatDotRound },
+      { path: '/knowledge/assistant', title: '问答助手', icon: ChatLineRound },
+      { path: '/settings/knowledge', title: '知识库设置', icon: CollectionTag },
+    ],
+  },
+  {
+    type: 'group',
+    key: 'data',
+    title: '数据与迁移',
+    icon: Switch,
+    children: [
+      { path: '/settings/packages', title: '项目资产包', icon: Suitcase },
+      { path: '/settings/external-imports', title: '外部平台导入', icon: Upload },
     ],
   },
   {
@@ -165,19 +218,14 @@ export const MENU_NODES: MenuNode[] = [
     title: '设置',
     icon: Setting,
     children: [
-      { path: '/settings', title: '操作日志', icon: DataLine },
+      { path: '/settings/home-cards', title: '首页卡片定制', icon: Postcard },
+      { path: '/settings', title: '操作日志', icon: Memo },
       { path: '/settings/security', title: '访问口令', icon: Lock },
       { path: '/settings/ai', title: 'AI 设置', icon: Cpu },
-      { path: '/settings/knowledge', title: '知识库设置', icon: Collection },
-      { path: '/settings/modules', title: '模块树设置', icon: Menu },
-      { path: '/settings/templates', title: '测试文档模板设置', icon: Files },
-      { path: '/settings/environments', title: '测试环境配置', icon: Connection },
-      { path: '/settings/automation', title: '自动化管理设置', icon: SetUp },
-      { path: '/settings/performance', title: '性能测试管理设置', icon: TrendCharts },
+      { path: '/settings/templates', title: '测试文档模板', icon: DocumentAdd },
+      { path: '/settings/backup', title: '数据备份与还原', icon: FolderOpened },
+      { path: '/settings/retention', title: '数据留存与归档', icon: Box },
       { path: '/settings/ci', title: 'CI 与通知', icon: Bell },
-      { path: '/settings/assertions', title: '断言库', icon: CircleCheck },
-      { path: '/settings/home-cards', title: '首页卡片定制', icon: Grid },
-      { path: '/settings/backup', title: '数据备份与还原设置', icon: FolderOpened },
     ],
   },
   { type: 'item', path: '/help', title: '帮助文档', icon: QuestionFilled },

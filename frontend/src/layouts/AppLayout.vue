@@ -91,44 +91,9 @@
           </nav>
         </div>
         <div class="aitp-header-right">
+          <AssistantQuickEntry />
           <GlobalSearch />
-          <el-tooltip placement="bottom-end" :disabled="!aiStatus">
-            <template #content>
-              <div v-if="aiStatus" class="ai-chip__tip">
-                <div>生效模型：{{ aiStatus.provider }} / {{ aiStatus.model || '未指定' }}</div>
-                <div>接口地址：{{ aiStatus.baseUrl || '-' }}</div>
-                <div>来源层：{{ aiSourceText }}</div>
-                <div>数据外发：{{ aiStatus.isLocal ? '不出本机' : '会上传第三方' }}</div>
-                <div v-if="aiStatus.candidates.length > 1">降级顺序：{{ aiCandidateText }}</div>
-              </div>
-            </template>
-            <el-tag :type="aiTagType" effect="plain" class="ai-chip">
-              {{ aiChipText }}
-            </el-tag>
-          </el-tooltip>
-          <el-tag :type="online ? 'success' : 'danger'" effect="plain">
-            {{ online ? '后端在线' : '后端未连接' }}
-          </el-tag>
-          <el-tooltip placement="bottom-end" :disabled="!databaseInfo">
-            <template #content>
-              <div v-if="databaseInfo" class="ai-chip__tip">
-                <div>数据库：{{ databaseInfo.path }}</div>
-                <div>
-                  文件：{{ databaseSizeText }} · 结构版本：v{{ databaseInfo.version }}
-                </div>
-                <div>
-                  日志模式：{{ databaseInfo.journalMode || '-' }} · 探测耗时：{{
-                    databaseInfo.latencyMs
-                  }}ms
-                </div>
-                <div v-if="databaseInfo.error">错误：{{ databaseInfo.error }}</div>
-              </div>
-            </template>
-            <el-tag :type="databaseTagType" effect="plain" class="db-chip">
-              <span class="db-chip__dot" />
-              {{ databaseText }}
-            </el-tag>
-          </el-tooltip>
+          <StatusBadges :online="online" :health="health" :ai-status="aiStatus" />
           <el-tooltip :content="`切换皮肤（当前：${themeStore.current.label}）`" placement="bottom-end">
             <el-dropdown trigger="click" @command="onThemeChange">
               <button type="button" class="theme-switch" aria-label="切换皮肤">
@@ -193,6 +158,8 @@ import { get } from '@/api/request'
 import { settingsApi } from '@/api'
 import type { AiStatus, HealthStatus } from '@/api/types'
 import GlobalSearch from '@/components/GlobalSearch.vue'
+import AssistantQuickEntry from '@/components/AssistantQuickEntry.vue'
+import StatusBadges from '@/components/StatusBadges.vue'
 import OnboardingTour from '@/components/OnboardingTour.vue'
 import BrandName from '@/components/BrandName.vue'
 import { useAppStore } from '@/stores/app'
@@ -276,72 +243,6 @@ function updateVisibleSize(): void {
     })
   }
 }
-
-const aiChipText = computed(() => {
-  const status = aiStatus.value
-  if (!status || !status.configured) {
-    return 'AI 未配置'
-  }
-  return `${status.provider}/${status.model || '未指定模型'}`
-})
-
-const aiTagType = computed(() => {
-  const status = aiStatus.value
-  if (!status || !status.configured) {
-    return 'info' as const
-  }
-  return status.isLocal ? ('warning' as const) : ('primary' as const)
-})
-
-const aiSourceText = computed(() => {
-  const labels = aiStatus.value?.sourceLabels ?? {}
-  const parts = Object.entries(labels)
-    .filter(([, label]) => label && label !== '未配置')
-    .map(([field, label]) => `${field}：${label}`)
-  return parts.length ? parts.join(' / ') : '未配置'
-})
-
-const aiCandidateText = computed(() =>
-  (aiStatus.value?.candidates ?? [])
-    .map((item) => `${item.profileName || item.provider}/${item.model || '未指定'}`)
-    .join(' → '),
-)
-
-const databaseInfo = computed(() => health.value?.database ?? null)
-
-const databaseText = computed(() => {
-  if (!online.value) {
-    return '本机SQLite 未知'
-  }
-  const info = databaseInfo.value
-  if (!info) {
-    return '本机SQLite 检测中'
-  }
-  return info.ok ? '本机SQLite 已连接' : '本机SQLite 未连接'
-})
-
-const databaseTagType = computed(() => {
-  if (!online.value || !databaseInfo.value) {
-    return 'info' as const
-  }
-  return databaseInfo.value.ok ? ('success' as const) : ('danger' as const)
-})
-
-function formatBytes(bytes: number): string {
-  if (!bytes) {
-    return '0 B'
-  }
-  const units = ['B', 'KB', 'MB', 'GB']
-  let value = bytes
-  let index = 0
-  while (value >= 1024 && index < units.length - 1) {
-    value /= 1024
-    index += 1
-  }
-  return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`
-}
-
-const databaseSizeText = computed(() => formatBytes(databaseInfo.value?.sizeBytes ?? 0))
 
 const menuNodes = MENU_NODES
 
@@ -1067,42 +968,11 @@ onUnmounted(() => {
   border: 1px solid var(--aitp-panel);
 }
 
-.ai-chip {
-  max-width: 240px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* 本机数据库状态：圆点跟随标签语义色，一眼能看出连没连上 */
-.db-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.db-chip__dot {
-  width: 6px;
-  height: 6px;
-  background: currentColor;
-  border-radius: 50%;
-}
-
-/* 窄窗口给面包屑留位置：搜索框与模型标签先收窄，数据库状态和皮肤入口保持完整 */
+/* 窄窗口给面包屑留位置：搜索框先收窄，状态徽标和皮肤入口保持完整 */
 @media (max-width: 1320px) {
   .aitp-header-right :deep(.global-search) {
     width: 240px;
   }
-
-  .ai-chip {
-    max-width: 180px;
-  }
-}
-
-.ai-chip__tip {
-  line-height: 1.8;
-  font-size: 12px;
-  max-width: 320px;
-  word-break: break-word;
 }
 
 .aitp-main {

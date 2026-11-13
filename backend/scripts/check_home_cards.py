@@ -119,11 +119,15 @@ def custom_keys_of(layout: list[dict[str, Any]]) -> list[str]:
 # ---------------- 纯函数：布局清洗 ----------------
 def check_layout_rules() -> None:
     default = cards.default_layout()
-    check("默认布局 = 3 块固定区 + 9 张可定制卡", len(default) == 12, f"实际 {len(default)}")
+    check(
+        f"默认布局 = {len(cards.LOCKED_CARDS)} 块固定区 + {len(cards.CUSTOMIZABLE_CARDS)} 张可定制卡",
+        len(default) == len(cards.LOCKED_CARDS) + len(cards.CUSTOMIZABLE_CARDS),
+        f"实际 {len(default)}",
+    )
     check(
         "固定区始终排在最前且锁定显示",
-        all(item["locked"] and item["visible"] for item in default[:3]),
-        str(default[:3]),
+        all(item["locked"] and item["visible"] for item in default[:len(cards.LOCKED_CARDS)]),
+        str(default[:len(cards.LOCKED_CARDS)]),
     )
     check(
         "可定制区按默认顺序紧跟固定区",
@@ -145,7 +149,7 @@ def check_layout_rules() -> None:
 
     dirty = [
         {"key": "no_such_card", "visible": True},
-        {"key": "assistant", "visible": False},
+        {"key": "overview", "visible": False},
         {"key": "envHealth", "visible": False},
         {"key": "envHealth", "visible": True},
         {"key": "bugSeverity", "visible": True},
@@ -154,7 +158,7 @@ def check_layout_rules() -> None:
     ]
     cleaned = cards.normalize(dirty)
     custom = custom_keys_of(cleaned)
-    check("未知 key 与固定区 key 被丢弃", "no_such_card" not in custom and "assistant" not in custom, custom)
+    check("未知 key 与固定区 key 被丢弃", "no_such_card" not in custom and "overview" not in custom, custom)
     check("重复卡片只保留第一次", custom.count("envHealth") == 1, custom)
     check(
         "漏配的卡片按默认顺序补齐",
@@ -182,8 +186,7 @@ def check_api(app: Flask, workdir: pathlib.Path) -> None:
     layout = cast(list[dict[str, Any]], listed["list"])
     check("未配置时 GET 返回默认布局", custom_keys_of(layout) == custom_keys_of(cards.default_layout()), layout)
 
-    order = ["envHealth", "recentReports", "bugSeverity", "aiUsage",
-             "recentTasks", "caseStatus", "bugStatus", "projectProgress", "moduleTree"]
+    order = [card.key for card in reversed(cards.CUSTOMIZABLE_CARDS)]
     payload = {"cards": [{"key": key, "visible": key not in ("aiUsage", "moduleTree")} for key in order]}
     saved = api.data("PUT", "/api/v1/settings/home-cards", payload)
     saved_layout = cast(list[dict[str, Any]], saved["list"])
@@ -198,7 +201,11 @@ def check_api(app: Flask, workdir: pathlib.Path) -> None:
     check("重读与保存结果一致", custom_keys_of(reread) == order, custom_keys_of(reread))
 
     stored = _stored_config(workdir)
-    check("配置里不含固定区", "assistant" not in stored and "overview" not in stored, stored)
+    check(
+        "配置里不含固定区",
+        all(card.key not in stored for card in cards.LOCKED_CARDS),
+        stored,
+    )
     check("配置是紧凑 JSON 数组", isinstance(json.loads(stored), list), stored)
 
     _, body = api.call("PUT", "/api/v1/settings/home-cards", {"cards": []})

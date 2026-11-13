@@ -10,6 +10,11 @@
     </div>
 
     <el-tabs v-model="tab" class="exec-tabs">
+      <el-tab-pane label="总览" name="overview">
+        <div class="panel panel-pad">
+          <PlanOverviewPanel />
+        </div>
+      </el-tab-pane>
       <el-tab-pane label="测试计划" name="plans">
         <div class="panel panel-pad">
           <div class="toolbar">
@@ -56,9 +61,10 @@
             <el-table-column label="更新时间" width="150">
               <template #default="scope">{{ dateTimeText(scope.row.updatedAt) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="200" fixed="right">
+            <el-table-column label="操作" width="260" fixed="right">
               <template #default="scope">
                 <el-button link type="primary" :icon="VideoPlay" @click="openLaunch(scope.row)">发起轮次</el-button>
+                <el-button link type="success" :icon="Calendar" @click="openTemplate(scope.row)">模板生成</el-button>
                 <el-button link @click="openPlanDialog(scope.row)">编辑</el-button>
                 <el-button link type="danger" @click="removePlan(scope.row)">删除</el-button>
               </template>
@@ -95,6 +101,7 @@
               @clear="reloadRuns"
             />
             <el-select v-model="runFilters.status" placeholder="状态" clearable style="width: 140px" @change="reloadRuns">
+              <el-option label="待开始" value="pending" />
               <el-option label="执行中" value="running" />
               <el-option label="已完成" value="completed" />
               <el-option label="已中止" value="aborted" />
@@ -113,6 +120,20 @@
             </el-table-column>
             <el-table-column label="版本" width="90">
               <template #default="scope">{{ scope.row.versionCode || '-' }}</template>
+            </el-table-column>
+            <el-table-column label="类型" width="110">
+              <template #default="scope">
+                <el-tag v-if="scope.row.roundType" size="small" effect="plain" :type="roundTypeTag(scope.row.roundType)">
+                  {{ roundTypeLabel(scope.row.roundType) }}
+                </el-tag>
+                <span v-else class="muted">-</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="计划时间窗" width="180">
+              <template #default="scope">
+                <span v-if="scope.row.plannedStart" class="muted">{{ scope.row.plannedStart }} ~ {{ scope.row.plannedEnd }}</span>
+                <span v-else class="muted">-</span>
+              </template>
             </el-table-column>
             <el-table-column label="结果" width="168" align="center">
               <template #header>
@@ -140,9 +161,15 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="140" fixed="right">
+            <el-table-column label="操作" width="200" fixed="right">
               <template #default="scope">
                 <el-button link type="primary" @click="openRun(scope.row)">进入执行</el-button>
+                <el-button
+                  v-if="scope.row.status === 'pending' && scope.row.scopePreset"
+                  link
+                  type="warning"
+                  @click="refreshScope(scope.row)"
+                >刷新范围</el-button>
                 <el-button link type="danger" @click="removeRun(scope.row)">删除</el-button>
               </template>
             </el-table-column>
@@ -225,6 +252,29 @@
         <el-form-item label="轮次名称" required>
           <el-input v-model="launchForm.name" placeholder="例如：登录回归第 1 轮" />
         </el-form-item>
+        <el-form-item label="轮次类型">
+          <el-select v-model="launchForm.roundType" placeholder="选择轮次类型" clearable style="width: 240px" @change="onRoundTypeChange">
+            <el-option v-for="t in roundMeta.types" :key="t.value" :label="t.label" :value="t.value" />
+          </el-select>
+          <el-select v-model="launchForm.scopePreset" placeholder="范围预设" clearable style="width: 260px; margin-left: 10px">
+            <el-option v-for="p in roundMeta.presets" :key="p.value" :label="p.label" :value="p.value" />
+          </el-select>
+          <el-button :icon="MagicStick" :loading="presetLoading" style="margin-left: 10px" @click="applyPreset">按预设圈选</el-button>
+        </el-form-item>
+        <el-form-item label="核心目标">
+          <el-input v-model="launchForm.goal" placeholder="本轮要回答的问题，选类型后自动带出可改" />
+        </el-form-item>
+        <el-form-item label="计划时间窗">
+          <el-date-picker
+            v-model="launchForm.plannedRange"
+            type="daterange"
+            value-format="YYYY-MM-DD"
+            range-separator="~"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+            style="width: 320px"
+          />
+        </el-form-item>
         <el-form-item label="环境">
           <el-select v-model="launchForm.envId" placeholder="不指定环境" clearable style="width: 100%">
             <el-option
@@ -285,6 +335,38 @@
         <el-button type="primary" :loading="launching" @click="launchRun">发起轮次</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="templateDialog" title="按模板生成轮次序列" width="560px">
+      <el-alert
+        type="info"
+        show-icon
+        :closable="false"
+        title="按版本迭代节奏一键生成多轮（待开始状态 + 计划时间窗 + 范围预设），生成后可逐轮调整再执行。"
+        style="margin-bottom: 12px"
+      />
+      <el-form label-width="90px">
+        <el-form-item label="轮次模板">
+          <el-radio-group v-model="templateForm.template">
+            <el-radio-button v-for="t in roundMeta.templates" :key="t.value" :value="t.value">
+              {{ t.label }}
+            </el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="开始日期" required>
+          <el-date-picker v-model="templateForm.startDate" type="date" value-format="YYYY-MM-DD" placeholder="第一轮开始日期" style="width: 220px" />
+        </el-form-item>
+        <el-form-item label="环境">
+          <el-select v-model="templateForm.envId" placeholder="用计划默认环境" clearable style="width: 100%">
+            <el-option v-for="item in envs" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="templateDialog = false">取消</el-button>
+        <el-button type="primary" :loading="templating" @click="submitTemplate">生成轮次</el-button>
+      </template>
+    </el-dialog>
+    <ProdConfirmDialog ref="prodDialog" />
   </div>
 </template>
 
@@ -292,18 +374,20 @@
 import { onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh, RefreshLeft, Search, VideoPlay } from '@element-plus/icons-vue'
+import { Calendar, MagicStick, Plus, Refresh, RefreshLeft, Search, VideoPlay } from '@element-plus/icons-vue'
 import { caseApi, projectVersionApi, requirementApi, testEnvApi, testPlanApi, testRunApi } from '@/api'
 import { useAutoQuery } from '@/composables/useAutoQuery'
-import type { ProjectVersion, Requirement, TestCase, TestEnv, TestPlan, TestRun } from '@/api/types'
+import type { ProjectVersion, Requirement, RoundMeta, TestCase, TestEnv, TestPlan, TestRun } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
+import ProdConfirmDialog from '@/components/ProdConfirmDialog.vue'
+import PlanOverviewPanel from '@/views/execution/PlanOverviewPanel.vue'
 import { dateTimeText } from '@/utils/format'
 
 const appStore = useAppStore()
 const router = useRouter()
 
-const tab = ref<'plans' | 'runs'>('plans')
+const tab = ref<'overview' | 'plans' | 'runs'>('overview')
 const versions = ref<ProjectVersion[]>([])
 const formVersions = ref<ProjectVersion[]>([])
 const requirements = ref<Requirement[]>([])
@@ -327,16 +411,122 @@ const runFilters = reactive({ keyword: '', status: '' })
 
 const launchDialog = ref(false)
 const launching = ref(false)
+const prodDialog = ref<InstanceType<typeof ProdConfirmDialog> | null>(null)
 const caseLoading = ref(false)
 const candidates = ref<TestCase[]>([])
 const selectedCaseIds = ref<number[]>([])
 const launchPlan = ref<TestPlan | null>(null)
-const launchForm = reactive({ name: '', envId: null as number | null })
+const launchForm = reactive({
+  name: '',
+  envId: null as number | null,
+  roundType: '',
+  goal: '',
+  scopePreset: '',
+  plannedRange: null as [string, string] | null,
+})
 const launchFilter = reactive<{ requirementId: number | null; caseType: string; priority: string }>({
   requirementId: null,
   caseType: '',
   priority: '',
 })
+
+const roundMeta = ref<RoundMeta>({ types: [], presets: [], templates: [] })
+const presetLoading = ref(false)
+const templateDialog = ref(false)
+const templating = ref(false)
+const templatePlan = ref<TestPlan | null>(null)
+const templateForm = reactive({ template: 'four', startDate: '', envId: null as number | null })
+
+async function loadRoundMeta(): Promise<void> {
+  try {
+    roundMeta.value = await testRunApi.roundMeta()
+  } catch {
+    roundMeta.value = { types: [], presets: [], templates: [] }
+  }
+}
+
+function roundTypeLabel(value: string): string {
+  return roundMeta.value.types.find((t) => t.value === value)?.label ?? value
+}
+
+function roundTypeTag(value: string): 'success' | 'warning' | 'info' | 'danger' | 'primary' {
+  if (value === 'smoke') return 'warning'
+  if (value === 'full') return 'primary'
+  if (value === 'special') return 'danger'
+  if (value === 'regression') return 'success'
+  return 'info'
+}
+
+function onRoundTypeChange(value: string): void {
+  const t = roundMeta.value.types.find((item) => item.value === value)
+  if (t) {
+    launchForm.goal = t.goal
+    launchForm.scopePreset = t.preset
+  }
+}
+
+async function applyPreset(): Promise<void> {
+  if (!launchPlan.value) return
+  if (!launchForm.scopePreset) {
+    ElMessage.warning('请先选择范围预设')
+    return
+  }
+  presetLoading.value = true
+  try {
+    const result = await testPlanApi.previewScope(launchPlan.value.id, {
+      preset: launchForm.scopePreset,
+      versionId: launchPlan.value.versionId ?? undefined,
+    })
+    candidates.value = result.cases as unknown as TestCase[]
+    selectedCaseIds.value = result.caseIds
+    ElMessage.success(`按预设圈选 ${result.count} 条用例`)
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '圈选失败')
+  } finally {
+    presetLoading.value = false
+  }
+}
+
+function openTemplate(row: TestPlan): void {
+  templatePlan.value = row
+  templateForm.template = 'four'
+  templateForm.startDate = new Date().toISOString().slice(0, 10)
+  templateForm.envId = row.defaultEnvId ?? null
+  templateDialog.value = true
+}
+
+async function submitTemplate(): Promise<void> {
+  if (!templatePlan.value) return
+  if (!templateForm.startDate) {
+    ElMessage.warning('请选择开始日期')
+    return
+  }
+  templating.value = true
+  try {
+    const result = await testPlanApi.fromTemplate(templatePlan.value.id, {
+      template: templateForm.template,
+      startDate: templateForm.startDate,
+      envId: templateForm.envId ?? undefined,
+    })
+    ElMessage.success(`已生成 ${result.runs.length} 个轮次（待开始），可到「测试轮次」逐轮调整`)
+    templateDialog.value = false
+    await loadAll()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '生成失败')
+  } finally {
+    templating.value = false
+  }
+}
+
+async function refreshScope(row: TestRun): Promise<void> {
+  try {
+    const result = await testRunApi.refreshScope(row.id)
+    ElMessage.success(`已按预设刷新范围，共 ${result.count} 条用例`)
+    await loadRuns()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '刷新范围失败')
+  }
+}
 
 const planForm = reactive<{
   id: number | null
@@ -583,6 +773,10 @@ async function openLaunch(row: TestPlan): Promise<void> {
   launchPlan.value = row
   launchForm.name = `${row.name} · ${new Date().toLocaleString()}`
   launchForm.envId = row.defaultEnvId ?? null
+  launchForm.roundType = ''
+  launchForm.goal = ''
+  launchForm.scopePreset = ''
+  launchForm.plannedRange = null
   launchFilter.requirementId = null
   launchFilter.caseType = ''
   launchFilter.priority = ''
@@ -625,18 +819,15 @@ async function launchRun(): Promise<void> {
     ElMessage.warning('轮次名称不能为空')
     return
   }
-  if (!selectedCaseIds.value.length) {
-    ElMessage.warning('请先勾选要执行的用例')
+  if (!selectedCaseIds.value.length && !launchForm.scopePreset) {
+    ElMessage.warning('请先勾选要执行的用例，或选择范围预设后按预设圈选')
     return
   }
   if (launchForm.envId && envKindOf(launchForm.envId) === 'prod') {
-    try {
-      await ElMessageBox.confirm(
-        `即将在「${envNameOf(launchForm.envId)}」生产环境发起轮次，确认继续？`,
-        '生产环境确认',
-        { type: 'warning', confirmButtonText: '确认发起', cancelButtonText: '取消' },
-      )
-    } catch {
+    const ok = (await prodDialog.value?.open(
+      `即将在「${envNameOf(launchForm.envId)}」生产环境发起轮次，确认继续？`,
+    )) ?? false
+    if (!ok) {
       return
     }
   }
@@ -646,6 +837,11 @@ async function launchRun(): Promise<void> {
       name: launchForm.name,
       envId: launchForm.envId,
       caseIds: selectedCaseIds.value,
+      roundType: launchForm.roundType || undefined,
+      goal: launchForm.goal || undefined,
+      scopePreset: launchForm.scopePreset || undefined,
+      plannedStart: launchForm.plannedRange?.[0] || undefined,
+      plannedEnd: launchForm.plannedRange?.[1] || undefined,
     })
     ElMessage.success(`已发起轮次，共 ${run.total} 条用例`)
     launchDialog.value = false
@@ -692,6 +888,7 @@ let activated = false
 
 onMounted(async () => {
   await appStore.loadProjects()
+  void loadRoundMeta()
   await loadAll()
 })
 

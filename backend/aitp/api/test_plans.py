@@ -14,6 +14,7 @@ from ..repositories.base import dumps, loads
 from ..repositories.test_plan_repo import PLAN_STATUSES, TestPlanRepository, plan_summary
 from ..repositories.test_run_repo import TestRunRepository, run_summary
 from ..services import audit_service, test_run_service
+from ..services import test_round_service
 from .helpers import (
     attach_version_codes,
     audit,
@@ -238,9 +239,20 @@ def create_run_from_plan(pk: str) -> Response:
         version_id = plan.get("version_id")
     merged_scope = _scope_filters(loads(plan.get("scope_json"), {}) or {})
     merged_scope.update(_scope_filters(data.get("scope")))
+    round_type = check_choice(
+        data.get("roundType"), test_round_service.ROUND_TYPE_VALUES, "roundType", ""
+    ) or ""
+    preset = check_choice(
+        data.get("scopePreset"), test_round_service.SCOPE_PRESET_VALUES, "scopePreset", ""
+    ) or test_round_service.ROUND_TYPE_PRESETS.get(round_type, "")
     case_ids = data.get("caseIds")
     if isinstance(case_ids, list) and case_ids:
         ids = [require_int(item, "caseIds[]") for item in case_ids]
+    elif preset:
+        ids = test_round_service.resolve_scope(
+            conn, project_id, version_id, preset,
+            optional_int(data.get("prevRunId"), "prevRunId"),
+        )
     else:
         ids = test_run_service.select_case_ids(conn, project_id, merged_scope)
     env_id = optional_int(data.get("envId"), "envId") or plan.get("default_env_id")
@@ -261,8 +273,85 @@ def create_run_from_plan(pk: str) -> Response:
         env=env_name,
         owner=optional_str(data.get("owner"), "owner", 64) or str(plan.get("owner") or ""),
         remark=optional_str(data.get("remark"), "remark", 2000) or "",
+        round_type=round_type,
+        goal=optional_str(data.get("goal"), "goal", 500)
+        or test_round_service.ROUND_TYPE_GOALS.get(round_type, ""),
+        planned_start=optional_str(data.get("plannedStart"), "plannedStart", 10) or "",
+        planned_end=optional_str(data.get("plannedEnd"), "plannedEnd", 10) or "",
+        scope_preset=preset,
+        seq=int(data.get("seq") or 0),
     )
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_CREATE, audit_service.RESOURCE_TEST_RUN,
           int(payload["id"]), name, {"planId": target, "cases": len(ids)})
     return ok(test_run_service.attach_envs(conn, [payload])[0])
+
+
+@bp.post("/<pk>/rounds/preview-scope")
+def preview_round_scope(pk: str) -> Response:
+    """按范围预设预圈用例（不建轮次），返回用例清单供发起对话框勾选。"""
+    conn = db()
+    target = path_int(pk)
+    plan = TestPlanRepository(conn).get_detail(target)
+    if not plan:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "测试计划不存在")
+    guard_project_scope(plan, scope_arg(), "测试计划")
+    data = body()
+    preset = check_choice(
+        data.get("preset"), test_round_service.SCOPE_PRESET_VALUES, "preset", ""
+    )
+    if not preset:
+        raise AppError(ErrorCode.PARAM_ERROR, "preset 必填")
+    version_id = optional_int(data.get("versionId"), "versionId") or plan.get("version_id")
+    ids = test_round_service.resolve_scope(
+        conn, int(plan["project_id"]), version_id, preset,
+        optional_int(data.get("prevRunId"), "prevRunId"),
+    )
+    cases: list[dict[str, Any]] = []
+    if ids:
+        marks = ",".join("?" for _ in ids)
+        rows = conn.execute(
+            f"SELECT id, case_no, title, priority, case_type, status FROM biz_test_case"  # noqa: S608
+            f" WHERE id IN ({marks}) AND is_deleted = 0",
+            ids,
+        ).fetchall()
+        by_id = {int(r["id"]): r for r in rows}
+        cases = [
+            {
+                "id": int(by_id[i]["id"]),
+                "caseNo": by_id[i]["case_no"],
+                "title": by_id[i]["title"],
+                "priority": by_id[i]["priority"],
+                "caseType": by_id[i]["case_type"],
+                "status": by_id[i]["status"],
+            }
+            for i in ids if i in by_id
+        ]
+    return ok({"preset": preset, "count": len(cases), "caseIds": [c["id"] for c in cases], "cases": cases})
+
+
+@bp.post("/<pk>/rounds/from-template")
+def create_rounds_from_template(pk: str) -> Response:
+    """按 4/3 轮模板为计划一键生成轮次序列（计划中状态 + 计划时间窗）。"""
+    conn = db()
+    target = path_int(pk)
+    plan = TestPlanRepository(conn).get_detail(target)
+    if not plan:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "测试计划不存在")
+    guard_project_scope(plan, scope_arg(), "测试计划")
+    data = body()
+    template = require_str(data.get("template"), "template", 20)
+    start_date = require_str(data.get("startDate"), "startDate", 10)
+    durations = data.get("durations")
+    if durations is not None and not isinstance(durations, list):
+        raise AppError(ErrorCode.PARAM_ERROR, "durations 必须是数组")
+    runs = test_round_service.generate_template(
+        conn, plan, template, start_date,
+        env_id=optional_int(data.get("envId"), "envId"),
+        owner=optional_str(data.get("owner"), "owner", 64) or "",
+        durations=[int(d) for d in durations] if durations else None,
+    )
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_CREATE, audit_service.RESOURCE_TEST_PLAN, target,
+          str(plan.get("name") or ""), {"action": "from_template", "template": template, "rounds": len(runs)})
+    return ok({"runs": test_run_service.attach_envs(conn, attach_version_codes(conn, runs))})

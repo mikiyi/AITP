@@ -11,6 +11,8 @@
       </div>
     </div>
 
+    <RouteSubNav :items="recordTabs" />
+
     <div class="panel panel-pad">
       <el-alert
         type="info"
@@ -50,6 +52,7 @@ import { computed, onMounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { MagicStick } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField } from '@/components/BaseProTable.vue'
+import RouteSubNav from '@/components/RouteSubNav.vue'
 import { recordApi } from '@/api'
 import type { AiRecord, AiRecordPage } from '@/api/types'
 import type { PagePayload } from '@/api/request'
@@ -57,6 +60,10 @@ import { useLabStore } from '@/stores/lab'
 
 const router = useRouter()
 const labStore = useLabStore()
+const recordTabs = [
+  { path: '/lab/sessions', label: '会话记录' },
+  { path: '/lab/records', label: '执行记录' },
+]
 
 const stats = reactive({ pending: 0, notRequired: 0, approved: 0, rejected: 0 })
 

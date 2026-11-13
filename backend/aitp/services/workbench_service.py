@@ -112,6 +112,9 @@ def update_entry(conn: sqlite3.Connection, pk: int, data: dict[str, Any]) -> dic
     row = repo.get(pk)
     if row is None:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "入口不存在")
+    # 已发布是终态：冻结编辑，避免「发布后还能改」破坏版本可追溯性
+    if row.get("status") == ENTRY_PUBLISHED:
+        raise AppError(ErrorCode.ILLEGAL_OPERATION, "已发布的编排为终态，不能编辑；如需调整请新建编排")
     payload: dict[str, Any] = {}
     if "name" in data:
         payload["name"] = str(data["name"] or "")

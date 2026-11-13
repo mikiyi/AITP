@@ -27,6 +27,7 @@ from ..repositories.test_run_repo import (
 )
 from ..services import audit_service, tabular_export, test_run_service
 from ..services import automation_service, execution_protocol, interface_runner, job_queue
+from ..services import test_round_service
 from .helpers import (
     attach_version_codes,
     audit,
@@ -101,6 +102,12 @@ def _attach_plan_names(conn: Any, rows: list[dict[str, Any]]) -> list[dict[str, 
     return rows
 
 
+@bp.get("/round-meta")
+def round_meta() -> Response:
+    """轮次类型 / 范围预设 / 轮次模板的元数据，供前端表单与模板生成使用。"""
+    return ok(test_round_service.meta())
+
+
 @bp.get("")
 def list_runs() -> Response:
     conn = db()
@@ -156,6 +163,9 @@ def create_run() -> Response:
     if not ids:
         raise AppError(ErrorCode.PARAM_ERROR, "当前筛选条件下没有可执行的用例")
     name = optional_str(data.get("name"), "name", 200) or "临时测试轮次"
+    round_type = check_choice(
+        data.get("roundType"), test_round_service.ROUND_TYPE_VALUES, "roundType", ""
+    ) or ""
     payload = test_run_service.create_run(
         conn,
         project_id=project_id,
@@ -167,6 +177,15 @@ def create_run() -> Response:
         env=optional_str(data.get("env"), "env", 100) or "",
         owner=optional_str(data.get("owner"), "owner", 64) or "",
         remark=optional_str(data.get("remark"), "remark", 2000) or "",
+        round_type=round_type,
+        goal=optional_str(data.get("goal"), "goal", 500)
+        or test_round_service.ROUND_TYPE_GOALS.get(round_type, ""),
+        planned_start=optional_str(data.get("plannedStart"), "plannedStart", 10) or "",
+        planned_end=optional_str(data.get("plannedEnd"), "plannedEnd", 10) or "",
+        scope_preset=check_choice(
+            data.get("scopePreset"), test_round_service.SCOPE_PRESET_VALUES, "scopePreset", ""
+        ) or test_round_service.ROUND_TYPE_PRESETS.get(round_type, ""),
+        seq=int(data.get("seq") or 0),
     )
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_CREATE, audit_service.RESOURCE_TEST_RUN,
@@ -201,12 +220,41 @@ def update_run(pk: str) -> Response:
             conn, "biz_project_version", data.get("versionId"),
             row.get("project_id"), "项目版本", "versionId",
         )
+    if "roundType" in data:
+        payload["round_type"] = check_choice(
+            data["roundType"], test_round_service.ROUND_TYPE_VALUES, "roundType", ""
+        ) or ""
+    if "goal" in data:
+        payload["goal"] = optional_str(data["goal"], "goal", 500) or ""
+    if "plannedStart" in data:
+        payload["planned_start"] = optional_str(data["plannedStart"], "plannedStart", 10) or ""
+    if "plannedEnd" in data:
+        payload["planned_end"] = optional_str(data["plannedEnd"], "plannedEnd", 10) or ""
+    if "scopePreset" in data:
+        payload["scope_preset"] = check_choice(
+            data["scopePreset"], test_round_service.SCOPE_PRESET_VALUES, "scopePreset", ""
+        ) or ""
+    if "seq" in data:
+        payload["seq"] = require_int(data["seq"], "seq")
     if payload:
         repo.update(target, payload)
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_TEST_RUN, target,
           str(payload.get("name") or row.get("name") or ""), {"fields": sorted(payload.keys())})
     return ok(run_summary(repo.get_detail(target) or {}))
+
+
+@bp.post("/<pk>/refresh-scope")
+def refresh_run_scope(pk: str) -> Response:
+    """按范围预设复算本轮用例（专项轮带上上一轮 fail），仅待开始轮次可用。"""
+    conn = db()
+    target = path_int(pk)
+    _run_or_404(conn, target)
+    result = test_round_service.refresh_scope(conn, target)
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_TEST_RUN, target,
+          "", {"action": "refresh_scope", "preset": result["preset"], "count": result["count"]})
+    return ok(result)
 
 
 @bp.delete("/<pk>")

@@ -14,8 +14,11 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from typing import Any, Iterable, Sequence
+
+from ..common.knowledge_lexicon import expand_synonyms
 
 #: 可检索的实体类型
 TYPE_REQUIREMENT = "requirement"
@@ -111,6 +114,97 @@ def _snippet(candidates: Iterable[tuple[str, str]], tokens: Sequence[str]) -> st
         suffix = "…" if end < len(normalized) else ""
         return f"{label}{prefix}{normalized[start:end]}{suffix}"
     return ""
+
+
+#: 中文复合查询兜底：整串连续匹配失败时，拆成 2~4 字切片再 OR 召回。
+#: 不拆的话「登录验证码」会被当成一个连续短语，正文里分开出现的两个词永远搜不到。
+_MAX_FALLBACK_TERMS = 24
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+
+
+def _fallback_terms(keyword: str) -> list[str]:
+    text = keyword.strip()
+    if len(text) < 3 or any(char.isspace() for char in text):
+        return []
+    # 只对纯中文复合短语切片；英文/编号/混排查询保持原语义，
+    # 否则 ZQ 这类 2 字片段会把无关知识也放大进结果。
+    if not _CJK_RE.search(text) or any(char.isascii() and char.isalnum() for char in text):
+        return []
+    terms: list[str] = []
+    for size in (2, 3, 4):
+        for index in range(len(text) - size + 1):
+            piece = text[index:index + size]
+            if piece not in terms:
+                terms.append(piece)
+                if len(terms) >= _MAX_FALLBACK_TERMS:
+                    return terms
+    return terms
+
+
+def _search_knowledge_ngrams(
+    conn: sqlite3.Connection,
+    keyword: str,
+    limit: int,
+    extra: Sequence[str],
+    extra_params: list[Any],
+) -> tuple[list[dict[str, Any]], int] | None:
+    """知识库的 n-gram 兜底：只在整串查询 0 命中时启用，不清空原有精确匹配语义。"""
+    base_terms = _fallback_terms(keyword)
+    synonyms = [term for term in expand_synonyms(keyword) if term not in base_terms]
+    terms = base_terms + synonyms
+    if not terms:
+        return None
+    columns = ["title", "summary", "content", "tags"]
+    ors: list[str] = []
+    match_params: list[Any] = []
+    for term in terms:
+        for column in columns:
+            ors.append(f"instr(lower(COALESCE({column}, '')), lower(?)) > 0")
+            match_params.append(term)
+    where = " AND ".join(["is_deleted = 0", *extra, f"({' OR '.join(ors)})"])
+    params = extra_params + match_params
+    total = _count(conn, "biz_knowledge_article", where, params)
+    if total == 0:
+        return None
+
+    # 标题命中权重高，正文次之；同分再按更新时间倒序。
+    # 原词权重高于同义词，避免同义扩展把结果带到无关条目。
+    score_parts: list[str] = []
+    score_params: list[Any] = []
+    for term in base_terms:
+        score_parts.append(
+            "CASE WHEN instr(lower(COALESCE(title, '')), lower(?)) > 0 THEN 8 ELSE 0 END")
+        score_params.append(term)
+    for term in synonyms:
+        score_parts.append(
+            "CASE WHEN instr(lower(COALESCE(title, '')), lower(?)) > 0 THEN 4 ELSE 0 END")
+        score_params.append(term)
+    for term in terms:
+        for column in ("summary", "content", "tags"):
+            score_parts.append(
+                f"CASE WHEN instr(lower(COALESCE({column}, '')), lower(?)) > 0 THEN 1 ELSE 0 END")
+            score_params.append(term)
+    sql = (
+        "SELECT id, project_id, title, category, COALESCE(summary, '') AS summary,"
+        " COALESCE(content, '') AS content, COALESCE(tags, '') AS tags, updated_at"
+        f" FROM biz_knowledge_article WHERE {where}"
+        f" ORDER BY ({' + '.join(score_parts)}) DESC, updated_at DESC LIMIT ?"
+    )
+    items = [
+        {
+            "id": row["id"],
+            "projectId": row["project_id"],
+            "title": row["title"],
+            "no": str(row["category"] or ""),
+            "snippet": _snippet(
+                (("", row["summary"]), ("", row["content"]), ("标签：", row["tags"])),
+                terms,
+            ),
+            "updatedAt": row["updated_at"],
+        }
+        for row in _rows(conn, sql, params + score_params + [limit])
+    ]
+    return items, total
 
 
 def search_requirements(
@@ -238,6 +332,10 @@ def search_knowledge(
     where, match_params = _where(extra, ["title", "summary", "content", "tags"], tokens)
     params = extra_params + match_params
     total = _count(conn, "biz_knowledge_article", where, params)
+    if total == 0:
+        fallback = _search_knowledge_ngrams(conn, keyword, limit, extra, extra_params)
+        if fallback is not None:
+            return fallback
     order, order_params = _order_by(tokens)
     sql = (
         "SELECT id, project_id, title, category, COALESCE(summary, '') AS summary,"

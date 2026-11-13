@@ -101,6 +101,10 @@ SAMPLES: dict[str, dict[str, Any]] = {
         "intent": "给订单表造一批数据，覆盖三种订单状态和金额为 0 的边界值",
         "schemaDesc": "orders(id, user_id, amount, status, created_at)", "rowCount": "20",
     },
+    "exploratory-web": {
+        "projectName": "示例电商", "targetUrl": "http://127.0.0.1:8760/",
+        "maxSteps": "20", "maxSeconds": "180",
+    },
 }
 
 

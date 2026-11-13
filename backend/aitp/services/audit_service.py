@@ -66,6 +66,7 @@ RESOURCE_RELEASE_GATE = "release_gate"
 RESOURCE_TASK = "task"
 RESOURCE_CI_TOKEN = "ci_token"
 RESOURCE_NOTIFICATION = "notification_channel"
+RESOURCE_EXTERNAL_IMPORT = "external_import"
 
 _MAX_DETAIL_CHARS = 2000
 

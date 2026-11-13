@@ -57,6 +57,25 @@ def _project_name(conn: sqlite3.Connection, project_id: int) -> str:
     return str(row.get("name", "") or "") if row else ""
 
 
+def _public_tree(node: dict[str, Any]) -> dict[str, Any]:
+    public = _to_public(node)
+    public["children"] = [_public_tree(child) for child in node.get("children", [])]
+    return public
+
+
+#: 层级角色按深度顺推：模块 → 子模块 → 功能（功能为叶子）
+_NEXT_NODE_TYPE = {"module": "submodule", "submodule": "feature", "feature": "feature"}
+
+
+def _default_node_type(repo: ModuleRepository, parent_id: int | None) -> str:
+    if parent_id is None:
+        return "module"
+    parent = repo.get_node(parent_id)
+    if not parent:
+        return "module"
+    return _NEXT_NODE_TYPE.get(str(parent.get("node_type") or "module"), "module")
+
+
 @bp.get("/tree")
 def module_tree() -> Response:
     conn = db()
@@ -64,7 +83,7 @@ def module_tree() -> Response:
     if not ProjectRepository(conn).get(project_id):
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "项目不存在")
     tree = ModuleRepository(conn).tree(project_id, _project_name(conn, project_id))
-    return ok({"projectId": project_id, "tree": [_to_public(node) for node in tree]})
+    return ok({"projectId": project_id, "tree": [_public_tree(node) for node in tree]})
 
 
 @bp.get("/options")
@@ -108,7 +127,6 @@ def create_module() -> Response:
     data = body()
     project_id = require_int(data.get("projectId"), "projectId")
     name = require_str(data.get("name"), "name", 200)
-    node_type = check_choice(data.get("nodeType"), NODE_TYPES, "nodeType", "module") or "module"
     parent_id = data.get("parentId")
     if parent_id in (None, ""):
         parent_id = None
@@ -117,6 +135,11 @@ def create_module() -> Response:
     require_project(conn, project_id)
 
     repo = ModuleRepository(conn)
+    if data.get("nodeType") in (None, ""):
+        # 未显式选层级时按父级顺推，避免整棵树都落「模块」
+        node_type = _default_node_type(repo, parent_id)
+    else:
+        node_type = check_choice(data.get("nodeType"), NODE_TYPES, "nodeType", "module") or "module"
     new_id = repo.create_node(
         project_id,
         name,

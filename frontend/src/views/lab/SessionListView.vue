@@ -7,6 +7,8 @@
       </div>
     </div>
 
+    <RouteSubNav :items="recordTabs" />
+
     <div class="panel panel-pad">
       <BaseProTable
         ref="tableRef"
@@ -32,11 +34,16 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { MagicStick } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
+import RouteSubNav from '@/components/RouteSubNav.vue'
 import { labApi } from '@/api'
 import type { AiSession } from '@/api/types'
 import { useLabStore } from '@/stores/lab'
 
 const router = useRouter()
+const recordTabs = [
+  { path: '/lab/sessions', label: '会话记录' },
+  { path: '/lab/records', label: '执行记录' },
+]
 const tableRef = ref<TableExpose | null>(null)
 const labStore = useLabStore()
 

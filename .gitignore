@@ -34,3 +34,8 @@ playwright-mcp/
 .vscode/
 *.swp
 .DS_Store
+
+# E2E 产物（Playwright）
+frontend/test-results/
+frontend/e2e/results.json
+frontend/e2e/.state.json

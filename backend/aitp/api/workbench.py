@@ -24,6 +24,7 @@ from ..repositories.report_repo import ReportRepository
 from ..repositories.requirement_repo import RequirementRepository
 from ..repositories.test_case_repo import TestCaseRepository
 from ..repositories.workbench_entry_repo import (
+    ENTRY_PUBLISHED,
     WorkbenchEntryRepository,
     entry_summary,
 )
@@ -369,13 +370,15 @@ def publish_entry(pk: str) -> Response:
 
 @bp.delete("/entries/<pk>")
 def delete_entry(pk: str) -> Response:
-    """删除编排入口：已发布的入口也能删，删除后不能直接跑。"""
+    """删除编排入口：已发布为终态不可删，草稿/归档可删，删除后不能直接跑。"""
     conn = db()
     target = path_int(pk)
     repo = WorkbenchEntryRepository(conn)
     row = repo.get(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "入口不存在")
+    if row.get("status") == ENTRY_PUBLISHED:
+        raise AppError(ErrorCode.ILLEGAL_OPERATION, "已发布的编排为终态，不能删除")
     repo.delete(target)
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_WORKBENCH_ENTRY,

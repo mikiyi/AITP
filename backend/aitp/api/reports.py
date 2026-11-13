@@ -19,7 +19,8 @@ from ..repositories.project_repo import ProjectRepository
 from ..repositories.report_repo import ReportRepository
 from ..repositories.test_run_repo import RESULT_LABELS, RUN_FAILED
 from ..services import nav_badge_service
-from ..services import audit_service, execution_protocol, report_exporter, report_trends
+from ..services import (audit_service, execution_protocol, report_exporter,
+                        report_fragment_service, report_trends)
 from .helpers import (attach_version_codes, audit, body, check_ref_project, commit, db,
                      guard_project_scope, keyword_of, page_args, page_payload, path_int, query_filters,
                      reject_project_move, require_project, scope_arg)
@@ -479,6 +480,7 @@ def get_report(pk: str) -> Response:
     payload = _to_public(row)
     payload["items"] = repo.list_items(path_int(pk))
     payload["knowledgeRefs"] = _knowledge_refs(conn, path_int(pk))
+    payload["fragments"] = report_fragment_service.used_by_report(conn, path_int(pk))
     failure = _failure_samples(conn, row)
     payload["failureTotal"] = failure["total"]
     payload["failureSamples"] = failure["list"]
@@ -561,16 +563,18 @@ def preview_report(pk: str) -> Response:
     guard_project_scope(row, scope_arg(), "报告")
     fmt = check_choice(request.args.get("format"), ("md", "html"), "format", "md") or "md"
     items = list(row.get("items") or [])
+    fragments = report_fragment_service.used_by_report(conn, target)
     failure = _failure_samples(conn, row, _run_case_ids_of(request.args.get("runCaseIds")))
     samples = failure["list"]
     rendered = (
-        report_exporter.render_markdown(row, items, samples) if fmt == "md"
-        else report_exporter.render_html(row, items, samples=samples)
+        report_exporter.render_markdown(row, items, samples, fragments=fragments) if fmt == "md"
+        else report_exporter.render_html(row, items, samples=samples, fragments=fragments)
     )
     return ok({
         "reportId": target,
         "format": fmt,
         "content": rendered,
+        "fragments": fragments,
         "failureTotal": failure["total"],
         "selected": failure["selected"],
         "failureSamples": samples,
@@ -631,7 +635,14 @@ def update_report(pk: str) -> Response:
     if "reportType" in data:
         payload["report_type"] = check_choice(data["reportType"], REPORT_TYPE, "reportType", row["report_type"])
     if "status" in data:
-        payload["status"] = check_choice(data["status"], REPORT_STATUS, "status", row["status"])
+        next_status = check_choice(data["status"], REPORT_STATUS, "status", row["status"])
+        current = row["status"]
+        # 终态锁：已归档不可再变更；已发布只能归档、不能退回草稿，
+        # 堵住「发布→归档→退回草稿」绕过发布冻结的通道
+        allowed_transitions = {"draft": {"published", "archived"}, "published": {"archived"}, "archived": set()}
+        if next_status != current and next_status not in allowed_transitions.get(current, set()):
+            raise AppError(ErrorCode.ILLEGAL_OPERATION, f"报告「{current}」状态不能变更为「{next_status}」")
+        payload["status"] = next_status
     if "versionId" in data:
         payload["version_id"] = check_ref_project(
             conn, "biz_project_version", data["versionId"],
@@ -658,6 +669,7 @@ def delete_report(pk: str) -> Response:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "报告不存在")
     repo.soft_delete(target)
     KnowledgeRefRepository(conn).remove_refs_by_target("report", target)
+    report_fragment_service.cleanup_report(conn, target)
     _save_selection(conn, target, [])
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_REPORT, target,
@@ -718,6 +730,130 @@ def list_templates() -> Response:
     return ok(result)
 
 
+# ---------------- 报告片段跨项目复用（GAP-42） ----------------
+
+@bp.get("/fragments")
+def list_fragments() -> Response:
+    conn = db()
+    scope = str(request.args.get("scope") or "available").strip()
+    if scope not in ("available", "mine", "global"):
+        raise AppError(ErrorCode.PARAM_ERROR, "scope 只能是 available / mine / global")
+    if scope == "global" and not request.args.get("projectId"):
+        return ok(report_fragment_service.list_global(
+            conn, str(request.args.get("keyword") or "").strip()
+        ))
+    project_id = require_int(request.args.get("projectId"), "projectId")
+    require_project(conn, project_id)
+    keyword = str(request.args.get("keyword") or "").strip()
+    if scope == "mine":
+        rows = report_fragment_service.list_mine(conn, project_id, keyword)
+    elif scope == "global":
+        rows = report_fragment_service.list_global(conn, keyword)
+    else:
+        rows = report_fragment_service.list_available(conn, project_id, keyword)
+    return ok(rows)
+
+
+@bp.post("/fragments")
+def create_fragment() -> Response:
+    conn = db()
+    data = body()
+    project_id = require_project(conn, require_int(data.get("projectId"), "projectId"))
+    section = check_choice(data.get("section"), REPORT_SECTION, "section", "overview") or "overview"
+    row = report_fragment_service.create_fragment(
+        conn,
+        project_id=project_id,
+        title=require_str(data.get("title"), "title", 300),
+        content=require_str(data.get("content"), "content", 200000),
+        section=section,
+        source_report_id=optional_int(data.get("sourceReportId"), "sourceReportId"),
+        source_note=optional_str(data.get("sourceNote"), "sourceNote", 2000) or "",
+        created_by=optional_str(data.get("createdBy"), "createdBy", 64) or "",
+        is_global=bool(data.get("isGlobal")),
+    )
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_CREATE, audit_service.RESOURCE_REPORT, row["id"],
+          row["title"], {"kind": "fragment_create", "projectId": project_id})
+    return ok(row)
+
+
+@bp.put("/fragments/<int:fragment_id>")
+def update_fragment(fragment_id: int) -> Response:
+    conn = db()
+    data = body()
+    section = None
+    if "section" in data:
+        section = check_choice(data.get("section"), REPORT_SECTION, "section", "overview") or "overview"
+    row = report_fragment_service.update_fragment(
+        conn,
+        fragment_id,
+        title=require_str(data["title"], "title", 300) if "title" in data else None,
+        content=require_str(data["content"], "content", 200000) if "content" in data else None,
+        section=section,
+        source_note=optional_str(data["sourceNote"], "sourceNote", 2000)
+        if "sourceNote" in data else None,
+    )
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_REPORT, fragment_id,
+          row["title"], {"kind": "fragment_update"})
+    return ok(row)
+
+
+@bp.delete("/fragments/<int:fragment_id>")
+def delete_fragment(fragment_id: int) -> Response:
+    conn = db()
+    report_fragment_service.delete_fragment(conn, fragment_id)
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_REPORT, fragment_id,
+          "", {"kind": "fragment_delete"})
+    return ok({"id": fragment_id, "deleted": True})
+
+
+@bp.post("/fragments/<int:fragment_id>/promote")
+def promote_fragment(fragment_id: int) -> Response:
+    conn = db()
+    row = report_fragment_service.promote_fragment(conn, fragment_id)
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_REPORT, fragment_id,
+          row["title"], {"kind": "fragment_promote_global"})
+    return ok(row)
+
+
+@bp.get("/<pk>/fragments")
+def list_report_fragments(pk: str) -> Response:
+    conn = db()
+    target = path_int(pk)
+    if not ReportRepository(conn).get(target):
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "报告不存在")
+    return ok(report_fragment_service.used_by_report(conn, target))
+
+
+@bp.post("/<pk>/fragments")
+def insert_report_fragment(pk: str) -> Response:
+    conn = db()
+    data = body()
+    target = path_int(pk)
+    fragment_id = require_int(data.get("fragmentId"), "fragmentId")
+    result = report_fragment_service.insert_into_report(
+        conn, target, fragment_id, optional_str(data.get("operator"), "operator", 64) or ""
+    )
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_REPORT, target, "",
+          {"kind": "fragment_insert", "fragmentId": fragment_id})
+    return ok(result)
+
+
+@bp.delete("/<pk>/fragments/<int:fragment_id>")
+def remove_report_fragment(pk: str, fragment_id: int) -> Response:
+    conn = db()
+    target = path_int(pk)
+    result = report_fragment_service.remove_from_report(conn, target, fragment_id)
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_REPORT, target, "",
+          {"kind": "fragment_remove", "fragmentId": fragment_id})
+    return ok(result)
+
+
 @bp.get("/<pk>/export")
 def export_report(pk: str) -> Response:
     """导出报告：md / html / pdf / print，三种格式都带上所选失败样本的执行证据摘要。"""
@@ -731,25 +867,30 @@ def export_report(pk: str) -> Response:
         raise AppError(ErrorCode.PARAM_ERROR, "format 只能是 md / html / pdf / print")
 
     items = list(row.get("items") or [])
+    fragments = report_fragment_service.used_by_report(conn, target)
     title = str(row.get("title") or "测试报告")
     # 导出永远带证据维度：没有失败样本时是空态章节，而不是「没有这一章」
     samples = _failure_samples(conn, row, _run_case_ids_of(request.args.get("runCaseIds")))["list"]
     degraded = False
     if fmt == "md":
-        payload = report_exporter.render_markdown(row, items, samples).encode("utf-8")
+        payload = report_exporter.render_markdown(
+            row, items, samples, fragments=fragments
+        ).encode("utf-8")
         mimetype = "text/markdown"
         extension = "md"
     elif fmt == "html":
-        payload = report_exporter.render_html(row, items, samples=samples).encode("utf-8")
+        payload = report_exporter.render_html(
+            row, items, samples=samples, fragments=fragments
+        ).encode("utf-8")
         mimetype = "text/html"
         extension = "html"
     elif fmt == "pdf":
-        payload, degraded = report_exporter.render_pdf(row, items, samples)
+        payload, degraded = report_exporter.render_pdf(row, items, samples, fragments=fragments)
         mimetype = "application/pdf"
         extension = "pdf"
     else:
         payload = report_exporter.render_html(
-            row, items, print_view=True, samples=samples
+            row, items, print_view=True, samples=samples, fragments=fragments
         ).encode("utf-8")
         mimetype = "text/html"
         extension = "html"

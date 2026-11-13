@@ -283,6 +283,8 @@ export interface KnowledgeDraft {
   reviewRequired: boolean
   refs: AssistantRef[]
   articleId: Id | null
+  /** 探索性产物审核通过后转出的缺陷 id。 */
+  bugId?: Id | null
   /** 仅「加入知识库」返回值：同一问同答同时间只入池一次。 */
   duplicated?: boolean
   createdAt?: string
@@ -305,6 +307,17 @@ export interface KnowledgeArticle {
   summary: string
   category: string
   tags: string
+  projectId?: Id | null
+  /** 全局知识（projectId 为空）的来源项目；仅提升过的条目有值。 */
+  sourceProjectId?: Id | null
+  sourceProjectName?: string
+  /** 只读「复用项目」列：被哪些项目引用（ref_type='project'），列表接口批量附带。 */
+  referencedProjects?: Array<{ projectId: number; projectName: string }>
+  promotedAt?: string | null
+  promotedBy?: string
+  isGlobal?: boolean
+  /** 当前条目被哪些项目引用（refType='project'）。 */
+  projectRefs?: KnowledgeRef[]
   moduleId: Id | null
   sourceType: string
   sourceTypeLabel: string
@@ -373,6 +386,24 @@ export interface ReportItem {
   sortOrder: number
 }
 
+/** 报告片段：来源项目维护一份，引用报告只登记使用关系。 */
+export interface ReportFragment {
+  id: Id
+  projectId: Id
+  sourceProjectName: string
+  title: string
+  section: string
+  content: string
+  sourceReportId: Id | null
+  sourceReportTitle?: string
+  sourceNote: string
+  isGlobal: boolean
+  createdBy: string
+  useCount: number
+  createdAt?: string
+  updatedAt?: string
+}
+
 export interface Report {
   id: Id
   projectId: Id
@@ -390,6 +421,8 @@ export interface Report {
   content: string
   creator: string
   aiTaskId: Id | null
+  /** 报告详情带出的复用片段（只带引用关系，正文来自源片段）。 */
+  fragments?: ReportFragment[]
   createdAt?: string
   updatedAt?: string
 }
@@ -1839,6 +1872,152 @@ export interface TestDataBatch {
 
 export type TestDataBatchPage = PagePayload<TestDataBatch>
 
+/** 测试数据脱敏规则（GAP-39）：字段级，按列名配置。 */
+export interface TestDataMaskRule {
+  type: 'mask' | 'hash' | 'random' | 'enum' | 'redact'
+  keepPrefix?: number
+  keepSuffix?: number
+  char?: string
+  length?: number
+  salt?: string
+  charset?: 'digits' | 'alnum'
+  prefix?: string
+  values?: string[]
+  replacement?: string
+}
+
+/** 可复用的脱敏方案；projectId 为空表示全局方案。 */
+export interface TestDataMaskScheme {
+  id: Id
+  projectId: Id | null
+  name: string
+  description: string
+  rules: Record<string, TestDataMaskRule>
+  version: number
+  isDefault: boolean
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface TestDataSampleDetection {
+  types: string[]
+  hits: number
+}
+
+/** 样本池里的一个样本：库里只有列结构与脱敏副本，没有原始样本。 */
+export interface TestDataSample {
+  id: Id
+  projectId: Id
+  name: string
+  sourceFormat: string
+  originalFilename: string
+  rowCount: number
+  columnCount: number
+  columns: string[]
+  detection: Record<string, TestDataSampleDetection>
+  rules: Record<string, TestDataMaskRule>
+  schemeId: Id | null
+  schemeVersion: number
+  retentionDays: number
+  expiresAt: string
+  status: string
+  createdAt?: string
+  updatedAt?: string
+  /** 导入时各列实际替换的单元格数 */
+  maskedCounts?: Record<string, number>
+}
+
+/** 项目级资产包（GAP-41）导出清单与导入结果。 */
+export interface ProjectPackageManifest {
+  format: string
+  version: number
+  project: { code: string; name: string; description?: string }
+  scope: { history: boolean; evidence: boolean; attachments: boolean }
+  counts: Record<string, number>
+}
+
+export interface ProjectPackagePreview {
+  manifest: ProjectPackageManifest
+  counts: Record<string, number>
+  conflict: boolean
+  existingProject: { id: Id; name: string } | null
+}
+
+export interface ProjectPackageImportResult {
+  projectId: Id
+  code: string
+  counts: Record<string, number>
+}
+
+/** 外部平台只读导入（GAP-40）。 */
+export interface ExternalImportPlatform {
+  key: string
+  label: string
+  kinds: string[]
+  kindsLabel: Array<{ key: string; label: string }>
+  defaultMapping: Record<string, Record<string, string>>
+}
+
+export interface ExternalImportCatalog {
+  platforms: ExternalImportPlatform[]
+  kinds: ExternalImportPlatform[]
+  defaultMapping: Record<string, Record<string, string>>
+}
+
+export interface ExternalImportConfig {
+  id: Id
+  projectId: Id
+  platform: string
+  baseUrl: string
+  username: string
+  productId: string
+  serverUsername: string
+  extra: Record<string, unknown>
+  hasPassword: boolean
+  passwordMasked: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ExternalImportMapping {
+  id: Id
+  projectId: Id
+  platform: string
+  name: string
+  mapping: Record<string, Record<string, string>>
+  isDefault: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ExternalImportPreview {
+  counts: Record<string, number>
+  samples: Record<string, string[]>
+  errors: string[]
+}
+
+export interface ExternalImportResult {
+  batchId: Id
+  status: string
+  fetched: Record<string, number>
+  imported: Record<string, number>
+  skipped: Record<string, number>
+  errors: Record<string, string[]>
+}
+
+export interface ExternalImportBatch {
+  id: Id
+  projectId: Id
+  platform: string
+  kinds: string
+  status: string
+  fetched: Record<string, number>
+  imported: Record<string, number>
+  skipped: Record<string, number>
+  errors: Record<string, string[]>
+  createdAt: string
+}
+
 /** 后台任务队列中的一条任务。 */
 export interface QueueTask {
   id: Id
@@ -1992,6 +2171,13 @@ export interface TestRun {
   notExecuted: number
   startedAt: string | null
   finishedAt: string | null
+  /** 轮次类型 smoke/full/special/regression */
+  roundType?: string
+  goal?: string
+  plannedStart?: string
+  plannedEnd?: string
+  scopePreset?: string
+  seq?: number
   stats?: {
     total: number
     counts: Record<string, number>
@@ -2001,6 +2187,36 @@ export interface TestRun {
   cases?: TestRunCase[]
   createdAt?: string
   updatedAt?: string
+}
+
+/** 轮次类型 / 范围预设 / 轮次模板元数据（GET /test-runs/round-meta）。 */
+export interface RoundTypeMeta {
+  value: string
+  label: string
+  goal: string
+  preset: string
+}
+export interface RoundPresetMeta {
+  value: string
+  label: string
+  desc: string
+}
+export interface RoundTemplateMeta {
+  value: string
+  label: string
+  rounds: number
+}
+export interface RoundMeta {
+  types: RoundTypeMeta[]
+  presets: RoundPresetMeta[]
+  templates: RoundTemplateMeta[]
+}
+/** 范围预设预圈结果（POST /test-plans/{id}/rounds/preview-scope）。 */
+export interface RoundScopePreview {
+  preset: string
+  count: number
+  caseIds: number[]
+  cases: Array<{ id: number; caseNo: string; title: string; priority: string; caseType: string; status: string }>
 }
 
 /** 追溯矩阵的一行：需求维度的覆盖与执行情况。 */
@@ -2404,4 +2620,253 @@ export interface OnboardingState {
   reopenedAt: string
   /** 前端只看这个字段决定要不要弹引导。 */
   showGuide: boolean
+}
+
+/** GAP-43 执行矩阵：环境 × 端/浏览器，一次调度逐格真实执行。 */
+export interface ExecutionMatrix {
+  id: number
+  projectId: number
+  matrixNo: string
+  name: string
+  mode: string
+  modeLabel: string
+  runId: number | null
+  runName: string
+  envIds: number[]
+  scriptIds: number[]
+  targetMode: string
+  targets: Array<{ target: string; label: string }>
+  status: string
+  statusLabel: string
+  cellTotal: number
+  cellDone: number
+  summary: Record<string, unknown>
+  prodConfirmedBy: string
+  prodConfirmedAt: string | null
+  errorMessage: string
+  createdAt: string
+  updatedAt: string
+}
+
+/** 矩阵的一格：一条环境 × 端/浏览器组合。 */
+export interface MatrixCell {
+  id: number
+  envId: number | null
+  envName: string
+  envKind: string
+  target: string
+  targetLabel: string
+  browser: string
+  status: string
+  statusLabel: string
+  total: number
+  passed: number
+  failed: number
+  errorMessage: string
+  startedAt: string | null
+  finishedAt: string | null
+}
+
+export interface MatrixDetail {
+  matrix: ExecutionMatrix
+  cells: MatrixCell[]
+}
+
+/** 一格内一条用例的结论与断言明细。 */
+export interface MatrixCellResult {
+  result: string
+  statusCode: number | null
+  durationMs: number | null
+  message: string
+  assertions: InterfaceAssertion[]
+}
+
+/** 同用例跨格对比行：结论矩阵 + 差异归因 + 断言差异。 */
+export interface MatrixCompareRow {
+  caseId: number | null
+  caseNo: string
+  title: string
+  runCaseId: number | null
+  classification: string
+  classificationLabel: string
+  cells: Record<string, MatrixCellResult>
+  assertionDiffs: Array<{
+    name: string
+    cells: Record<string, { passed: boolean; expected: string; actual: string; message: string }>
+  }>
+  bugId: number | null
+}
+
+export interface MatrixCompare {
+  matrix: ExecutionMatrix
+  cells: MatrixCell[]
+  rows: MatrixCompareRow[]
+  stats: {
+    commonPass: number
+    commonFailure: number
+    environmentSpecific: number
+    targetSpecific: number
+    mixed: number
+  }
+}
+
+/** 普遍失败一键转缺陷的结果。 */
+export interface MatrixBugResult {
+  created: Array<{ caseNo: string; title: string; bugId: number; evidenceIds: number[] }>
+  skipped: string[]
+  total: number
+}
+
+/** GAP-44 数据留存：单类型保留天数与到期动作。 */
+export interface RetentionItem {
+  dataType: string
+  dataTypeLabel: string
+  days: number
+  action: string
+  actionLabel: string
+  actions: Array<{ value: string; label: string }>
+  dueCount?: number
+  protected?: Array<{ id: number; title: string; referencedBy: string }>
+}
+
+export interface RetentionSettings {
+  items: RetentionItem[]
+  autoCleanup: boolean
+  lastRunAt: string
+}
+
+/** 归档包裹：一次清理动作的 zip。 */
+export interface ArchiveBundle {
+  id: number
+  bundleNo: string
+  dataType: string
+  action: string
+  itemCount: number
+  periodFrom: string
+  periodTo: string
+  filePath: string
+  fileSize: number
+  createdBy: string
+  createdAt: string
+}
+
+export interface ArchiveItem {
+  id: number
+  bundleId: number
+  dataType: string
+  refId: number
+  title: string
+  happenedAt: string
+  summary: string
+}
+
+export interface ArchiveBundleDetail {
+  bundle: ArchiveBundle
+  items: ArchiveItem[]
+}
+
+export interface RetentionCleanupResult {
+  queued?: boolean
+  task?: unknown
+  dryRun?: boolean
+  totalCleaned?: number
+  totalProtected?: number
+  types?: Array<{
+    dataType: string
+    dataTypeLabel: string
+    due: number
+    archived: number
+    cleaned: number
+    skipped: number
+    action: string
+    protected?: Array<{ id: number; title: string; referencedBy: string }>
+  }>
+}
+
+/** GAP-45 Web 探索性测试配置。 */
+export interface ExploratorySettings {
+  maxSteps: number
+  maxSeconds: number
+  perStepTimeout: number
+  perStepScreenshots: number
+  recordSelectors: boolean
+  inputMasking: boolean
+  screenshotDir: string
+  logSliceDir: string
+  logSources: Array<{ name: string; path: string; source: string }>
+  logWindowSeconds: number
+  mcpCommand: string
+  pinnedTools: string[]
+}
+
+export interface ExploratoryOption {
+  value: string
+  label: string
+}
+
+export interface ExploratoryMeta {
+  drivers: ExploratoryOption[]
+  statuses: ExploratoryOption[]
+  anomalyTypes: ExploratoryOption[]
+  pinnedTools: string[]
+  defaults: ExploratorySettings
+}
+
+export interface ExplorationPlanStep {
+  action: string
+  selector?: string
+  url?: string
+  value?: string
+}
+
+export interface ExplorationSession {
+  id: Id
+  sessionNo: string
+  projectId: Id
+  name: string
+  targetUrl: string
+  driver: string
+  status: string
+  taskId: Id | null
+  maxSteps: number
+  maxSeconds: number
+  stepTotal: number
+  stepDone: number
+  anomalyCount: number
+  draftCount: number
+  degraded: boolean
+  summary: Record<string, unknown>
+  errorMessage: string
+  startedAt: string | null
+  finishedAt: string | null
+  createdBy: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface ExplorationStep {
+  id: Id
+  sessionId: Id
+  stepNo: number
+  action: string
+  selector: string
+  pageUrl: string
+  inputMasked: string
+  snapshotSummary: string
+  observation: string
+  isAnomaly: boolean
+  anomalyType: string
+  detectedAt: string
+  lastOkAt: string
+  evidenceId: Id | null
+  draftId: Id | null
+  traceId: string
+  durationMs: number
+  detail: Record<string, unknown>
+  createdAt?: string
+}
+
+export interface ExplorationSessionDetail {
+  session: ExplorationSession
+  steps: ExplorationStep[]
 }

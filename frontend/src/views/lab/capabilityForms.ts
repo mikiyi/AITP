@@ -224,12 +224,42 @@ export const CAPABILITY_FORMS: Record<string, CapabilityField[]> = {
     { name: 'rowCount', label: '期望条数', type: 'number', defaultValue: '20' },
     { name: 'projectName', label: '项目名称', type: 'text' },
   ],
+  exploratory_web: [
+    { name: 'projectName', label: '项目名称', type: 'text' },
+    { name: 'targetUrl', label: '目标地址', type: 'text', placeholder: '例如：http://127.0.0.1:8760/' },
+    { name: 'maxSteps', label: '最大步数', type: 'number', defaultValue: '20' },
+    { name: 'maxSeconds', label: '最大时长（秒）', type: 'number', defaultValue: '180' },
+  ],
+}
+
+/**
+ * 跨能力通用变量的中文兜底标签：上下文装配等变量不在单个能力的表单里定义，
+ * 但会出现在顺序执行的步骤表单中，不能露出英文变量名。
+ */
+const VARIABLE_LABEL_FALLBACK: Record<string, string> = {
+  projectName: '项目名称',
+  requirement: '需求原文',
+  caseTypes: '用例类型',
+  count: '生成条数',
+  outputTemplate: '输出模板',
+  contextModules: '上下文模块',
+  contextCases: '上下文用例',
+  contextBugs: '上下文缺陷',
+  contextKnowledge: '上下文知识',
+  moduleCount: '建议模块数',
+  moduleId: '功能点',
+  targetUrl: '目标地址',
+  maxSteps: '最大步数',
+  maxSeconds: '最大时长（秒）',
 }
 
 /** 取某个能力下变量对应的中文标签，用于卡片上展示输入项。 */
 export function variableLabel(capability: string, variable: string): string {
   const field = (CAPABILITY_FORMS[capability] ?? []).find((item) => item.name === variable)
-  return field ? field.label : variable
+  if (field) {
+    return field.label
+  }
+  return VARIABLE_LABEL_FALLBACK[variable] ?? variable
 }
 
 /** 取能力的主输入变量名；没有标注时退回第一个 textarea。 */

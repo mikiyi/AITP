@@ -205,6 +205,8 @@ def check_from_output(api: Api) -> None:
     check("从产出提取 xml 代码块", "<jmeterTestPlan" in str(created.get("content") or ""),
           str(created)[:300])
     check("从产出入库标记来源为 ai", created.get("source") == "ai", str(created)[:200])
+    check("性能产出入库默认 JMeter 框架", created.get("framework") == "jmeter",
+          str(created)[:200])
 
     py_output = "说明文字\n\n```python\nprint('from-ai')\n```\n"
     created = api.data("POST", "/api/v1/automation/scripts/from-output", {
@@ -212,6 +214,15 @@ def check_from_output(api: Api) -> None:
     })
     check("从产出提取 python 代码块", "from-ai" in str(created.get("content") or ""),
           str(created)[:300])
+    check("Web 产出入库默认 Selenium 框架", created.get("framework") == "selenium",
+          str(created)[:200])
+
+    created = api.data("POST", "/api/v1/automation/scripts/from-output", {
+        "output": py_output, "name": "一键入库鸿蒙", "category": "app",
+        "appPlatforms": "hos",
+    })
+    check("鸿蒙产出入库默认 Hypium 框架", created.get("framework") == "hypium",
+          str(created)[:200])
 
 
 def check_runtime(api: Api) -> None:
@@ -286,6 +297,44 @@ def check_runs_list(api: Api) -> None:
           all(item["category"] == "web" for item in by_category["list"]), str(by_category)[:200])
 
 
+def check_run_report(api: Api, workdir: pathlib.Path) -> None:
+    """执行报告导出：Markdown 下载、概要/输出齐全，性能附 JTL 摘要。"""
+    created = api.data("POST", "/api/v1/automation/scripts", {
+        "name": "报告用例", "category": "api", "framework": "unittest", "content": PY_OK,
+    })
+    result = api.data("POST", f"/api/v1/automation/scripts/{created['id']}/run", {})
+    run_id = int(result["id"])
+    run_no = str(result["runNo"])
+
+    resp, _ = api.call("GET", f"/api/v1/automation/runs/{run_id}/report")
+    check("报告按 Markdown 附件下载",
+          "text/markdown" in str(resp.headers.get("Content-Type"))
+          and ".md" in str(resp.headers.get("Content-Disposition")),
+          str(resp.headers)[:200])
+    text = resp.get_data(as_text=True)
+    check("报告带执行概要", "# 自动化执行报告" in text and run_no in text, text[:200])
+    check("报告带框架与标准输出", "Unittest" in text and "hello-automation" in text,
+          text[:400])
+
+    jtl = workdir / "automation" / "runs" / run_no / "result.jtl"
+    jtl.parent.mkdir(parents=True, exist_ok=True)
+    jtl.write_text(
+        "timeStamp,elapsed,label,success\n"
+        "1700000000000,100,GET /a,true\n"
+        "1700000001000,200,GET /a,false\n"
+        "1700000002000,300,GET /a,true\n",
+        encoding="utf-8",
+    )
+    resp, _ = api.call("GET", f"/api/v1/automation/runs/{run_id}/report")
+    text = resp.get_data(as_text=True)
+    check("报告解析 JTL 性能摘要",
+          "性能摘要" in text and "样本数：3" in text and "失败：1" in text, text[:600])
+
+    _, body = api.call("GET", "/api/v1/automation/runs/999999/report")
+    check("不存在的执行报告返回 404 语义",
+          body.get("code") == ErrorCode.RESOURCE_NOT_FOUND, str(body))
+
+
 def check_security(api: Api) -> None:
     """附加参数不得产生 shell 语义；脚本正文不得出现在命令行里。"""
     marker = "SECRET-MARKER-CONTENT"
@@ -318,6 +367,7 @@ def main() -> int:
         check_runtime(api)
         check_frameworks(api)
         check_runs_list(api)
+        check_run_report(api, workdir)
         check_security(api)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)

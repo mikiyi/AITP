@@ -15,15 +15,20 @@ def register_blueprints(app: Flask) -> None:
     from .cases import bp as cases_bp
     from .ci import bp as ci_bp
     from .doc_templates import bp as doc_templates_bp
+    from .execution_matrices import bp as execution_matrices_bp
+    from .exploratory import bp as exploratory_bp
+    from .external_imports import bp as external_imports_bp
     from .knowledge import bp as knowledge_bp
     from .lab import bp as lab_bp
     from .meta import bp as meta_bp
     from .modules import bp as modules_bp
     from .onboarding import bp as onboarding_bp
     from .projects import bp as projects_bp
+    from .project_packages import bp as project_packages_bp
     from .project_versions import bp as project_versions_bp
     from .relations import bp as relations_bp
     from .regressions import bp as regressions_bp
+    from .retention import bp as retention_bp
     from .release_gates import bp as release_gates_bp
     from .reports import bp as reports_bp
     from .requirements import bp as requirements_bp
@@ -50,15 +55,20 @@ def register_blueprints(app: Flask) -> None:
         (search_bp, "/api/v1/search"),
         (sql_analyses_bp, "/api/v1/sql-analyses"),
         (projects_bp, "/api/v1/projects"),
+        (project_packages_bp, "/api/v1/project-packages"),
         (project_versions_bp, "/api/v1/project-versions"),
         (requirements_bp, "/api/v1/requirements"),
         (modules_bp, "/api/v1/modules"),
         (cases_bp, "/api/v1/test-cases"),
         (doc_templates_bp, "/api/v1/doc-templates"),
+        (execution_matrices_bp, "/api/v1/execution-matrices"),
+        (exploratory_bp, "/api/v1/exploratory"),
+        (external_imports_bp, "/api/v1/external-imports"),
         (bugs_bp, "/api/v1/bugs"),
         (knowledge_bp, "/api/v1/knowledge"),
         (reports_bp, "/api/v1/reports"),
         (regressions_bp, "/api/v1/regressions"),
+        (retention_bp, "/api/v1/retention"),
         (test_plans_bp, "/api/v1/test-plans"),
         (test_runs_bp, "/api/v1/test-runs"),
         (ci_bp, "/api/v1/ci"),

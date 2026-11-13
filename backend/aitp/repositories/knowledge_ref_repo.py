@@ -6,7 +6,7 @@ from ..common.pagination import RowList
 from ..errors import AppError, ErrorCode
 from .base import BaseRepository
 
-REF_TYPES = ("report", "article", "task", "case", "bug", "module")
+REF_TYPES = ("report", "article", "task", "case", "bug", "module", "project")
 
 _LABEL_SOURCES = {
     "report": ("biz_report", "title"),
@@ -15,6 +15,7 @@ _LABEL_SOURCES = {
     "case": ("biz_test_case", "title"),
     "bug": ("biz_bug", "title"),
     "module": ("biz_module", "name"),
+    "project": ("biz_project", "name"),
 }
 
 

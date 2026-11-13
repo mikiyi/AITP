@@ -85,6 +85,7 @@ import type {
   ReleaseGate,
   ReleaseGateResult,
   Report,
+  ReportFragment,
   ReportFailureSamples,
   ReportItem,
   ReportStats,
@@ -105,6 +106,18 @@ import type {
   TestDataBatch,
   TestDataBatchPage,
   TestDataCatalog,
+  TestDataMaskScheme,
+  TestDataSample,
+  ProjectPackageImportResult,
+  ProjectPackagePreview,
+  ExternalImportBatch,
+  ExternalImportCatalog,
+  ExternalImportConfig,
+  ExternalImportMapping,
+  ExternalImportPreview,
+  ExternalImportResult,
+  RoundMeta,
+  RoundScopePreview,
   TestPlan,
   TestRun,
   TestRunCase,
@@ -121,6 +134,18 @@ import type {
   XmindParseResult,
   DemoInjectResult,
   OnboardingState,
+  ExecutionMatrix,
+  MatrixBugResult,
+  MatrixCompare,
+  MatrixDetail,
+  RetentionSettings,
+  RetentionCleanupResult,
+  ArchiveBundle,
+  ArchiveBundleDetail,
+  ExploratorySettings,
+  ExploratoryMeta,
+  ExplorationSession,
+  ExplorationSessionDetail,
 } from './types'
 
 /** 拼接下载类接口的查询串，跳过空值。 */
@@ -224,15 +249,24 @@ export const testPlanApi = {
   remove: (id: number) => del(`/test-plans/${id}`),
   createRun: (id: number, body: Record<string, unknown>) =>
     post<TestRun>(`/test-plans/${id}/runs`, body),
+  previewScope: (id: number, body: Record<string, unknown>) =>
+    post<RoundScopePreview>(`/test-plans/${id}/rounds/preview-scope`, body),
+  fromTemplate: (id: number, body: Record<string, unknown>) =>
+    post<{ runs: TestRun[] }>(`/test-plans/${id}/rounds/from-template`, body),
 }
 
 /** 测试轮次：一次具体执行，含用例快照与逐条结果。 */
 export const testRunApi = {
+  roundMeta: () => get<RoundMeta>('/test-runs/round-meta'),
   list: (query: Record<string, unknown> = {}) =>
     get<PagePayload<TestRun>>('/test-runs', query as never),
   get: (id: number) => get<TestRun>(`/test-runs/${id}`),
   create: (body: Record<string, unknown>) => post<TestRun>('/test-runs', body),
   update: (id: number, body: Record<string, unknown>) => put<TestRun>(`/test-runs/${id}`, body),
+  refreshScope: (id: number) =>
+    post<{ runId: number; preset: string; count: number; prevRunId: number | null }>(
+      `/test-runs/${id}/refresh-scope`,
+    ),
   remove: (id: number) => del(`/test-runs/${id}`),
   addCases: (id: number, body: Record<string, unknown>) =>
     post<{ added: number[]; count: number; skipped: number[] }>(`/test-runs/${id}/cases`, body),
@@ -277,6 +311,22 @@ export const testRunApi = {
     >(`/test-runs/${id}/automation-run`, body, runTimeout(body)),
   exportUrl: (id: number, query: Record<string, unknown>) =>
     exportUrl(`test-runs/${id}/export`, query),
+}
+
+/** GAP-43 执行矩阵：定义 → 一次调度 → 跨格对比归因 → 普遍失败转缺陷。 */
+export const executionMatrixApi = {
+  list: (query: Record<string, unknown>) =>
+    get<PagePayload<ExecutionMatrix>>('/execution-matrices', query as never),
+  create: (body: Record<string, unknown>) => post<MatrixDetail>('/execution-matrices', body),
+  get: (id: number) => get<MatrixDetail>(`/execution-matrices/${id}`),
+  remove: (id: number) => del(`/execution-matrices/${id}`),
+  run: (id: number, body: Record<string, unknown> = {}) =>
+    post<{ queued: boolean; task: QueueTask; prodEnvs: string[] }>(
+      `/execution-matrices/${id}/run`, body,
+    ),
+  compare: (id: number) => get<MatrixCompare>(`/execution-matrices/${id}/compare`),
+  createBugs: (id: number, body: Record<string, unknown> = {}) =>
+    post<MatrixBugResult>(`/execution-matrices/${id}/bugs`, body),
 }
 
 /** 需求追溯矩阵。 */
@@ -499,6 +549,20 @@ export const knowledgeApi = {
   reviewVersion: (id: number, version: number, action: 'approve' | 'reject', comment = '') =>
     post(`/knowledge/articles/${id}/versions/${version}/review`, { action, comment }),
   listRefs: (id: number) => get<KnowledgeRef[]>(`/knowledge/articles/${id}/refs`),
+  /** GAP-42：提升为全局知识，保留来源项目。 */
+  promoteArticle: (id: number, operator = '') =>
+    post(`/knowledge/articles/${id}/promote`, { operator }),
+  listProjectRefs: (id: number) =>
+    get<KnowledgeRef[]>(`/knowledge/articles/${id}/references`),
+  referenceProject: (id: number, projectId: number, operator = '') =>
+    post<{ articleId: number; refs: KnowledgeRef[] }>(
+      `/knowledge/articles/${id}/references`,
+      { projectId, operator },
+    ),
+  unreferenceProject: (id: number, projectId: number) =>
+    del<{ articleId: number; refs: KnowledgeRef[] }>(
+      `/knowledge/articles/${id}/references/${projectId}`,
+    ),
   search: (query: Record<string, unknown>) => get('/knowledge/search', query as never),
   tags: () => get<string[]>('/knowledge/tags'),
   storage: () => get<KnowledgeStorage>('/knowledge/storage'),
@@ -540,6 +604,23 @@ export const reportApi = {
     post<{ reportId: number; items: ReportItem[] }>(`/reports/${id}/trend-item`, body),
   generate: (body: Record<string, unknown>) => post<Report>('/reports/generate', body),
   adopt: (body: Record<string, unknown>) => post<Report>('/reports/adopt', body),
+  /** GAP-42：当前项目可插入的片段（本项目 + 全局）。 */
+  fragments: (projectId: number, scope: 'available' | 'mine' | 'global' = 'available', keyword = '') =>
+    get<ReportFragment[]>('/reports/fragments', { projectId, scope, keyword }),
+  createFragment: (body: Record<string, unknown>) =>
+    post<ReportFragment>('/reports/fragments', body),
+  updateFragment: (id: number, body: Record<string, unknown>) =>
+    put<ReportFragment>(`/reports/fragments/${id}`, body),
+  removeFragment: (id: number) => del(`/reports/fragments/${id}`),
+  promoteFragment: (id: number) => post<ReportFragment>(`/reports/fragments/${id}/promote`),
+  reportFragments: (id: number) => get<ReportFragment[]>(`/reports/${id}/fragments`),
+  insertFragment: (id: number, fragmentId: number, operator = '') =>
+    post<{ reportId: number; fragments: ReportFragment[] }>(`/reports/${id}/fragments`, {
+      fragmentId,
+      operator,
+    }),
+  removeReportFragment: (id: number, fragmentId: number) =>
+    del<{ reportId: number; fragments: ReportFragment[] }>(`/reports/${id}/fragments/${fragmentId}`),
   exportUrl: (id: number, format: 'md' | 'html' | 'pdf' | 'print') =>
     `/api/v1/reports/${id}/export?format=${format}`,
   /** PDF 走 fetch 而非直接打开：只有这样才能读到中文字体降级的响应头。 */
@@ -757,10 +838,114 @@ export const testDataApi = {
   removeBatch: (id: number) => del(`/test-data/batches/${id}`),
   fileUrl: (id: number) => `/api/v1/test-data/files/${id}/download`,
   archiveUrl: (id: number) => `/api/v1/test-data/batches/${id}/archive`,
+  maskSchemes: (projectId: number) =>
+    get<{ list: TestDataMaskScheme[] }>('/test-data/mask-schemes', { projectId }),
+  createMaskScheme: (body: Record<string, unknown>) =>
+    post<TestDataMaskScheme>('/test-data/mask-schemes', body),
+  updateMaskScheme: (id: number, body: Record<string, unknown>) =>
+    put<TestDataMaskScheme>(`/test-data/mask-schemes/${id}`, body),
+  removeMaskScheme: (id: number, projectId: number) =>
+    del(`/test-data/mask-schemes/${id}?projectId=${projectId}`),
+  samples: (projectId: number) =>
+    get<{ list: TestDataSample[] }>('/test-data/samples', { projectId }),
+  importSample: (form: FormData) =>
+    request<TestDataSample>('/test-data/samples', {
+      method: 'POST',
+      body: form,
+      timeoutMs: LONG_TIMEOUT_MS,
+    }),
+  sampleDownloadUrl: (id: number, projectId: number, format: 'json' | 'csv') =>
+    `/api/v1/test-data/samples/${id}/download?projectId=${projectId}&format=${format}`,
+  removeSample: (id: number, projectId: number) =>
+    del(`/test-data/samples/${id}?projectId=${projectId}`),
+  cleanupSamples: (projectId: number) =>
+    post<{ removed: Array<{ id: number; name: string }>; count: number }>(
+      '/test-data/samples/cleanup',
+      { projectId },
+    ),
 }
 
-/** 设置：AI 档案、系统配置、枚举。 */
-export const settingsApi = {
+/** 项目级资产包：结构包导出 / 预览 / 导入（GAP-41）。 */
+export const projectPackageApi = {
+  exportPackage: (projectId: number) =>
+    postBlob('/project-packages/export', { projectId }),
+  preview: (form: FormData) =>
+    request<ProjectPackagePreview>('/project-packages/preview', {
+      method: 'POST',
+      body: form,
+      timeoutMs: LONG_TIMEOUT_MS,
+    }),
+  importPackage: (form: FormData) =>
+    request<ProjectPackageImportResult>('/project-packages/import', {
+      method: 'POST',
+      body: form,
+      timeoutMs: LONG_TIMEOUT_MS,
+    }),
+}
+
+/** 外部平台只读导入：连接 / 映射 / 预览 / 导入 / 批次（GAP-40）。 */
+export const externalImportApi = {
+  catalog: () => get<ExternalImportCatalog>('/external-imports/platforms'),
+  config: (projectId: number, platform = 'zentao') =>
+    get<ExternalImportConfig | null>('/external-imports/config', { projectId, platform }),
+  saveConfig: (body: Record<string, unknown>) =>
+    post<ExternalImportConfig>('/external-imports/config', body),
+  removeConfig: (projectId: number, platform = 'zentao') =>
+    del(`/external-imports/config?projectId=${projectId}&platform=${platform}`),
+  mappings: (projectId: number, platform = 'zentao') =>
+    get<ExternalImportMapping[]>('/external-imports/mappings', { projectId, platform }),
+  createMapping: (body: Record<string, unknown>) =>
+    post<ExternalImportMapping>('/external-imports/mappings', body),
+  updateMapping: (id: number, body: Record<string, unknown>) =>
+    put<ExternalImportMapping>(`/external-imports/mappings/${id}`, body),
+  removeMapping: (id: number, projectId: number) =>
+    del(`/external-imports/mappings/${id}?projectId=${projectId}`),
+  preview: (body: Record<string, unknown>) =>
+    postLong<ExternalImportPreview>('/external-imports/preview', body),
+  runImport: (body: Record<string, unknown>) =>
+    postLong<ExternalImportResult>('/external-imports/import', body),
+  batches: (projectId: number) =>
+    get<ExternalImportBatch[]>('/external-imports/batches', { projectId }),
+  batch: (id: number, projectId: number) =>
+    get<ExternalImportBatch>(`/external-imports/batches/${id}`, { projectId }),
+}
+
+/** GAP-44 数据留存与归档：配置、清理、归档区检索与回看。 */
+export const retentionApi = {
+  settings: () => get<RetentionSettings>('/retention/settings'),
+  saveSettings: (body: Record<string, unknown>) =>
+    put<RetentionSettings>('/retention/settings', body),
+  preview: () => get<RetentionSettings>('/retention/preview'),
+  cleanup: (body: Record<string, unknown> = {}) =>
+    post<RetentionCleanupResult>('/retention/cleanup', body),
+  archives: (query: Record<string, unknown>) =>
+    get<{ total: number; list: ArchiveBundle[]; dataTypes?: { value: string; label: string }[] }>(
+      '/retention/archives', query as never,
+    ),
+  bundle: (id: number) => get<ArchiveBundleDetail>(`/retention/archives/${id}`),
+  original: (id: number, refId: number) =>
+    get<{ original: Record<string, unknown> }>(`/retention/archives/${id}/items/${refId}`),
+  removeBundle: (id: number) => del(`/retention/archives/${id}`),
+}
+
+/** GAP-45 Web 探索性测试。 */
+export const exploratoryApi = {
+  meta: () => get<ExploratoryMeta>('/exploratory/meta'),
+  settings: () => get<ExploratorySettings>('/exploratory/settings'),
+  saveSettings: (body: Record<string, unknown>) =>
+    put<ExploratorySettings>('/exploratory/settings', body),
+  sessions: (query: Record<string, unknown>) =>
+    get<PagePayload<ExplorationSession>>('/exploratory/sessions', query as never),
+  session: (id: number) => get<ExplorationSessionDetail>(`/exploratory/sessions/${id}`),
+  createSession: (body: Record<string, unknown>) =>
+    post<ExplorationSession>('/exploratory/sessions', body),
+  removeSession: (id: number) => del(`/exploratory/sessions/${id}`),
+  runSession: (id: number) => post<ExplorationSession>(`/exploratory/sessions/${id}/run`),
+  stepEvidence: (stepId: number) =>
+    get<ExecutionEvidence>(`/exploratory/steps/${stepId}/evidence`),
+}
+
+/** 设置：AI 档案、系统配置、枚举。 */export const settingsApi = {
   profiles: () => get<AiProfile[]>('/settings/ai/profiles'),
   profile: (id: number) => get<AiProfile>(`/settings/ai/profiles/${id}`),
   createProfile: (body: Record<string, unknown>) => post<AiProfile>('/settings/ai/profiles', body),

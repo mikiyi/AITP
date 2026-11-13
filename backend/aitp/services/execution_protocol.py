@@ -53,14 +53,16 @@ SOURCE_INTERFACE = "interface"
 SOURCE_AUTOMATION = "automation"
 SOURCE_MANUAL = "manual"
 SOURCE_REGRESSION = "regression"
+SOURCE_EXPLORATORY = "exploratory"
 
-SOURCE_TYPES = (SOURCE_INTERFACE, SOURCE_AUTOMATION, SOURCE_MANUAL, SOURCE_REGRESSION)
+SOURCE_TYPES = (SOURCE_INTERFACE, SOURCE_AUTOMATION, SOURCE_MANUAL, SOURCE_REGRESSION, SOURCE_EXPLORATORY)
 
 SOURCE_LABELS = {
     SOURCE_INTERFACE: "接口执行",
     SOURCE_AUTOMATION: "自动化执行",
     SOURCE_MANUAL: "手工执行",
     SOURCE_REGRESSION: "回归执行",
+    SOURCE_EXPLORATORY: "探索性测试",
 }
 
 RESULT_LABELS = {
@@ -835,11 +837,54 @@ def result_from_regression_item(
     )
 
 
+def result_from_exploration_step(
+    conn: sqlite3.Connection, step_id: int
+) -> ExecutionResult | None:
+    """探索性测试异常步的只读兜底：正常路径证据已由 capture 落快照。"""
+    row = conn.execute(
+        """
+        SELECT s.*, sess.project_id AS sess_project_id, sess.name AS sess_name,
+               sess.target_url AS sess_target_url
+        FROM biz_exploration_step s
+        JOIN biz_exploration_session sess ON sess.id = s.session_id
+        WHERE s.id = ?
+        """,
+        (int(step_id),),
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        detail = _dict_of(json.loads(str(row["detail_json"] or "{}")))
+    except (TypeError, ValueError):
+        detail = {}
+    attachments = detail.get("screenshots") or []
+    return ExecutionResult(
+        source_type=SOURCE_EXPLORATORY,
+        source_row_id=int(row["id"]),
+        project_id=_opt_int(row["sess_project_id"]),
+        title=f"{str(row['sess_name'] or '')} / 第{int(row['step_no'] or 0)}步".strip(" /"),
+        result="failed" if int(row["is_anomaly"] or 0) else "passed",
+        duration_ms=int(row["duration_ms"] or 0),
+        log_summary=summarize(str(row["observation"] or "")),
+        attachments=_list_of_dicts(attachments),
+        source_ref={
+            "table": "biz_exploration_step",
+            "id": int(row["id"]),
+            "sessionId": int(row["session_id"]),
+            "targetUrl": str(row["sess_target_url"] or ""),
+            "anomalyType": str(row["anomaly_type"] or ""),
+        },
+        trace_id=str(row["trace_id"] or ""),
+        executed_at=str(row["detected_at"] or row["created_at"] or ""),
+    )
+
+
 _ADAPTERS: dict[str, Callable[[sqlite3.Connection, int], ExecutionResult | None]] = {
     SOURCE_INTERFACE: result_from_interface_execution,
     SOURCE_AUTOMATION: result_from_automation_run,
     SOURCE_MANUAL: result_from_case_execution,
     SOURCE_REGRESSION: result_from_regression_item,
+    SOURCE_EXPLORATORY: result_from_exploration_step,
 }
 
 
@@ -1166,6 +1211,7 @@ REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     SOURCE_AUTOMATION: ("request_summary", "log_summary"),
     SOURCE_MANUAL: ("log_summary",),
     SOURCE_REGRESSION: ("assertions",),
+    SOURCE_EXPLORATORY: ("log_summary", "attachments"),
 }
 
 #: 「附件或摘要」二选一的来源：手工/回归都可能只留一份说明

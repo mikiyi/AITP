@@ -107,9 +107,16 @@
       </el-tab-pane>
 
       <el-tab-pane name="articles">
-        <template #label>正式库</template>
+        <template #label>正式库与复用</template>
 
         <div class="panel panel-pad">
+          <el-alert
+            type="info"
+            show-icon
+            :closable="false"
+            title="本项目知识与全局知识在同一张表：归属列标明「本项目 / 全局·来源」，复用列列出引用了它的项目。切到「全局」范围可发现其他项目共享的知识并引用到本项目；正文只保留一份，源改动同步到所有引用方。"
+            class="reuse-hint"
+          />
           <BaseProTable
             ref="articleTableRef"
             :columns="articleColumns"
@@ -121,7 +128,34 @@
             @loaded="onArticlesLoaded"
           >
             <template #toolbar>
+              <el-select v-model="articleScope" style="width: 170px" @change="reloadArticles">
+                <el-option label="本项目 + 已引用" value="available" />
+                <el-option label="仅本项目" value="project" />
+                <el-option label="全局（可复用）" value="global" />
+                <el-option label="全部" value="all" />
+              </el-select>
               <BaseExportMenu :resolve-url="resolveArticleExportUrl" />
+            </template>
+            <template #ownership="{ row }">
+              <div class="ownership">
+                <el-tag v-if="isGlobal(row)" size="small" type="warning" effect="plain">
+                  全局{{ row.sourceProjectName ? ` · 来自${row.sourceProjectName}` : '' }}
+                </el-tag>
+                <el-tag v-else size="small" type="success" effect="plain">本项目</el-tag>
+                <span v-if="isReferencedByCurrent(row)" class="ownership__self">已引用到本项目</span>
+              </div>
+              <div v-if="(row.referencedProjects || []).length" class="ownership__refs">
+                <span class="muted">复用：</span>
+                <el-tag
+                  v-for="ref in row.referencedProjects"
+                  :key="ref.projectId"
+                  size="small"
+                  effect="plain"
+                  class="ownership__ref"
+                >
+                  {{ ref.projectName || `项目#${ref.projectId}` }}
+                </el-tag>
+              </div>
             </template>
             <template #sourceType="{ row }">
               <el-tag
@@ -165,14 +199,40 @@
             <template #actions="{ row }">
               <el-button link type="primary" @click.stop="openArticle(row)">查看</el-button>
               <el-button
-                v-if="row.reviewStatus === 'published'"
+                v-if="canPromote(row)"
+                link
+                type="success"
+                @click.stop="promoteToGlobal(row)"
+              >
+                提升为全局
+              </el-button>
+              <el-button
+                v-if="canReference(row)"
+                link
+                type="success"
+                @click.stop="referenceToCurrentProject(row)"
+              >
+                引用到本项目
+              </el-button>
+              <el-button
+                v-if="isGlobal(row) && isReferencedByCurrent(row)"
+                link
+                type="warning"
+                @click.stop="unreferenceFromCurrentProject(row)"
+              >
+                取消引用
+              </el-button>
+              <el-button
+                v-if="!isGlobal(row) && row.reviewStatus === 'published'"
                 link
                 type="warning"
                 @click.stop="revoke(row)"
               >
                 撤销
               </el-button>
-              <el-button v-else link type="success" @click.stop="restore(row)">恢复</el-button>
+              <el-button v-else-if="!isGlobal(row)" link type="success" @click.stop="restore(row)">
+                恢复
+              </el-button>
             </template>
           </BaseProTable>
         </div>
@@ -352,6 +412,7 @@ const categoryStore = useKnowledgeCategoryStore()
 const aiGuard = useAiGuardStore()
 
 const activeTab = ref('drafts')
+const articleScope = ref<'available' | 'project' | 'global' | 'all'>('available')
 const keyword = ref('')
 const pendingCount = ref(0)
 const storageInfo = ref<KnowledgeStorage | null>(null)
@@ -416,14 +477,15 @@ const draftSearchFields: SearchField[] = [
 ]
 
 const articleColumns: ColumnDef[] = [
-  { prop: 'title', label: '标题', minWidth: 220 },
-  { prop: 'sourceType', label: '来源', width: 130, slot: 'sourceType' },
-  { prop: 'category', label: '分类', width: 110 },
-  { prop: 'currentVersion', label: '版本', width: 130, slot: 'currentVersion' },
-  { prop: 'reviewStatus', label: '状态', width: 100, slot: 'reviewStatus' },
-  { prop: 'updatedAt', label: '更新时间', width: 170 },
-  { prop: 'organizeStatus', label: '自动整理', width: 130, slot: 'organize' },
-  { prop: 'id', label: '操作', width: 160, slot: 'actions' },
+  { prop: 'title', label: '标题', minWidth: 200 },
+  { prop: 'ownership', label: '归属 / 复用项目', minWidth: 200, slot: 'ownership' },
+  { prop: 'sourceType', label: '来源', width: 120, slot: 'sourceType' },
+  { prop: 'category', label: '分类', width: 100 },
+  { prop: 'currentVersion', label: '版本', width: 110, slot: 'currentVersion' },
+  { prop: 'reviewStatus', label: '状态', width: 90, slot: 'reviewStatus' },
+  { prop: 'updatedAt', label: '更新时间', width: 160 },
+  { prop: 'organizeStatus', label: '自动整理', width: 120, slot: 'organize' },
+  { prop: 'id', label: '操作', width: 250, slot: 'actions' },
 ]
 
 const articleSearchFields = computed<SearchField[]>(() => [
@@ -439,14 +501,109 @@ function articleFetcher(query: Record<string, unknown>) {
   // 顶部全文检索优先，没填时再用表格自身的标题筛选，否则两个输入框会互相吞掉条件
   return knowledgeApi.listArticles({
     ...query,
+    scope: articleScope.value,
+    projectId: appStore.currentProjectId ?? undefined,
     keyword: keyword.value.trim() || query.keyword || undefined,
   })
+}
+
+function reloadArticles(): void {
+  articleTableRef.value?.reload()
+}
+
+/** 全局知识 = 归属项目为空（提升后保留来源项目）。 */
+function isGlobal(row: KnowledgeArticle): boolean {
+  return row.projectId == null
+}
+
+function isReferencedByCurrent(row: KnowledgeArticle): boolean {
+  const pid = Number(appStore.currentProjectId)
+  return (row.referencedProjects || []).some((ref) => Number(ref.projectId) === pid)
+}
+
+function canPromote(row: KnowledgeArticle): boolean {
+  return row.reviewStatus === 'published'
+    && row.projectId != null
+    && Number(row.projectId) === Number(appStore.currentProjectId)
+}
+
+function canReference(row: KnowledgeArticle): boolean {
+  if (!appStore.currentProjectId) {
+    return false
+  }
+  if (!isGlobal(row)) {
+    return false
+  }
+  const sourceId = row.sourceProjectId ?? row.projectId
+  if (sourceId != null && Number(sourceId) === Number(appStore.currentProjectId)) {
+    return false
+  }
+  return !isReferencedByCurrent(row)
+}
+
+async function promoteToGlobal(row: KnowledgeArticle): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      `把《${row.title}》提升为全局知识？提升后所有项目可见并可按需引用，正文仍只保留这一份。`,
+      '提升为全局知识',
+      { type: 'warning', confirmButtonText: '提升' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await knowledgeApi.promoteArticle(row.id)
+    ElMessage.success('已提升为全局知识，来源项目已保留')
+    articleTableRef.value?.reload()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '提升失败')
+  }
+}
+
+async function referenceToCurrentProject(row: KnowledgeArticle): Promise<void> {
+  const projectId = appStore.currentProjectId
+  if (!projectId) {
+    ElMessage.warning('请先在顶部选择要引用到的项目')
+    return
+  }
+  try {
+    await knowledgeApi.referenceProject(row.id, Number(projectId))
+    ElMessage.success(`已引用到「${appStore.currentProject?.name || '当前项目'}」`)
+    articleTableRef.value?.reload()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '引用失败')
+  }
+}
+
+async function unreferenceFromCurrentProject(row: KnowledgeArticle): Promise<void> {
+  const projectId = appStore.currentProjectId
+  if (!projectId) {
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `取消「${appStore.currentProject?.name || '当前项目'}」对《${row.title}》的引用？正文仍保留在全局，其他引用方不受影响。`,
+      '取消引用',
+      { type: 'warning', confirmButtonText: '取消引用' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await knowledgeApi.unreferenceProject(row.id, Number(projectId))
+    ElMessage.success('已取消引用')
+    articleTableRef.value?.reload()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '取消引用失败')
+  }
 }
 
 function resolveArticleExportUrl(format: string): string {
   const filters = articleTableRef.value?.filterQuery() ?? {}
   return knowledgeApi.exportArticlesUrl({
     ...filters,
+    scope: articleScope.value,
+    projectId: appStore.currentProjectId ?? undefined,
     keyword: keyword.value.trim() || filters.keyword || undefined,
     format,
   })
@@ -812,6 +969,8 @@ async function loadModuleOptions(): Promise<void> {
 
 watch(() => appStore.currentProjectId, () => {
   void loadModuleOptions()
+  // 归属 / 复用列与「本项目+已引用」范围都依赖当前项目，切项目后重拉列表
+  articleTableRef.value?.reload()
 })
 
 const categoryVisible = ref(false)
@@ -889,6 +1048,37 @@ onMounted(() => {
 
 .knowledge-tabs :deep(.el-tabs__header) {
   margin-bottom: 12px;
+}
+
+.reuse-hint {
+  margin-bottom: 10px;
+}
+
+.ownership {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ownership__self {
+  font-size: 12px;
+  color: var(--el-color-success);
+}
+
+.ownership__refs {
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.ownership__ref {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .category-hint {

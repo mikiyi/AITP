@@ -29,12 +29,13 @@ class HomeCard:
     default_visible: bool = True
 
 
-ASSISTANT_CARD = HomeCard("assistant", "知识库问答助手", "基于本机知识库正文回答，附出处", "full", locked=True)
+ASSISTANT_CARD = HomeCard("assistant", "知识库问答助手", "基于本机知识库正文回答，附出处", "full")
 OVERVIEW_CARD = HomeCard("overview", "数据概览", "资产数量与核心指标", "full", locked=True)
 SHORTCUT_CARD = HomeCard("shortcuts", "功能快捷入口", "按使用频率排序的常用入口", "full", locked=True)
 
 #: 首页可定制卡片：顺序即默认顺序，width=full 的卡片独占一行
 CUSTOMIZABLE_CARDS: tuple[HomeCard, ...] = (
+    ASSISTANT_CARD,
     HomeCard("recentTasks", "最近任务", "最近 5 条 AI 任务、状态与耗时", "full"),
     HomeCard("caseStatus", "用例执行状态", "未执行 / 通过 / 失败 / 阻塞占比"),
     HomeCard("bugStatus", "缺陷状态分布", "新建到关闭各状态的数量占比"),
@@ -43,10 +44,11 @@ CUSTOMIZABLE_CARDS: tuple[HomeCard, ...] = (
     HomeCard("aiUsage", "AI 能力使用", "任务量 Top 8 的能力分布", default_visible=False),
     HomeCard("bugSeverity", "缺陷严重级别", "P0–P3 缺陷数量对比", default_visible=False),
     HomeCard("recentReports", "最近测试报告", "最新 5 份报告的类型与状态", default_visible=False),
+    HomeCard("planOverview", "计划与轮次总览", "版本→计划→轮次层级、甘特与状态看板", "full"),
     HomeCard("envHealth", "测试环境健康监测", "应用与数据库可达性、资源曲线", "full"),
 )
 
-LOCKED_CARDS: tuple[HomeCard, ...] = (ASSISTANT_CARD, OVERVIEW_CARD, SHORTCUT_CARD)
+LOCKED_CARDS: tuple[HomeCard, ...] = (OVERVIEW_CARD, SHORTCUT_CARD)
 ALL_CARDS: tuple[HomeCard, ...] = LOCKED_CARDS + CUSTOMIZABLE_CARDS
 
 _BY_KEY: dict[str, HomeCard] = {card.key: card for card in ALL_CARDS}

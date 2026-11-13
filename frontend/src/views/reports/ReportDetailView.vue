@@ -6,7 +6,7 @@
         <el-button :icon="Back" @click="router.push('/reports')">返回列表</el-button>
         <el-button :icon="Edit" @click="openEdit">编辑</el-button>
         <el-button
-          v-if="report && report.status !== 'published'"
+          v-if="report?.status === 'draft'"
           type="success"
           :icon="Promotion"
           :loading="changingStatus"
@@ -21,13 +21,6 @@
           @click="changeStatus('archived')"
         >
           归档
-        </el-button>
-        <el-button
-          v-if="report?.status === 'archived'"
-          :loading="changingStatus"
-          @click="changeStatus('draft')"
-        >
-          退回草稿
         </el-button>
         <el-button :icon="Refresh" :loading="statsLoading" @click="refreshAll">刷新数据</el-button>
       </div>
@@ -95,6 +88,9 @@
             <div class="report-item__head">
               <el-tag size="small" effect="plain">{{ item.section }}</el-tag>
               <span class="report-item__title">{{ item.title }}</span>
+              <el-button link type="primary" size="small" @click="openSaveFragment(item)">
+                存为片段
+              </el-button>
             </div>
             <MarkdownView v-if="item.content" :source="item.content" />
           </div>
@@ -128,6 +124,41 @@
           <el-button size="small" @click="openExport('print')">打印视图</el-button>
         </div>
       </div>
+    </div>
+
+    <div class="panel panel-pad">
+      <div class="section-title">
+        复用片段
+        <el-tag size="small" effect="plain">{{ fragments.length }} 段</el-tag>
+        <el-button size="small" type="primary" plain style="margin-left: 8px" @click="openInsertFragments">
+          插入片段
+        </el-button>
+      </div>
+      <p class="samples-tip">
+        片段正文只保存在来源项目一份，这里只登记使用关系；源片段修改后，本报告预览与导出会同步更新。
+        被报告使用的片段在来源项目禁止删除。
+      </p>
+      <el-empty v-if="!fragments.length" description="还没有插入复用片段" :image-size="60" />
+      <el-collapse v-else>
+        <el-collapse-item v-for="fragment in fragments" :key="fragment.id" :name="fragment.id">
+          <template #title>
+            <span class="fragment-title">{{ fragment.title }}</span>
+            <el-tag size="small" effect="plain" class="fragment-tag">
+              {{ fragment.sourceProjectName || '来源未知' }}
+            </el-tag>
+            <el-tag v-if="fragment.isGlobal" size="small" type="success" effect="plain" class="fragment-tag">
+              全局
+            </el-tag>
+            <span class="muted fragment-updated">{{ dateTimeText(fragment.updatedAt) }}</span>
+          </template>
+          <div class="fragment-actions">
+            <el-button link type="danger" size="small" @click="removeReportFragment(fragment.id)">
+              从本报告移除
+            </el-button>
+          </div>
+          <MarkdownView :source="fragment.content" />
+        </el-collapse-item>
+      </el-collapse>
     </div>
 
     <div v-loading="samplesLoading" class="panel panel-pad">
@@ -206,6 +237,85 @@
 
     <EvidenceDrawer v-model="evidenceVisible" :locator="evidenceLocator" title="失败样本执行证据" />
 
+    <el-dialog v-model="fragmentInsertVisible" title="插入复用片段" width="820px">
+      <el-input
+        v-model="fragmentKeyword"
+        clearable
+        placeholder="按标题 / 正文筛选可用片段"
+        style="margin-bottom: 10px"
+        @input="loadAvailableFragments"
+      />
+      <el-table
+        :data="availableFragments"
+        size="small"
+        border
+        max-height="420"
+        empty-text="当前项目还没有可用片段；可先在报告章节里「存为片段」"
+      >
+        <el-table-column width="46">
+          <template #default="{ row }">
+            <el-radio v-model="pickedFragmentId" :value="row.id" :label="row.id">
+              <span class="sr-only">选择</span>
+            </el-radio>
+          </template>
+        </el-table-column>
+        <el-table-column prop="title" label="片段标题" min-width="180" />
+        <el-table-column prop="sourceProjectName" label="来源项目" width="140" />
+        <el-table-column label="全局" width="70">
+          <template #default="{ row }">
+            <el-tag v-if="row.isGlobal" size="small" type="success" effect="plain">全局</el-tag>
+            <span v-else class="muted">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="useCount" label="被引用" width="80" />
+        <el-table-column label="更新时间" width="170">
+          <template #default="{ row }">{{ dateTimeText(row.updatedAt) }}</template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="fragmentInsertVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="fragmentSaving"
+          :disabled="!pickedFragmentId"
+          @click="insertPickedFragment"
+        >
+          插入到报告
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="fragmentFormVisible" title="存为报告片段" width="760px">
+      <el-form label-width="90px">
+        <el-form-item label="标题" required>
+          <el-input v-model="fragmentForm.title" maxlength="300" />
+        </el-form-item>
+        <el-form-item label="章节">
+          <el-select v-model="fragmentForm.section">
+            <el-option
+              v-for="section in reportSectionOptions"
+              :key="section.value"
+              :label="section.label"
+              :value="section.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="正文" required>
+          <el-input v-model="fragmentForm.content" type="textarea" :rows="12" placeholder="支持 Markdown" />
+        </el-form-item>
+        <el-form-item label="全局片段">
+          <el-switch v-model="fragmentForm.isGlobal" />
+          <span class="muted fragment-form-hint">
+            开启后其他项目报告可直接插入；不开启则只在本项目可用。
+          </span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="fragmentFormVisible = false">取消</el-button>
+        <el-button type="primary" :loading="fragmentSaving" @click="saveFragment">保存片段</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="editVisible" title="编辑报告" width="720px">
       <el-form label-width="90px">
         <el-form-item label="标题">
@@ -241,7 +351,14 @@ import ReportCharts from '@/components/ReportCharts.vue'
 import ReportTrendPanel from '@/components/ReportTrendPanel.vue'
 import { reportApi } from '@/api'
 import { dateTimeText } from '@/utils/format'
-import type { Report, ReportFailureSample, ReportFailureSamples, ReportItem, ReportStats } from '@/api/types'
+import type {
+  Report,
+  ReportFailureSample,
+  ReportFailureSamples,
+  ReportFragment,
+  ReportItem,
+  ReportStats,
+} from '@/api/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -255,6 +372,19 @@ const report = ref<Report | null>(null)
 const trendPanel = ref<InstanceType<typeof ReportTrendPanel> | null>(null)
 const items = ref<ReportItem[]>([])
 const stats = ref<ReportStats | null>(null)
+const fragments = ref<ReportFragment[]>([])
+const fragmentInsertVisible = ref(false)
+const fragmentFormVisible = ref(false)
+const fragmentSaving = ref(false)
+const fragmentKeyword = ref('')
+const availableFragments = ref<ReportFragment[]>([])
+const pickedFragmentId = ref<number | null>(null)
+const fragmentForm = reactive({
+  title: '',
+  section: 'overview',
+  content: '',
+  isGlobal: false,
+})
 
 const metrics = computed(
   () =>
@@ -378,27 +508,25 @@ function statusLabel(value: string | undefined): string {
   return value ? STATUS_LABELS[value] ?? value : '-'
 }
 
-async function changeStatus(next: 'draft' | 'published' | 'archived'): Promise<void> {
+async function changeStatus(next: 'published' | 'archived'): Promise<void> {
   if (!report.value) {
     return
   }
-  if (next !== 'draft') {
-    const tips: Record<string, string> = {
-      published: '发布后代表本轮报告已定稿，是否继续？',
-      archived: '归档后报告会从默认视图淡出，可在状态筛选「已归档」中找回，是否继续？',
-    }
-    try {
-      await ElMessageBox.confirm(tips[next], next === 'published' ? '发布确认' : '归档确认', {
-        type: 'warning',
-      })
-    } catch {
-      return
-    }
+  const tips: Record<string, string> = {
+    published: '发布后代表本轮报告已定稿，是否继续？',
+    archived: '归档为终态，之后不能退回草稿或重新发布，可在状态筛选「已归档」中找回，是否继续？',
+  }
+  try {
+    await ElMessageBox.confirm(tips[next], next === 'published' ? '发布确认' : '归档确认', {
+      type: 'warning',
+    })
+  } catch {
+    return
   }
   changingStatus.value = true
   try {
     report.value = await reportApi.update(report.value.id, { status: next })
-    ElMessage.success(`已${next === 'draft' ? '退回草稿' : next === 'published' ? '发布' : '归档'}`)
+    ElMessage.success(`已${next === 'published' ? '发布' : '归档'}`)
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '状态更新失败')
   } finally {
@@ -412,7 +540,7 @@ interface SectionOption {
   enabled: boolean
 }
 
-const sectionOptions: Array<{ value: string; label: string }> = [
+const reportSectionOptions: Array<{ value: string; label: string }> = [
   { value: 'overview', label: '总览' },
   { value: 'progress', label: '进展' },
   { value: 'case', label: '用例情况' },
@@ -423,7 +551,7 @@ const sectionOptions: Array<{ value: string; label: string }> = [
   { value: 'conclusion', label: '结论与建议' },
 ]
 
-const reportSections = ref<SectionOption[]>(sectionOptions.map((item) => ({ ...item, enabled: false })))
+const reportSections = ref<SectionOption[]>(reportSectionOptions.map((item) => ({ ...item, enabled: false })))
 
 const enabledSections = computed(() => reportSections.value.filter((item) => item.enabled).map((item) => item.value))
 
@@ -433,7 +561,8 @@ async function load(): Promise<void> {
     const detail = (await reportApi.get(Number(route.params.id))) as Report & { items?: ReportItem[] }
     report.value = detail
     items.value = detail.items ?? []
-    reportSections.value = sectionOptions.map((item) => ({
+    fragments.value = detail.fragments ?? []
+    reportSections.value = reportSectionOptions.map((item) => ({
       ...item,
       enabled: items.value.some((entry) => entry.section === item.value),
     }))
@@ -442,6 +571,108 @@ async function load(): Promise<void> {
     ElMessage.error(err instanceof Error ? err.message : '加载报告失败')
   } finally {
     loading.value = false
+  }
+}
+
+async function loadAvailableFragments(): Promise<void> {
+  if (!report.value) {
+    return
+  }
+  try {
+    availableFragments.value = await reportApi.fragments(
+      report.value.projectId,
+      'available',
+      fragmentKeyword.value.trim(),
+    )
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '加载片段失败')
+  }
+}
+
+function openInsertFragments(): void {
+  if (!report.value) {
+    return
+  }
+  pickedFragmentId.value = null
+  fragmentKeyword.value = ''
+  fragmentInsertVisible.value = true
+  void loadAvailableFragments()
+}
+
+async function insertPickedFragment(): Promise<void> {
+  if (!report.value || !pickedFragmentId.value) {
+    return
+  }
+  fragmentSaving.value = true
+  try {
+    const result = await reportApi.insertFragment(report.value.id, pickedFragmentId.value)
+    fragments.value = result.fragments ?? []
+    fragmentInsertVisible.value = false
+    ElMessage.success('片段已插入本报告；预览与导出现在会带上片段正文')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '插入片段失败')
+  } finally {
+    fragmentSaving.value = false
+  }
+}
+
+async function removeReportFragment(fragmentId: number): Promise<void> {
+  if (!report.value) {
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      '只从本报告移除引用，不删除来源项目的片段本体。',
+      '移除片段',
+      { type: 'warning', confirmButtonText: '移除' },
+    )
+  } catch {
+    return
+  }
+  try {
+    const result = await reportApi.removeReportFragment(report.value.id, fragmentId)
+    fragments.value = result.fragments ?? []
+    ElMessage.success('已从本报告移除')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '移除失败')
+  }
+}
+
+function openSaveFragment(item: ReportItem): void {
+  fragmentForm.title = item.title || `片段 · ${item.section}`
+  fragmentForm.section = item.section || 'overview'
+  fragmentForm.content = item.content || ''
+  fragmentForm.isGlobal = false
+  fragmentFormVisible.value = true
+}
+
+async function saveFragment(): Promise<void> {
+  if (!report.value) {
+    return
+  }
+  if (!fragmentForm.title.trim() || !fragmentForm.content.trim()) {
+    ElMessage.warning('片段标题与正文为必填项')
+    return
+  }
+  fragmentSaving.value = true
+  try {
+    const created = await reportApi.createFragment({
+      projectId: report.value.projectId,
+      title: fragmentForm.title.trim(),
+      section: fragmentForm.section,
+      content: fragmentForm.content,
+      sourceReportId: report.value.id,
+      sourceNote: `来自报告《${report.value.title}》`,
+      isGlobal: fragmentForm.isGlobal,
+    })
+    const result = await reportApi.insertFragment(report.value.id, created.id)
+    fragments.value = result.fragments ?? []
+    fragmentFormVisible.value = false
+    ElMessage.success('已存为片段并插入本报告')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '保存片段失败')
+  } finally {
+    fragmentSaving.value = false
   }
 }
 
@@ -462,7 +693,7 @@ async function refreshAll(): Promise<void> {
 
 function onTrendInserted(next: ReportItem[] | unknown[]): void {
   items.value = next as ReportItem[]
-  reportSections.value = sectionOptions.map((item) => ({
+  reportSections.value = reportSectionOptions.map((item) => ({
     ...item,
     enabled: items.value.some((entry) => entry.section === item.value),
   }))
@@ -652,5 +883,38 @@ onMounted(() => {
 .ev-none {
   font-size: 12px;
   color: var(--el-text-color-placeholder);
+}
+
+.fragment-title {
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.fragment-tag {
+  margin-right: 6px;
+}
+
+.fragment-updated {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.fragment-actions {
+  margin-bottom: 6px;
+}
+
+.fragment-form-hint {
+  margin-left: 10px;
+  font-size: 12px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 </style>

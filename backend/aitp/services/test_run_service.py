@@ -144,13 +144,25 @@ def create_run(
     env: str = "",
     owner: str = "",
     remark: str = "",
+    round_type: str = "",
+    goal: str = "",
+    planned_start: str = "",
+    planned_end: str = "",
+    scope_preset: str = "",
+    seq: int = 0,
+    status: str = "running",
+    started_at: str | None = None,
+    allow_empty: bool = False,
 ) -> dict[str, Any]:
-    """创建轮次并冻结用例快照；没有用例时允许创建，之后再追加。"""
-    if not case_ids:
+    """创建轮次并冻结用例快照；没有用例时允许创建，之后再追加。
+
+    ``status='pending'`` 用于模板生成的「计划中」轮次：不立即开跑、不记实际开始时间。
+    """
+    if not case_ids and not allow_empty:
         raise AppError(ErrorCode.PARAM_ERROR, "请至少选择一条用例")
     env_id, env = resolve_env(conn, env_id, env)
     rows = _case_rows(conn, case_ids)
-    if not rows:
+    if not rows and not allow_empty:
         raise AppError(ErrorCode.PARAM_ERROR, "所选用例不存在或已删除")
     wrong = [int(row["id"]) for row in rows if int(row["project_id"]) != int(project_id)]
     if wrong:
@@ -188,9 +200,17 @@ def create_run(
         "name": name,
         "env": env,
         "owner": owner,
-        "status": "running",
+        "status": status,
         "remark": remark,
-        "started_at": utcnow_iso(),
+        "started_at": started_at if started_at is not None else (
+            None if status == "pending" else utcnow_iso()
+        ),
+        "round_type": round_type,
+        "goal": goal,
+        "planned_start": planned_start,
+        "planned_end": planned_end,
+        "scope_preset": scope_preset,
+        "seq": seq,
     })
     module_names = _module_names(conn, rows)
     case_repo = TestRunCaseRepository(conn)
@@ -204,6 +224,9 @@ def create_run(
         )
         seq += 1
     run_repo.refresh_counters(run_id)
+    if status == "pending":
+        # 计划中的轮次：refresh_counters 会把有用例的 pending 自动提为 running，这里压回待开始
+        run_repo.update(run_id, {"status": "pending", "started_at": None})
     return run_summary(run_repo.get_detail(run_id) or {})
 
 
@@ -244,6 +267,31 @@ def add_cases(conn: sqlite3.Connection, run_id: int, case_ids: list[int]) -> dic
         "count": len(added),
         "skipped": [case_id for case_id in case_ids if case_id not in added],
     }
+
+
+def replace_cases(conn: sqlite3.Connection, run_id: int, case_ids: list[int]) -> dict[str, Any]:
+    """整体替换轮次用例快照（仅未开跑的轮次），供「按上轮结果刷新范围」复算。"""
+    run = _run_or_404(conn, run_id)
+    if str(run.get("status") or "") != "pending":
+        raise AppError(ErrorCode.ILLEGAL_OPERATION, "只有待开始的轮次才能整体刷新用例范围")
+    conn.execute(
+        "UPDATE biz_test_run_case SET is_deleted = 1 WHERE run_id = ? AND is_deleted = 0",
+        (run_id,),
+    )
+    rows = _case_rows(conn, case_ids)
+    module_names = _module_names(conn, rows)
+    case_repo = TestRunCaseRepository(conn)
+    seq = 1
+    for row in rows:
+        case_repo.add_snapshot(
+            run_id,
+            row,
+            seq,
+            module_name=module_names.get(int(row["module_id"]), "") if row.get("module_id") else "",
+        )
+        seq += 1
+    TestRunRepository(conn).refresh_counters(run_id)
+    return {"runId": run_id, "count": len(rows)}
 
 
 def record_result(

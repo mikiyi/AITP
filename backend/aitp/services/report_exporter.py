@@ -33,6 +33,9 @@ SECTION_LABELS: dict[str, str] = {
     "conclusion": "结论与建议",
 }
 
+#: GAP-42：跨项目复用片段章节。片段正文来自源片段本体，不复制进报告。
+FRAGMENT_SECTION_LABEL = "复用片段"
+
 #: GAP-35：失败样本与执行证据章节。三种导出格式各自渲染这一章节，
 #: 所以「漏带样本」在某一种格式里红得出来，而不是靠通用章节蒙混过关。
 FAILURE_SECTION_LABEL = "失败样本执行证据"
@@ -336,6 +339,28 @@ def _html_row(cells: dict[str, str], sample: dict[str, Any]) -> str:
     return f"<tr>{''.join(f'<td>{item}</td>' for item in cells_html)}</tr>"
 
 
+def fragments_markdown_section(fragments: list[dict[str, Any]] | None) -> str:
+    """复用片段章节（Markdown 形态）：每段带来源项目与更新时间。"""
+    if not fragments:
+        return ""
+    lines = [f"## {FRAGMENT_SECTION_LABEL}（{len(fragments)} 段）", ""]
+    for fragment in fragments:
+        title = str(fragment.get("title") or "未命名片段").strip()
+        source = str(fragment.get("sourceProjectName") or "").strip()
+        updated = str(fragment.get("updatedAt") or "").strip()
+        meta = " · ".join(item for item in (source, updated) if item)
+        lines.append(f"### {title}")
+        if meta:
+            lines.append(f"- 来源：{meta}")
+        note = str(fragment.get("sourceNote") or "").strip()
+        if note:
+            lines.append(f"- 说明：{note}")
+        lines.append("")
+        lines.append(str(fragment.get("content") or "").strip())
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def failure_html_section(samples: list[dict[str, Any]] | None) -> str:
     """证据章节的 HTML 形态：独立渲染一份表格 + 每条样本的证据摘要块。"""
     if samples is None:
@@ -518,6 +543,7 @@ def render_markdown(
     report: dict[str, Any],
     items: list[dict[str, Any]],
     samples: list[dict[str, Any]] | None = None,
+    fragments: list[dict[str, Any]] | None = None,
 ) -> str:
     """渲染 Markdown：frontmatter + 元信息 + 章节 + 失败样本证据 + 正文。"""
     title = str(report.get("title") or "测试报告")
@@ -544,6 +570,10 @@ def render_markdown(
         blocks.append(f"## 摘要\n\n{summary}")
 
     blocks.extend(_sections_markdown(items))
+
+    fragment_block = fragments_markdown_section(fragments)
+    if fragment_block:
+        blocks.append(fragment_block.rstrip())
 
     evidence_block = failure_markdown_section(normalize_failure_samples(samples))
     if evidence_block:
@@ -624,6 +654,7 @@ def render_html(
     items: list[dict[str, Any]],
     print_view: bool = False,
     samples: list[dict[str, Any]] | None = None,
+    fragments: list[dict[str, Any]] | None = None,
 ) -> str:
     """渲染单文件 HTML；print_view=True 时打开即进入打印友好布局。
 
@@ -647,6 +678,10 @@ def render_html(
             table.extend(f"| {name} | {value} |" for name, value in rows)
             parts.append("\n".join(table))
         blocks.append("\n\n".join(parts))
+    fragment_block = fragments_markdown_section(fragments)
+    if fragment_block:
+        blocks.append(fragment_block.rstrip())
+
     content = _residual_content(str(report.get("content") or ""), items)
     if content:
         blocks.append("## 正文\n\n" + content)
@@ -902,6 +937,7 @@ def render_pdf(
     report: dict[str, Any],
     items: list[dict[str, Any]],
     samples: list[dict[str, Any]] | None = None,
+    fragments: list[dict[str, Any]] | None = None,
 ) -> tuple[bytes, bool]:
     """渲染 PDF，返回 (字节流, 字体降级告警)。"""
     from reportlab.lib import colors
@@ -990,6 +1026,10 @@ def render_pdf(
             table = _pdf_table(table_data, font_name)
             story.append(table)
             story.append(Spacer(1, 8))
+
+    fragment_block = fragments_markdown_section(fragments)
+    if fragment_block:
+        story.extend(_pdf_flowables(fragment_block, styles, font_name))
 
     content = _residual_content(str(report.get("content") or ""), items)
     if content:

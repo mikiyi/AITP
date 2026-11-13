@@ -81,7 +81,7 @@ stop.bat          :: Windows
 
 ## 功能地图
 
-前端 46 条路由 / 47 个页面组件，后端 34 个蓝图 / 337 个接口统一挂在 `/api/v1` 下。
+前端 56 条路由 / 56 个页面组件，后端 38 个蓝图 / 398 个接口统一挂在 `/api/v1` 下。
 
 ### 首启引导与示例项目
 
@@ -114,7 +114,7 @@ stop.bat          :: Windows
 
 ### AI 实验室
 
-19 项能力，基于知识库的问答走「知识库 → 问答助手」的对话面板：
+20 项能力，基于知识库的问答走「知识库 → 问答助手」的对话面板：
 
 | 能力 | 标识 |
 |---|---|
@@ -136,7 +136,10 @@ stop.bat          :: Windows
 | 自动化脚本生成 | `automation_script` |
 | 性能脚本生成 | `performance_script` |
 | 测试数据生成 | `test_data_generation` |
+| Web 探索性测试 | `exploratory_web` |
 | 提示词优化 | `prompt_optimize` |
+
+- **测试数据脱敏样本（GAP-39）**：测试数据生成能力新增「脱敏样本」模式，CSV / JSON / XLSX 样本在本机解析，自动识别手机号、邮箱、身份证、卡号、口令等敏感列，按「掩码 / 哈希 / 随机 / 枚举 / 占位」规则脱敏；库内只存列结构与脱敏副本，原始样本不落盘，方案可保存复用，样本按保留期自动清理
 
 - **能力卡片由提示词库驱动**
 - **智能路由**：输入一句话，自动匹配最合适的能力
@@ -159,8 +162,12 @@ stop.bat          :: Windows
 | 断言库 | 可复用断言规则按项目/功能点共享，接口用例以 `lib:编号` 引用，支持 JSON Schema 断言与失败差异对比 |
 | 知识库 | 待审池 → 正式库、版本、审核、引用保护、全文检索 |
 | 测试报告 | 报告生成/采纳、ECharts 图表、指标趋势、导出 |
-| 执行与证据 | 接口 / 自动化 / 手工 / 回归四条执行路径统一留一份证据快照，轮次、缺陷、报告三处可下钻到原始请求响应与日志 |
+| 执行与证据 | 接口 / 自动化 / 手工 / 回归 / **探索性**五条执行路径统一留一份证据快照，轮次、缺陷、报告三处可下钻到原始请求响应与日志 |
 | 回归清单 | 清单 CRUD、AI 生成回归条目、自动条目由服务端真跑并留证据、手工条目回写强制附证据 |
+| 执行矩阵（GAP-43） | 一批用例 × 多环境 × 多端（应用服务器）一次调度逐格真跑，逐用例跨环境对比归因（普遍通过 / 普遍失败 / 环境特有 / 端特有 / 混合），普遍失败一键转缺陷并挂证据；生产环境调度需显式确认 |
+| Web 探索性测试（GAP-45） | MCP 驱动浏览器按「读快照 → 决策 → 动作 → 观测」循环探索，无脚本发现「用例追不上功能」的漏网问题；异常步强制 3 张截图 + 双锚点 ±N 秒日志切片 + 网络快照 + 控制台错误 + traceId 组成证据包；口令/令牌输入按 PII 规则脱敏；产物先进待审池人工审核，通过才转缺陷 |
+| 知识 / 报告片段跨项目复用（GAP-42） | 片段在来源项目维护一份，目标报告登记引用关系，渲染 / 导出实时读取正文，避免多份副本漂移；被引用的片段禁止删除 |
+| 数据留存与归档（GAP-44） | 按数据类型（轮次 / 自动化执行 / 证据 / 日志 / 待办）配置保留天数与到期动作（归档 / 软删 / 仅留摘要）；引用保护（缺陷引用的证据、矩阵引用的记录到期不清）；到期数据压缩归档到 `data/archive/` 并可检索回看原文；支持干跑预览与启动自动清理 |
 
 ### 工作台配置
 
@@ -172,6 +179,10 @@ stop.bat          :: Windows
 | 系统配置 | 全量配置项读写 |
 | 测试环境配置 | 多套命名环境；每套可挂多台应用服务器并逐台探测、逐台画资源曲线；数据库类型覆盖 MySQL / PostgreSQL / SQL Server / Oracle / SQLite、国产库（达梦、人大金仓、瀚高、openGauss、GaussDB、OceanBase、TiDB、GBase、神通 OSCAR、ClickHouse）与非关系库（MongoDB、Redis、Elasticsearch、Cassandra、InfluxDB）；口令入系统密钥库 |
 | 数据备份 | 库快照备份、整包备份、恢复 |
+| 数据留存与归档 | 各数据类型保留天数与到期动作、到期预览、干跑统计、立即清理、归档区检索与原文回看（GAP-44） |
+| 探索性测试设置 | 最大步数 / 时长 / 单步超时 / 截图数、记录选择器、输入脱敏开关、日志切片窗口与来源、MCP 服务命令与钉住工具清单（GAP-45） |
+| 项目资产包 | 结构包导出 / 预览 / 改名导入：模块、版本、需求、用例、缺陷、知识、脚本、断言规则；id 全部重分配、外键重映射，不含密钥与执行历史 |
+| 外部平台导入 | 禅道只读单向导入需求 / 用例 / 缺陷：登录换 token 后只发 GET，绝不回写；凭据入系统密钥库，支持「禅道账号 + 服务器级 HTTP Basic」两层认证；映射模板可自定义，按 项目 + 平台 + 外部 id 去重，批次留痕 |
 | CI 与通知 | CI 令牌、Webhook 渠道、事件订阅、测试发送 |
 | 首页卡片定制 | 首页非固定卡片的显隐与排序 |
 
@@ -255,7 +266,7 @@ cd frontend && npm run build                                              # 前�
 - `check_ai_live` 被 runner 永久排除：它打真实商汤模型接口、烧额度且非确定性，需要时单独手工跑。
 - 新增门禁脚本只要放进 `backend/scripts` 且命名 `check_*.py`，runner 自动纳入，无需改 runner。
 
-门禁清单（45 项 = 44 个 `check_*.py` + `smoke_api.py`，与 `backend/scripts` 下真实脚本一一对应；其中 `check_ai_live` 不进 runner，实际执行 44 项）：
+门禁清单（53 个脚本 = 52 个 `check_*.py` + `smoke_api.py`，与 `backend/scripts` 下真实脚本一一对应；其中 `check_ai_live` 不进 runner，实际执行 52 项）：
 
 | 脚本 | 含义 | 失败怎么查 |
 | --- | --- | --- |
@@ -274,7 +285,9 @@ cd frontend && npm run build                                              # 前�
 | `check_dedup.py` | 生成去重判定口径：归一化、阈值分档、mark/increment 行为、payload 下标对齐（GAP-29） | 看 `backend/aitp/services/dedup_service.py` |
 | `check_env_config.py` | 测试环境配置：CRUD、多台应用服务器、国产/非关系库类型与默认端口、口令加密掩码、健康探测、默认环境唯一 | 看环境配置接口与密钥库落盘 |
 | `check_error_boundary.py` | 异常治理与前端兜底：不吞异常、错误带 traceId、长执行出请求线程、空态与重试（GAP-26） | 看 `except Exception` 处置与 `validation_jobs` |
-| `check_execution_evidence.py` | 统一执行证据协议：四条执行路径的必填字段矩阵、快照与缺失降级（GAP-32） | 看 `execution_protocol.py` 与 `biz_execution_evidence` |
+| `check_execution_evidence.py` | 统一执行证据协议：五条执行路径的必填字段矩阵、快照与缺失降级（GAP-32） | 看 `execution_protocol.py` 与 `biz_execution_evidence` |
+| `check_execution_matrix.py` | 执行矩阵：多环境 × 多端逐格真跑、跨格对比归因、普遍失败转缺陷、生产确认（GAP-43） | 看 `execution_matrix_service.py` 与 `biz_execution_matrix*` |
+| `check_exploratory_web.py` | Web 探索性测试：MCP 桩驱动、证据包字段、双锚点 ±5s 日志切片、产物进待审池非缺陷库、无模型降级、输入脱敏（GAP-45） | 看 `exploratory_service.py` 与 `biz_exploration_*` |
 | `check_export_caps.py` | 导出能力宣称与实现一致：Excel/Word 白名单同源、不支持时给中文降级（GAP-37） | 看 `capability_codes` 白名单与帮助页口径 |
 | `check_fts.py` | FTS5 混合检索：中文短词兜底、注入防护、软删过滤、索引同步 | 看检索服务与索引重建逻辑 |
 | `check_functional_matrix.py` | 功能矩阵：多项目 × 边界值 × 全路径（临时库自跑） | 按失败项名定位对应模块接口 |
@@ -284,6 +297,8 @@ cd frontend && npm run build                                              # 前�
 | `check_isolation_matrix.py` | 多项目 × 多版本数据隔离审计（HTTP 版，可长跑） | 需先启动本地服务；带 `AITP_ACCESS_TOKEN` 重跑单脚本 |
 | `check_kb_ask.py` | 知识库问答检索兜底：自然语言问句能召回正式条目 | 看知识库检索与落盘目录 `knowledge/` |
 | `check_knowledge_governance.py` | P8 知识治理：待审转正、版本化、引用保护、重建索引 | 看治理服务与 Markdown 落盘 |
+| `check_knowledge_recall.py` | 知识语义召回评估（D1 条件项）：混合检索 vs 纯向量/关键词的召回命中对比 | 看召回评估脚本与 `docs/AITP-三期-D1-召回评估.md` |
+| `check_knowledge_reuse.py` | 知识 / 报告片段跨项目复用：片段 CRUD、引用关系、渲染实时读正文、被引用禁删（GAP-42） | 看 `report_fragment_repo.py` 与 `biz_report_fragment*` |
 | `check_lab.py` | P6 AI 实验室 | 看实验室能力清单与临时 mock 服务输出 |
 | `check_observability.py` | 可观测性：traceId 贯穿日志与响应头、只记异常/慢请求（GAP-23） | 看 `backend/aitp/observability` 与日志格式 |
 | `check_onboarding.py` | 首启引导状态（GAP-18） | 看迁移 045 与 onboarding API |
@@ -294,12 +309,16 @@ cd frontend && npm run build                                              # 前�
 | `check_prompts.py` | 提示词库：模板可解析、变量齐全、渲染无残留、能力对齐 | 看 `backend/prompts` YAML 与能力映射表 |
 | `check_report_evidence.py` | 报告失败样本与证据下钻：样本条数与真实失败一致、三种导出都带上所选样本、无快照给中文降级、证据只在用例级（手工执行）时报告/下钻/缺陷三处口径一致（GAP-35） | 看 `api/reports.py` 的 failure-samples 与 `execution_protocol.latest_evidence_for_run_case` |
 | `check_report_trends.py` | 报告趋势与版本对比（GAP-12） | 看报告导出与趋势聚合 |
-| `check_routing.py` | 智能路由回归：18 张能力卡片各至少一条代表性输入必须路由正确 | 看路由规则与能力卡片配置 |
+| `check_retention.py` | 数据留存与归档：分类型保留期与到期动作、引用保护、软删 + zip 归档、原文回看、启动自动清理（GAP-44） | 看 `retention_service.py` 与 `data/archive/` |
+| `check_routing.py` | 智能路由回归：20 张能力卡片各至少一条代表性输入必须路由正确 | 看路由规则与能力卡片配置 |
 | `check_secret_residue.py` | GAP-22 密钥入库收口：引用式存储、残留检测、迁移/回滚与双读 | 看密钥引用表与残留扫描逻辑（全在临时库，不碰正式库） |
 | `check_stream_polling.py` | 流式短轮询契约两端对齐：发起只给 taskId + 取帧路由、帧序与游标、缓冲过期回落，以及前端确实按 `mode:"poll"` 去取帧、发起时带上当前项目（GAP-26 / GAP-29） | 看 `api/lab.py` 的 stream/frames 与 `frontend/src/api/stream.ts` |
 | `check_security.py` | 安全与合规：密钥、注入、路径安全、同源防护 | 看 `backend/aitp/common` 安全工具与中间件 |
 | `check_task_labels.py` | 任务类型标签：已注册 kind 与中文标签表双向相等、筛选下拉同源（GAP-37） | 看 `services/job_queue.py` 的 `KIND_LABELS` |
 | `check_test_data.py` | 测试数据生成（文件分支） | 看生成服务与导出文件 |
+| `check_test_data_samples.py` | 测试数据脱敏样本（GAP-39）：敏感列漏配拒绝、脱敏副本不含原始 PII、方案复用与过期清理 | 看样本池服务与脱敏引擎 |
+| `check_project_package.py` | 项目资产包（GAP-41）：结构包计数、无密钥、同编码拒绝、改名导入与外键重映射 | 看资产包服务与 manifest |
+| `check_external_import.py` | 外部平台只读导入（GAP-40）：桩禅道验证登录换 token、只发 GET 不回写、映射落库、外部 id 去重、两层认证、映射模板与批次隔离、密钥不落库 | 看 `services/external_import*` 与 `api/external_imports.py` |
 | `check_test_execution.py` | 执行闭环：计划 → 轮次 → 批量结果 → 失败转缺陷 → 追溯矩阵 → 发布准入 | 按失败环节名定位对应蓝图 |
 | `check_types.py` | 类型门禁：mypy --strict 扫全后端 + 真实执行 `vue-tsc --noEmit`；CI 可加 `--require-frontend` 让缺前端依赖直接失败 | 直接看 mypy/TS 报错的文件行号 |
 | `check_walkthrough.py` | 固定走查案例：路由顺序 + 降级顺序 + 行为安全 + 结构化记录 + 全局搜索 | 看走查各步骤断言输出 |
@@ -328,22 +347,22 @@ cd frontend && npm run build                                              # 前�
 ```
 backend/
   aitp/
-    api/          34 个蓝图 / 337 个接口
+    api/          38 个蓝图 / 398 个接口
     ai/           resolver、client、masking、adapters
     common/       常量、校验、分页、密钥库、安全工具
-    db/           连接与迁移
+    db/           连接与迁移（55 份）
     repositories/ 参数化 SQL 仓储层
-    services/     知识落盘、报告导出、备份恢复、AI 自检等
+    services/     知识落盘、报告导出、备份恢复、执行矩阵、留存归档、探索性测试等
     prompts/      提示词模板库
     static/       前端构建产物
   prompts/        提示词 YAML
-  scripts/        门禁与初始化脚本
+  scripts/        门禁与初始化脚本（含 MCP / HTTP 桩服务器）
 frontend/
   src/
     api/          统一请求层
     components/   通用组件
-    views/        47 个页面组件
-data/             运行时数据（SQLite、日志、密钥）
+    views/        56 个页面组件
+data/             运行时数据（SQLite、日志、密钥、归档、探索性截图与日志切片）
 knowledge/        知识库 Markdown 落盘目录
 ```
 

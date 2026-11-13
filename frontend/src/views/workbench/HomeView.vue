@@ -20,11 +20,6 @@
       description="请确认 AITP 后端已启动（默认 http://127.0.0.1:8760），然后点击「刷新」重试。"
     />
 
-    <div class="panel panel-pad home__section">
-      <div class="home__section-title">知识库问答助手</div>
-      <KnowledgeAssistant compact />
-    </div>
-
     <!-- 数据概览：资产卡 + 指标卡合成一个大边框，固定 6 列两行 -->
     <div class="panel panel-pad home__section">
       <div class="home__section-title">
@@ -136,6 +131,14 @@
 
     <!-- 可定制卡片区：显示与顺序在「设置 → 首页卡片定制」里调整 -->
     <div class="home__cards">
+      <div
+        v-show="cardVisible('assistant')"
+        class="panel panel-pad home__section home__card"
+        :style="cardStyle('assistant')"
+      >
+        <div class="home__section-title">知识库问答助手</div>
+        <KnowledgeAssistant compact />
+      </div>
       <div
         v-show="cardVisible('recentTasks')"
         class="panel panel-pad home__section home__card"
@@ -273,6 +276,19 @@
             <template #default="{ row }">{{ dateTimeText(row.createdAt) }}</template>
           </el-table-column>
         </el-table>
+      </div>
+
+      <!-- 计划与轮次总览：层级树 / 甘特 / 看板，与测试计划页同一组件 -->
+      <div
+        v-show="cardVisible('planOverview')"
+        class="panel panel-pad home__section home__card"
+        :style="cardStyle('planOverview')"
+      >
+        <div class="home__section-title">
+          计划与轮次总览
+          <span class="home__section-hint">版本 → 计划 → 轮次，可切甘特 / 看板</span>
+        </div>
+        <PlanOverviewPanel />
       </div>
 
       <!-- 测试环境健康监测：消费测试环境配置，本机探测 + CPU/内存/磁盘动态曲线 -->
@@ -430,6 +446,7 @@ import ModuleTree, { type ModuleTreeExpose } from '@/components/ModuleTree.vue'
 import QuickEntryGrid from '@/components/QuickEntryGrid.vue'
 import KnowledgeAssistant from '@/components/KnowledgeAssistant.vue'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
+import PlanOverviewPanel from '@/views/execution/PlanOverviewPanel.vue'
 import { caseApi, moduleApi, projectVersionApi, settingsApi, testEnvApi, workbenchApi } from '@/api'
 import type { PagePayload } from '@/api/request'
 import { NODE_CASE_PAGE_SIZE } from '@/composables/useNodeCases'
@@ -478,15 +495,17 @@ const pendingKnowledge = computed(() => overview.value?.pendingKnowledge ?? 0)
 // ---- 首页卡片定制：显示与顺序都来自「设置 → 首页卡片定制」----
 /** 兜底排布：配置接口没回来时首页仍按默认布局渲染，不会出现空白页 */
 const FALLBACK_CARDS: HomeCardItem[] = [
-  { key: 'recentTasks', label: '最近任务', description: '', width: 'full', locked: false, visible: true, order: 0 },
-  { key: 'caseStatus', label: '用例执行状态', description: '', width: 'half', locked: false, visible: true, order: 1 },
-  { key: 'bugStatus', label: '缺陷状态分布', description: '', width: 'half', locked: false, visible: true, order: 2 },
-  { key: 'projectProgress', label: '项目进度', description: '', width: 'half', locked: false, visible: true, order: 3 },
-  { key: 'moduleTree', label: '模块结构', description: '', width: 'half', locked: false, visible: true, order: 4 },
-  { key: 'aiUsage', label: 'AI 能力使用', description: '', width: 'half', locked: false, visible: false, order: 5 },
-  { key: 'bugSeverity', label: '缺陷严重级别', description: '', width: 'half', locked: false, visible: false, order: 6 },
-  { key: 'recentReports', label: '最近测试报告', description: '', width: 'half', locked: false, visible: false, order: 7 },
-  { key: 'envHealth', label: '测试环境健康监测', description: '', width: 'full', locked: false, visible: true, order: 8 },
+  { key: 'assistant', label: '知识库问答助手', description: '', width: 'full', locked: false, visible: true, order: 0 },
+  { key: 'recentTasks', label: '最近任务', description: '', width: 'full', locked: false, visible: true, order: 1 },
+  { key: 'caseStatus', label: '用例执行状态', description: '', width: 'half', locked: false, visible: true, order: 2 },
+  { key: 'bugStatus', label: '缺陷状态分布', description: '', width: 'half', locked: false, visible: true, order: 3 },
+  { key: 'projectProgress', label: '项目进度', description: '', width: 'half', locked: false, visible: true, order: 4 },
+  { key: 'moduleTree', label: '模块结构', description: '', width: 'half', locked: false, visible: true, order: 5 },
+  { key: 'aiUsage', label: 'AI 能力使用', description: '', width: 'half', locked: false, visible: false, order: 6 },
+  { key: 'bugSeverity', label: '缺陷严重级别', description: '', width: 'half', locked: false, visible: false, order: 7 },
+  { key: 'recentReports', label: '最近测试报告', description: '', width: 'half', locked: false, visible: false, order: 8 },
+  { key: 'planOverview', label: '计划与轮次总览', description: '', width: 'full', locked: false, visible: true, order: 9 },
+  { key: 'envHealth', label: '测试环境健康监测', description: '', width: 'full', locked: false, visible: true, order: 10 },
 ]
 
 const cardLayout = ref<HomeCardItem[]>(FALLBACK_CARDS)

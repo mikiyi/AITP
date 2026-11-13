@@ -41,6 +41,7 @@ from .helpers import (
     require_project,
     scope_arg,
 )
+from .modules import _to_public as _module_to_public
 
 bp = Blueprint("test_cases", __name__)
 
@@ -250,7 +251,7 @@ def case_tree() -> Response:
     walk(tree)
     orphan_stat = counts["orphans"]
     return ok({
-        "list": tree,
+        "list": [_case_node_public(node) for node in tree],
         "orphans": orphans,
         "total": counts["total"],
         "orphanCount": int(orphan_stat.get("total") or 0),
@@ -258,6 +259,17 @@ def case_tree() -> Response:
         "nextCursor": next_cursor,
         "returned": len(rows),
     })
+
+
+def _case_node_public(node: dict[str, Any]) -> dict[str, Any]:
+    """模块树节点 camelCase 出参 + 用例挂载字段，任意深度同一契约。"""
+    pub = _module_to_public(node)
+    pub["cases"] = node.get("cases", [])
+    pub["caseCount"] = int(node.get("caseCount") or 0)
+    pub["passCount"] = int(node.get("passCount") or 0)
+    pub["failCount"] = int(node.get("failCount") or 0)
+    pub["children"] = [_case_node_public(child) for child in node.get("children") or []]
+    return pub
 
 
 def _tree_page_size() -> int:

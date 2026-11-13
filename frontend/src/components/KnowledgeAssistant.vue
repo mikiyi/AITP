@@ -1,7 +1,10 @@
 <template>
-  <div class="assistant" :class="{ 'assistant--compact': compact }">
+  <div
+    class="assistant"
+    :class="[{ 'assistant--compact': compact }, `is-mode-${mode}`]"
+  >
     <div class="assistant__head">
-      <el-radio-group v-model="mode" size="small">
+      <el-radio-group v-model="mode" size="small" class="assistant__modes">
         <el-radio-button value="llm">基于大模型回答</el-radio-button>
         <el-radio-button value="kb">基于知识库回答</el-radio-button>
         <el-radio-button value="hybrid">知识库+大模型补强</el-radio-button>
@@ -40,7 +43,7 @@
           v-for="(item, index) in messages"
           :key="index"
           class="assistant__msg"
-          :class="`is-${item.role}`"
+          :class="[`is-${item.role}`, `is-tone-${toneOf(item)}`]"
         >
           <div class="assistant__bubble">
             <MarkdownView v-if="item.role === 'assistant'" :source="item.content" />
@@ -205,6 +208,8 @@ type Mode = 'kb' | 'llm' | 'hybrid'
 interface ChatItem {
   role: 'user' | 'assistant'
   content: string
+  /** 提问时所选模式，用于给问题气泡染上对应主题色 */
+  mode?: Mode
   /** 对应提问，加入知识库时要一起留档 */
   question?: string
   refs?: AssistantRef[]
@@ -294,6 +299,14 @@ onUnmounted(onResizeEnd)
 
 const modeHint = computed(() => MODE_HINTS[mode.value])
 
+/** 每条消息按它自己的模式染色：问题用提问时的模式，回复用回答时的模式。 */
+function toneOf(item: ChatItem): Mode {
+  if (item.role === 'user') {
+    return item.mode ?? mode.value
+  }
+  return item.meta?.mode ?? mode.value
+}
+
 const inspectVisible = ref(false)
 const inspectText = ref('')
 const inspectMode = ref<Mode>('hybrid')
@@ -368,7 +381,7 @@ async function send(): Promise<void> {
     return
   }
   sending.value = true
-  messages.value = [...messages.value, { role: 'user', content: text }]
+  messages.value = [...messages.value, { role: 'user', content: text, mode: mode.value }]
   question.value = ''
   await scrollToBottom()
   try {
@@ -432,9 +445,27 @@ async function addToKnowledge(index: number, item: ChatItem): Promise<void> {
 
 <style scoped>
 .assistant {
+  /* 三原色：红=大模型 / 绿=知识库 / 蓝=知识库+大模型。色相固定以保持三原色识别，
+     底纹 / 描边 / 文字再与当前皮肤的 panel / text 混色，做到浅色深色皮肤都适配。 */
+  --ka-red: #d32f2f;
+  --ka-green: #2e7d32;
+  --ka-blue: #1976d2;
+  --mode-tone: var(--ka-blue);
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.assistant.is-mode-llm {
+  --mode-tone: var(--ka-red);
+}
+
+.assistant.is-mode-kb {
+  --mode-tone: var(--ka-green);
+}
+
+.assistant.is-mode-hybrid {
+  --mode-tone: var(--ka-blue);
 }
 
 .assistant__head {
@@ -462,15 +493,41 @@ async function addToKnowledge(index: number, item: ChatItem): Promise<void> {
 }
 
 .assistant__mode-banner.is-llm {
-  --mode-tone: var(--el-color-warning);
+  --mode-tone: var(--ka-red);
 }
 
 .assistant__mode-banner.is-kb {
-  --mode-tone: var(--el-color-success);
+  --mode-tone: var(--ka-green);
 }
 
 .assistant__mode-banner.is-hybrid {
-  --mode-tone: var(--el-color-primary);
+  --mode-tone: var(--ka-blue);
+}
+
+/* 模式页签：未选中时文字带各自色相，选中时整块填充该模式主色 */
+.assistant__modes :deep(.el-radio-button__inner) {
+  color: var(--aitp-text);
+  border-color: var(--aitp-border);
+  background: var(--aitp-panel);
+}
+
+.assistant__modes :deep(.el-radio-button__original-radio[value='llm'] + .el-radio-button__inner) {
+  color: color-mix(in srgb, var(--ka-red) 72%, var(--aitp-text));
+}
+
+.assistant__modes :deep(.el-radio-button__original-radio[value='kb'] + .el-radio-button__inner) {
+  color: color-mix(in srgb, var(--ka-green) 72%, var(--aitp-text));
+}
+
+.assistant__modes :deep(.el-radio-button__original-radio[value='hybrid'] + .el-radio-button__inner) {
+  color: color-mix(in srgb, var(--ka-blue) 72%, var(--aitp-text));
+}
+
+.assistant__modes :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  color: #fff;
+  background: var(--mode-tone);
+  border-color: var(--mode-tone);
+  box-shadow: -1px 0 0 0 var(--mode-tone);
 }
 
 .assistant__mode-icon {
@@ -589,7 +646,7 @@ html[data-theme='industry'] .assistant__mode-banner {
 }
 
 .assistant__resizer:hover::before {
-  background: var(--el-color-primary);
+  background: var(--mode-tone);
 }
 
 .assistant--compact .assistant__messages {
@@ -613,14 +670,41 @@ html[data-theme='industry'] .assistant__mode-banner {
   word-break: break-word;
 }
 
+/* 每条消息按自身模式染底纹：问题用提问模式色，回复用回答模式色 */
+.is-tone-llm {
+  --bubble-tone: var(--ka-red);
+}
+
+.is-tone-kb {
+  --bubble-tone: var(--ka-green);
+}
+
+.is-tone-hybrid {
+  --bubble-tone: var(--ka-blue);
+}
+
 .is-user .assistant__bubble {
-  background: var(--aitp-primary-soft);
+  background: color-mix(in srgb, var(--bubble-tone) 12%, var(--aitp-panel));
+  border: 1px solid color-mix(in srgb, var(--bubble-tone) 38%, transparent);
   color: var(--aitp-text);
 }
 
 .is-assistant .assistant__bubble {
-  background: var(--aitp-subtle);
-  border: 1px solid var(--aitp-border);
+  background: color-mix(in srgb, var(--bubble-tone) 7%, var(--aitp-panel));
+  border: 1px solid color-mix(in srgb, var(--bubble-tone) 26%, var(--aitp-border));
+}
+
+/* 深色皮肤底纹加重一档，保持与浅色皮肤相近的辨识度 */
+html[data-theme='black'] .is-user .assistant__bubble,
+html[data-theme='tech'] .is-user .assistant__bubble,
+html[data-theme='industry'] .is-user .assistant__bubble {
+  background: color-mix(in srgb, var(--bubble-tone) 22%, var(--aitp-panel));
+}
+
+html[data-theme='black'] .is-assistant .assistant__bubble,
+html[data-theme='tech'] .is-assistant .assistant__bubble,
+html[data-theme='industry'] .is-assistant .assistant__bubble {
+  background: color-mix(in srgb, var(--bubble-tone) 14%, var(--aitp-panel));
 }
 
 .assistant__meta {
@@ -661,6 +745,42 @@ html[data-theme='industry'] .assistant__mode-banner {
 
 .assistant__input :deep(.el-textarea) {
   flex: 1;
+}
+
+/* 问题框描边 / 聚焦 / 底色随当前模式主色 */
+.assistant__input :deep(.el-textarea__inner) {
+  background: color-mix(in srgb, var(--mode-tone) 4%, var(--aitp-panel));
+  color: var(--aitp-text);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mode-tone) 45%, var(--aitp-border)) inset;
+}
+
+.assistant__input :deep(.el-textarea__inner:hover) {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mode-tone) 65%, var(--aitp-border)) inset;
+}
+
+.assistant__input :deep(.el-textarea__inner:focus) {
+  box-shadow: 0 0 0 1px var(--mode-tone) inset;
+}
+
+/* 提问按钮填充当前模式主色 */
+.assistant__input :deep(.el-button--primary) {
+  --el-button-bg-color: var(--mode-tone);
+  --el-button-border-color: var(--mode-tone);
+  --el-button-text-color: #fff;
+  --el-button-hover-bg-color: color-mix(in srgb, var(--mode-tone) 84%, #fff);
+  --el-button-hover-border-color: color-mix(in srgb, var(--mode-tone) 84%, #fff);
+  --el-button-hover-text-color: #fff;
+  --el-button-active-bg-color: color-mix(in srgb, var(--mode-tone) 84%, #000);
+  --el-button-active-border-color: color-mix(in srgb, var(--mode-tone) 84%, #000);
+  --el-button-disabled-bg-color: color-mix(in srgb, var(--mode-tone) 38%, var(--aitp-panel));
+  --el-button-disabled-border-color: color-mix(in srgb, var(--mode-tone) 38%, var(--aitp-border));
+  --el-button-disabled-text-color: color-mix(in srgb, var(--mode-tone) 30%, var(--aitp-text));
+}
+
+/* 回复里的「加入知识库」链接也跟随模式主色 */
+.assistant :deep(.el-button.is-link.el-button--primary) {
+  --el-button-text-color: var(--mode-tone);
+  --el-button-hover-text-color: color-mix(in srgb, var(--mode-tone) 80%, var(--aitp-text));
 }
 
 .assistant__inspect {

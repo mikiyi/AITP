@@ -92,6 +92,64 @@ body {
   margin-bottom: 12px;
 }
 
+/* 设置页块头：标题左、操作右。统一全局留白与行内间距，
+   避免未单独定义样式的页面里操作行紧贴下方提示条 / 表格造成边框重叠。 */
+.settings-block__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.settings-block__head h3,
+.settings-block__head h4 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.settings-block__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* 块头 / 工具行之后紧跟的提示条或表格，再补一道最小间距兜底，
+   即使个别页面把 head 的 margin 覆盖为 0 也不会边框相贴。 */
+.settings-block__head + .el-alert,
+.settings-block__head + .el-table,
+.toolbar + .el-alert,
+.toolbar + .el-table {
+  margin-top: 4px;
+}
+
+/* 工具行 / 页头 / 块头操作区控件高度统一为 32px：
+   消除 small 按钮与默认输入框 / 下拉混排时的边框高度差，保证整行控件对齐。 */
+.toolbar .el-button:not(.is-link):not(.is-text),
+.settings-block__actions .el-button:not(.is-link):not(.is-text),
+.page-header .el-button:not(.is-link):not(.is-text) {
+  height: 32px;
+}
+
+.toolbar .el-input__wrapper,
+.settings-block__actions .el-input__wrapper,
+.page-header .el-input__wrapper,
+.toolbar .el-select__wrapper,
+.settings-block__actions .el-select__wrapper,
+.page-header .el-select__wrapper {
+  height: 32px;
+  min-height: 32px;
+}
+
+.toolbar .el-date-editor,
+.settings-block__actions .el-date-editor,
+.page-header .el-date-editor {
+  height: 32px;
+}
+
 .spacer {
   flex: 1;
 }

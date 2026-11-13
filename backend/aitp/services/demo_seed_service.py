@@ -109,6 +109,14 @@ def _clear_demo_rows(conn: sqlite3.Connection, project_ids: list[int]) -> list[s
         _del(f"DELETE FROM biz_todo WHERE project_id IN ({marks}) OR module_id IN ({_m(module_ids)})", project_ids + module_ids)  # noqa: S608
         _del(f"DELETE FROM biz_sql_analysis WHERE project_id IN ({marks}) OR module_id IN ({_m(module_ids)})", project_ids + module_ids)  # noqa: S608
         _del(f"DELETE FROM biz_report_item WHERE report_id IN ({_m(report_ids)})", report_ids)  # noqa: S608
+        _del(f"DELETE FROM biz_report_fragment_use WHERE report_id IN ({_m(report_ids)})", report_ids)  # noqa: S608
+        frag_ids = _ids(f"SELECT id FROM biz_report_fragment WHERE project_id IN ({marks})", project_ids)  # noqa: S608
+        _del(f"DELETE FROM biz_report_fragment_use WHERE fragment_id IN ({_m(frag_ids)})", frag_ids)  # noqa: S608
+        _del(f"DELETE FROM biz_report_fragment WHERE project_id IN ({marks})", project_ids)  # noqa: S608
+        exploration_ids = _ids(f"SELECT id FROM biz_exploration_session WHERE project_id IN ({marks})", project_ids)  # noqa: S608
+        _del(f"DELETE FROM biz_exploration_step WHERE session_id IN ({_m(exploration_ids)})", exploration_ids)  # noqa: S608
+        _del(f"DELETE FROM biz_exploration_session WHERE project_id IN ({marks})", project_ids)  # noqa: S608
+        _del(f"DELETE FROM biz_execution_matrix WHERE project_id IN ({marks})", project_ids)  # noqa: S608
         _del(f"DELETE FROM biz_report WHERE project_id IN ({marks})", project_ids)  # noqa: S608
         _del(f"DELETE FROM biz_knowledge_draft WHERE module_id IN ({_m(module_ids)}) OR article_id IN ({_m(article_ids)}) OR project_id IN ({marks})", module_ids + article_ids + project_ids)  # noqa: S608
         _del(f"DELETE FROM biz_knowledge_version WHERE article_id IN ({_m(article_ids)})", article_ids)  # noqa: S608
@@ -543,6 +551,57 @@ raise SystemExit(1 if failed else 0)
         (project_id, module_ids["login_code"], api_script, now, now),
     )
 
+    # ---- 三期演示资产：报告片段复用 / Web 探索性测试 / 执行矩阵 ----
+    conn.execute(
+        "INSERT INTO biz_report_fragment (project_id, title, section, content, source_report_id,"
+        " source_note, is_global, created_by, created_at, updated_at)"
+        " VALUES (?, '登录验证码边界结论', 'risk',"
+        " '验证码 60 秒倒计时内重复提交会被服务端幂等拦截；验证码过期后重试应提示重新获取而非直接报错。'"
+        " , ?, '取自示例回归报告的风险章节，可在其他报告一键复用，改一处各处同步', 1, 'yichengren', ?, ?)",
+        (project_id, report_id, now, now),
+    )
+
+    conn.execute(
+        "INSERT INTO biz_exploration_session (session_no, project_id, name, target_url, driver,"
+        " status, max_steps, max_seconds, settings_json, plan_json, step_total, step_done,"
+        " anomaly_count, draft_count, degraded, summary_json, started_at, finished_at, created_by,"
+        " created_at, updated_at)"
+        " VALUES ('EX-DEMO-001', ?, '登录页无脚本探索演示', 'http://127.0.0.1:8760/', 'scripted',"
+        " 'done', 5, 60, '{}', '[]', 5, 5, 1, 1, 0,"
+        " '{\"driver\": \"scripted\", \"degraded\": false, \"steps\": 5, \"anomalies\": 1, \"drafts\": 1}',"
+        " ?, ?, 'yichengren', ?, ?)",
+        (project_id, now, now, now, now),
+    )
+    exploration_id = int(cast("int", conn.execute(
+        "SELECT id FROM biz_exploration_session WHERE session_no = 'EX-DEMO-001'").fetchone()[0]))
+    for step_no, action, selector, snapshot, observation, is_anomaly, anomaly_type in [
+        (1, "navigate", "", "登录页正常渲染，含手机号与验证码输入框", "页面加载正常", 0, ""),
+        (2, "click", "#send-code", "点击获取验证码后倒计时启动", "倒计时 60 秒启动正常", 0, ""),
+        (3, "type", "#password", "输入框已填入内容（口令已脱敏）", "输入回显正常", 0, ""),
+        (4, "snapshot", "", "连续快速提交后接口返回 500", "接口 /api/login 返回 500，疑似未做提交幂等", 1, "http_error"),
+        (5, "snapshot", "", "页面无新信息，收敛", "无新增信息，探索收敛", 0, ""),
+    ]:
+        conn.execute(
+            "INSERT INTO biz_exploration_step (session_id, step_no, action, selector, page_url,"
+            " input_masked, snapshot_summary, observation, is_anomaly, anomaly_type, detected_at,"
+            " last_ok_at, trace_id, duration_ms, detail_json, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, 'http://127.0.0.1:8760/', ?, ?, ?, ?, ?, ?, '', ?, 120, '{}', ?, ?)",
+            (exploration_id, step_no, action, selector,
+             "[输入已脱敏]" if action == "type" else "",
+             snapshot, observation, is_anomaly, anomaly_type,
+             now if is_anomaly else "",
+             f"trace-demo-{step_no:03d}", now, now),
+        )
+
+    conn.execute(
+        "INSERT INTO biz_execution_matrix (project_id, matrix_no, name, mode, run_id, env_ids_json,"
+        " script_ids_json, target_mode, targets_json, status, cell_total, cell_done, summary_json,"
+        " created_at, updated_at)"
+        " VALUES (?, 'MX-DEMO-001', '登录主流程多环境矩阵演示', 'interface', NULL,"
+        " '[]', '[]', 'default', '[]', 'draft', 0, 0, '{}', ?, ?)",
+        (project_id, now, now),
+    )
+
     counts = {
         "项目": 1,
         "模块节点": len(module_ids),
@@ -557,5 +616,9 @@ raise SystemExit(1 if failed else 0)
         "会话": 1,
         "消息": 4,
         "自动化脚本": 1,
+        "报告片段": 1,
+        "探索会话": 1,
+        "探索步骤": 5,
+        "执行矩阵": 1,
     }
     return counts

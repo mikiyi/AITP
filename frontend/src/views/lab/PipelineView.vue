@@ -58,11 +58,11 @@
                 </span>
               </div>
               <div class="saved-entry__actions">
-                <el-button link type="primary" @click="loadEntry(entry)">载入</el-button>
+                <el-button link type="primary" :disabled="entry.status === 'published'" @click="loadEntry(entry)">载入</el-button>
                 <el-button link :disabled="entry.status === 'published'" @click="publishEntry(entry)">
                   发布
                 </el-button>
-                <el-button link type="danger" @click="removeEntry(entry)">删除</el-button>
+                <el-button link type="danger" :disabled="entry.status === 'published'" @click="removeEntry(entry)">删除</el-button>
               </div>
             </div>
             <span v-if="!entries.length && !entriesLoading" class="muted saved-panel__empty">
@@ -70,17 +70,26 @@
             </span>
           </div>
           <p class="muted saved-panel__hint">
-            载入后可继续改参数再执行；发布只递增版本号，不锁编辑。
+            草稿可载入继续改参数再执行；发布即终态，锁定编辑与删除，如需调整请新建编排。
           </p>
         </div>
 
-        <div class="panel panel-pad">
+        <div class="panel panel-pad" :class="{ 'steps-fullscreen': stepsFullscreen }">
           <h3 class="section-title">
             执行步骤
             <el-tag size="small" effect="plain">{{ steps.length }} 步</el-tag>
             <el-tag v-if="loadedEntry" size="small" type="success" effect="plain">
               来自「{{ loadedEntry.name }}」
             </el-tag>
+            <el-button
+              link
+              type="primary"
+              class="steps-fullscreen-toggle"
+              :icon="stepsFullscreen ? Close : FullScreen"
+              @click="stepsFullscreen = !stepsFullscreen"
+            >
+              {{ stepsFullscreen ? '退出全屏' : '全屏编辑' }}
+            </el-button>
           </h3>
 
           <div v-if="preflight || steps.length" class="preflight-box">
@@ -145,16 +154,19 @@
 
             <div class="step-card__body">
               <el-form label-width="110px" label-position="right" size="small">
-                <el-form-item v-for="name in requiredOf(step)" :key="`r-${name}`" :label="name">
+                <el-form-item v-for="name in requiredOf(step)" :key="`r-${name}`" :label="variableLabel(step.capability, name)">
                   <el-input
                     v-model="step.variables[name]"
                     type="textarea"
-                    :rows="2"
-                    :placeholder="textareaHint(`必填：${name}`)"
+                    :rows="stepsFullscreen ? 6 : 3"
+                    :placeholder="textareaHint(`请输入${variableLabel(step.capability, name)}（必填）`)"
                   />
                 </el-form-item>
-                <el-form-item v-for="name in optionalOf(step)" :key="`o-${name}`" :label="name">
-                  <el-input v-model="step.variables[name]" :placeholder="`可选：${name}`" />
+                <el-form-item v-for="name in optionalOf(step)" :key="`o-${name}`" :label="variableLabel(step.capability, name)">
+                  <el-input
+                    v-model="step.variables[name]"
+                    :placeholder="`可选：${variableLabel(step.capability, name)}`"
+                  />
                 </el-form-item>
                 <el-form-item label="功能点">
                   <el-select v-model="step.moduleId" clearable placeholder="继承全局功能点" style="width: 100%">
@@ -292,8 +304,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Bottom,
   CircleClose,
+  Close,
   Delete,
   FolderAdd,
+  FullScreen,
   MagicStick,
   Plus,
   Promotion,
@@ -304,6 +318,7 @@ import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import { labApi, workbenchApi } from '@/api'
 import { percentText } from '@/utils/format'
 import { textareaHint } from '@/utils/inputHints'
+import { variableLabel } from './capabilityForms'
 import { useAiGuardStore } from '@/stores/aiGuard'
 import type { PipelineResult, PreflightResult, WorkbenchEntry } from '@/api/types'
 import { usePromptTemplates } from '@/composables/usePromptTemplates'
@@ -333,6 +348,7 @@ const preflightVisible = ref(false)
 const preflightText = ref('')
 const preflighting = ref(false)
 const checking = ref(false)
+const stepsFullscreen = ref(false)
 
 const entries = ref<WorkbenchEntry[]>([])
 const entriesLoading = ref(false)
@@ -354,6 +370,17 @@ function optionalOf(step: StepForm): string[] {
 
 function labelOf(capability: string): string {
   return labStore.capabilities.find((item) => item.code === capability)?.label ?? capability
+}
+
+/** 变量值转可编辑文本：对象/数组序列化为 JSON，避免输入框露出 [object Object]。 */
+function toText(value: unknown): string {
+  if (value == null) {
+    return ''
+  }
+  if (typeof value === 'object') {
+    return JSON.stringify(value, null, 2)
+  }
+  return String(value)
 }
 
 function promptCodeOf(capability: string): string {
@@ -517,6 +544,10 @@ function ensureVariables(step: StepForm): void {
 }
 
 async function loadEntry(entry: WorkbenchEntry): Promise<void> {
+  if (entry.status === 'published') {
+    ElMessage.warning('已发布的编排为终态，不能载入编辑；如需调整请新建编排')
+    return
+  }
   result.value = null
   preflight.value = null
   steps.value = (entry.workflow ?? []).map((item) => ({
@@ -525,10 +556,7 @@ async function loadEntry(entry: WorkbenchEntry): Promise<void> {
     name: item.name || labelOf(item.capability),
     moduleId: item.moduleId ?? null,
     variables: Object.fromEntries(
-      Object.entries(item.variables ?? {}).map(([name, value]) => [
-        name,
-        value == null ? '' : String(value),
-      ]),
+      Object.entries(item.variables ?? {}).map(([name, value]) => [name, toText(value)]),
     ),
   }))
   await Promise.all(steps.value.map((step) => refreshVars(step.capability)))
@@ -551,6 +579,10 @@ async function publishEntry(entry: WorkbenchEntry): Promise<void> {
 }
 
 async function removeEntry(entry: WorkbenchEntry): Promise<void> {
+  if (entry.status === 'published') {
+    ElMessage.warning('已发布的编排为终态，不能删除')
+    return
+  }
   try {
     await ElMessageBox.confirm(
       `删除编排「${entry.name}」？已产生的执行记录不受影响。`,
@@ -921,6 +953,26 @@ onMounted(async () => {
 
 .add-step {
   width: 100%;
+}
+
+.steps-fullscreen-toggle {
+  margin-left: auto;
+}
+
+/* 全屏编辑：把执行步骤面板提升为覆盖视口的编辑区，仍编辑同一份 steps 状态。 */
+.steps-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  margin: 0;
+  border-radius: 0;
+  overflow-y: auto;
+  background: var(--aitp-panel);
+  padding: 20px 28px;
+}
+
+.steps-fullscreen .step-card__body :deep(textarea) {
+  min-height: 120px;
 }
 
 .pipeline-output {

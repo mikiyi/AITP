@@ -81,7 +81,7 @@ The launcher checks the port first: if AITP is already running it just opens the
 
 ## Feature map
 
-Frontend: 46 routes / 47 page components. Backend: 34 blueprints / 337 endpoints, all under `/api/v1`.
+Frontend: 56 routes / 56 page components. Backend: 38 blueprints / 398 endpoints, all under `/api/v1`.
 
 ### First-launch tour and demo project
 
@@ -114,7 +114,7 @@ Page: **Task list** (`/todos`)
 
 ### AI lab
 
-19 capabilities. Knowledge-base Q&A runs through the "Knowledge Base → Q&A assistant" chat panel:
+20 capabilities. Knowledge-base Q&A runs through the "Knowledge Base → Q&A assistant" chat panel:
 
 | Capability | ID |
 |---|---|
@@ -136,6 +136,7 @@ Page: **Task list** (`/todos`)
 | Automation script generation | `automation_script` |
 | Performance script generation | `performance_script` |
 | Test data generation | `test_data_generation` |
+| Web exploratory testing | `exploratory_web` |
 | Prompt optimization | `prompt_optimize` |
 
 - **Capability cards are driven by the prompt library**
@@ -159,8 +160,12 @@ Page: **Task list** (`/todos`)
 | Assertion library | Reusable assertion rules shared per project/feature point, referenced from interface cases as `lib:<code>`, JSON Schema assertions with failure diffs |
 | Knowledge base | Pending pool → official library, versioning, review, reference protection, full-text search |
 | Test reports | Generation/adoption, ECharts charts, metric trends, export |
-| Execution and evidence | Interface / automation / manual / regression runs each write one unified evidence snapshot, drillable from runs, defects and reports |
+| Execution and evidence | Interface / automation / manual / regression / **exploratory** runs each write one unified evidence snapshot, drillable from runs, defects and reports |
 | Regression checklist | CRUD, AI-generated regression items, auto items really executed by the server with evidence, manual items require evidence to pass |
+| Execution matrix (GAP-43) | Fan a batch of cases across multiple environments × endpoints (app servers), dispatch once and really run each cell; per-case cross-cell attribution (common pass / common failure / env-specific / endpoint-specific / mixed); one-click defect conversion for common failures with evidence attached; production environments require explicit confirmation to dispatch |
+| Web exploratory testing (GAP-45) | An MCP-driven browser explores in a read-snapshot → decide → act → observe loop, finding gaps that scripted cases miss; anomalous steps force 3 screenshots plus a dual-anchor ±N-second log slice, network snapshot, console errors and traceId as an evidence pack; password/token inputs are masked per PII rules; findings go to the pending pool for human review first and only become defects after approval |
+| Knowledge / report fragment reuse (GAP-42) | A fragment is maintained once in its source project; target reports register a reference and rendering / export reads the body live, avoiding drifting copies; referenced fragments cannot be deleted |
+| Data retention and archival (GAP-44) | Per-data-type retention days and expiry actions (archive / soft-delete / summary-only) for runs, automation runs, evidence, logs and todos; reference protection (bug-linked evidence, matrix-linked records survive expiry); expired data is zipped into `data/archive/` and searchable with original readback; dry-run preview and startup auto-cleanup supported |
 
 ### Workspace configuration
 
@@ -172,6 +177,8 @@ Page: **Task list** (`/todos`)
 | System settings | Read/write all configuration items |
 | Test environment configuration | Multiple named environments, credentials in the system keystore, reachability probe |
 | Data backup | Database snapshot backup, full-bundle backup, restore |
+| Data retention and archival | Per-type retention days and expiry actions, expiry preview, dry-run, run cleanup now, archive search and original readback (GAP-44) |
+| Exploratory testing settings | Max steps / duration / per-step timeout / screenshots, record selectors, input masking toggle, log-slice window and sources, MCP server command and pinned-tool allowlist (GAP-45) |
 | CI and notifications | CI tokens, webhook channels, event subscriptions, test send |
 | Home card customization | Show/hide and reorder non-fixed home cards |
 
@@ -263,8 +270,8 @@ cd frontend && npm run build                                              # fron
 - Any new gate script dropped into `backend/scripts` named `check_*.py` is picked up
   automatically without touching the runner.
 
-Gate inventory (45 entries = 44 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
-scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 44 items actually
+Gate inventory (53 entries = 52 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
+scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 52 items actually
 execute):
 
 | Script | Covers | When it fails, look at |
@@ -340,22 +347,22 @@ run as the source of truth. On CI `check_isolation_matrix` is excluded via `--sk
 ```
 backend/
   aitp/
-    api/          34 blueprints / 337 endpoints
+    api/          38 blueprints / 398 endpoints
     ai/           resolver, client, masking, adapters
     common/       constants, validation, pagination, keystore, security utilities
-    db/           connections and migrations
+    db/           connections and migrations (55 files)
     repositories/ parameterized SQL repository layer
-    services/     knowledge persistence, report export, backup/restore, AI self-check
+    services/     knowledge persistence, report export, backup/restore, execution matrix, retention/archival, exploratory testing
     prompts/      prompt template library
     static/       built frontend assets
   prompts/        prompt YAML
-  scripts/        gates and bootstrap scripts
+  scripts/        gates and bootstrap scripts (incl. MCP / HTTP stub servers)
 frontend/
   src/
     api/          unified request layer
     components/   shared components
-    views/        47 page components
-data/             runtime data (SQLite, logs, keystore)
+    views/        56 page components
+data/             runtime data (SQLite, logs, keystore, archives, exploratory screenshots and log slices)
 knowledge/        Markdown knowledge base storage
 ```
 

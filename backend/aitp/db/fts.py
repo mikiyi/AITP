@@ -19,11 +19,12 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from typing import Any
+from typing import Any, Sequence
 
 from ..common.pagination import MAX_PAGE_SIZE
 
 _TOKEN_RE = re.compile(r"[^\s,，。；;、:：!！?？()（）\[\]【】\"'`]+")
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 
 FTS_MIN_LEN = 3
 
@@ -108,6 +109,7 @@ def hybrid_search(
     page_num: int = 1,
     page_size: int = 20,
     fallback_on_empty: bool = False,
+    synonyms: Sequence[str] = (),
 ) -> dict[str, Any]:
     """执行混合检索，返回 {list, total, pageNum, pageSize, pages, matchMode}。
 
@@ -153,6 +155,7 @@ def hybrid_search(
         limit=limit,
         offset=offset,
         tokens=tokens,
+        synonyms=synonyms,
     )
     return fallback if fallback is not None else result
 
@@ -169,6 +172,7 @@ def _fallback_hybrid(
     limit: int,
     offset: int,
     tokens: list[str],
+    synonyms: Sequence[str] = (),
 ) -> dict[str, Any] | None:
     """问句兜底检索：多路切词 UNION 后按分数归并排序，仍走外层 where_extra。
 
@@ -184,17 +188,50 @@ def _fallback_hybrid(
     variants: list[tuple[list[str], list[str], bool]] = [
         (stripped_long, stripped_short, False),
     ]
-    # ② 长 token 滑窗切 n-gram，连同原 token 一起 OR
+    # ② 长 token 滑窗切 n-gram，连同原 token 一起 OR；
+    #    中文复合查询（如「登录验证码」）没有空格，只按整串短语查必然 0 命中，
+    #    这里同时补 2 字切片走 instr——trigram 只处理 >=3 字，短词只能靠 instr。
     or_long: list[str] = []
+    or_short: list[str] = list(stripped_short)
     seen: set[str] = set()
     for token in stripped_long:
-        pieces = split_to_ngrams(token) if len(token) > PHRASE_MAX_LEN else [token]
+        # 只有纯中文复合短语才补 3~5 字 n-gram 与 2 字切片；
+        # 英文/编号/混排 token 保持原有短语语义，避免短片段放大误报。
+        cjk_phrase = bool(_CJK_RE.search(token)) and not any(
+            char.isascii() and char.isalnum() for char in token)
+        ngram = len(token) > PHRASE_MAX_LEN or (
+            len(token) >= FTS_MIN_LEN and cjk_phrase)
+        pieces = split_to_ngrams(token) if ngram else [token]
         for piece in pieces + [token]:
+            if len(or_long) >= FALLBACK_FETCH_CAP:
+                break
             if piece not in seen:
                 seen.add(piece)
                 or_long.append(piece)
-    if or_long or stripped_short:
-        variants.append((or_long, stripped_short, True))
+        if cjk_phrase:
+            for i in range(len(token) - 1):
+                if len(or_short) >= FALLBACK_FETCH_CAP:
+                    break
+                piece = token[i:i + 2]
+                if piece not in seen:
+                    seen.add(piece)
+                    or_short.append(piece)
+        if len(or_long) + len(or_short) >= FALLBACK_FETCH_CAP:
+            break
+    # 领域同义词只服务「零字面重叠」的问法；由调用方按知识域传入
+    for term in synonyms:
+        word = str(term).strip()
+        if not word or word in seen:
+            continue
+        seen.add(word)
+        if len(word) >= FTS_MIN_LEN:
+            or_long.append(word)
+        else:
+            or_short.append(word)
+        if len(or_long) + len(or_short) >= FALLBACK_FETCH_CAP:
+            break
+    if or_long or or_short:
+        variants.append((or_long, or_short, True))
 
     merged: dict[int, dict[str, Any]] = {}
     for long_part, short_part, or_mode in variants:

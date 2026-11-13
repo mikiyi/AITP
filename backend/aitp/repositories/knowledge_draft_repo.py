@@ -16,7 +16,8 @@ DRAFT_STATUS_APPROVED = "approved"
 DRAFT_STATUS_REJECTED = "rejected"
 
 SOURCE_ASSISTANT = "assistant"
-SOURCE_TYPES = ("ai_output", "manual", "session", "case", "bug", "report", SOURCE_ASSISTANT)
+SOURCE_EXPLORATORY = "exploratory"
+SOURCE_TYPES = ("ai_output", "manual", "session", "case", "bug", "report", SOURCE_ASSISTANT, SOURCE_EXPLORATORY)
 
 #: 来源枚举全中文：前端只消费 label，不在页面里复制一份映射
 SOURCE_TYPE_LABELS = {
@@ -27,6 +28,7 @@ SOURCE_TYPE_LABELS = {
     "bug": "缺陷",
     "report": "测试报告",
     SOURCE_ASSISTANT: "知识库问答助手",
+    SOURCE_EXPLORATORY: "Web 探索性测试",
 }
 
 ASSISTANT_TITLE_PREFIX = "AI问答助手"
@@ -111,6 +113,9 @@ class KnowledgeDraftRepository(BaseRepository):
             )
 
         if action == "approve":
+            if str(draft.get("source_type") or "") == SOURCE_EXPLORATORY:
+                bug_id = self._promote_to_bug(draft, reviewer=reviewer, review_comment=review_comment)
+                return {"draftId": draft_id, "articleId": None, "bugId": bug_id, "action": action}
             article_id = self._promote(draft, reviewer=reviewer, review_comment=review_comment)
             return {"draftId": draft_id, "articleId": article_id, "action": action}
         if action == "reject":
@@ -127,18 +132,24 @@ class KnowledgeDraftRepository(BaseRepository):
     def batch_review(self, draft_ids: list[int], action: str, reviewer: str = "",
                      review_comment: str = "") -> dict[str, Any]:
         succeeded: list[int] = []
+        bug_ids: list[int] = []
         failed: list[dict[str, Any]] = []
         for draft_id in draft_ids:
             try:
                 result = self.review(draft_id, action, reviewer=reviewer, review_comment=review_comment)
-                succeeded.append(result["articleId"] or draft_id)
+                # 探索性产物转缺陷（bugId），不能把草稿 id 混进文章 id 列表去同步知识文件
+                if result.get("bugId"):
+                    bug_ids.append(int(result["bugId"]))
+                else:
+                    succeeded.append(result["articleId"] or draft_id)
             except AppError as exc:
                 failed.append({"draftId": draft_id, "code": exc.code, "message": exc.message})
         return {
             "action": action,
             "succeeded": succeeded,
+            "bugIds": bug_ids,
             "failed": failed,
-            "successCount": len(succeeded),
+            "successCount": len(succeeded) + len(bug_ids),
             "failCount": len(failed),
         }
 
@@ -247,6 +258,51 @@ class KnowledgeDraftRepository(BaseRepository):
             "article_id": article_id,
         })
         return article_id
+
+    def _promote_to_bug(self, draft: RowDict, reviewer: str = "", review_comment: str = "") -> int:
+        """探索性产物审核通过 → 转缺陷（GAP-45）。
+
+        产物本体是「疑似缺陷」，审核通过才写 biz_bug；同时把异常步的证据挂到缺陷上。
+        不写知识正式库——探索性结论的可复盘价值由证据包承载，避免污染知识库。
+        """
+        from ..services import execution_protocol
+        from .bug_repo import BugRepository
+
+        now = utcnow_iso()
+        project_id = int(draft.get("project_id") or 0)
+        if not project_id:
+            raise AppError(ErrorCode.ILLEGAL_OPERATION, "探索性产物缺少项目归属，无法转缺陷")
+        bug_repo = BugRepository(self.conn)
+        title = str(draft.get("title") or "探索性测试发现")[:500]
+        bug_id = bug_repo.insert({
+            "project_id": project_id,
+            "bug_no": bug_repo.next_bug_no(project_id),
+            "title": title,
+            "severity": "P2",
+            "status": "open",
+            "priority": "P2",
+            "bug_type": "functional",
+            "description": str(draft.get("content") or "")[:100000],
+            "reporter": (reviewer or "探索性测试")[:64],
+            "module": str(draft.get("ref_label") or "")[:200],
+        })
+        # 异常步证据（source_type=exploratory, source_row_id=step_id）挂到缺陷上
+        step_id = int(draft.get("ref_id") or 0)
+        if str(draft.get("ref_type") or "") == "exploration_step" and step_id:
+            self.conn.execute(
+                "UPDATE biz_execution_evidence SET bug_id = ?, updated_at = ?"
+                " WHERE source_type = ? AND source_row_id = ? AND is_deleted = 0"
+                " AND (bug_id IS NULL OR bug_id = ?)",
+                (int(bug_id), now, execution_protocol.SOURCE_EXPLORATORY, step_id, int(bug_id)),
+            )
+        self.update(draft["id"], {
+            "review_status": DRAFT_STATUS_APPROVED,
+            "reviewer": reviewer,
+            "review_comment": review_comment,
+            "reviewed_at": now,
+            "bug_id": int(bug_id),
+        })
+        return int(bug_id)
 
     def _row_exists(self, table: str, row_id: int) -> bool:
         return self.conn.execute(

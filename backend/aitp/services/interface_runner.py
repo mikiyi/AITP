@@ -963,6 +963,8 @@ def _run_run_case(
     env: dict[str, Any],
     timeout: int,
     executed_by: str,
+    *,
+    writeback: bool = True,
 ) -> Detail:
     extra = row.get("extra")
     if not isinstance(extra, dict):
@@ -980,16 +982,17 @@ def _run_run_case(
         detail=detail,
         executed_by=executed_by,
     )
-    result = test_run_service.record_result(
-        conn,
-        int(run["id"]),
-        int(row["id"]),
-        result=RUN_PASSED if detail["result"] == RUN_PASSED else RUN_FAILED,
-        actual_result=_actual_text(detail),
-        executed_by=executed_by,
-    )
-    detail["runCase"] = result["runCase"]
-    detail["run"] = result["run"]
+    if writeback:
+        result = test_run_service.record_result(
+            conn,
+            int(run["id"]),
+            int(row["id"]),
+            result=RUN_PASSED if detail["result"] == RUN_PASSED else RUN_FAILED,
+            actual_result=_actual_text(detail),
+            executed_by=executed_by,
+        )
+        detail["runCase"] = result["runCase"]
+        detail["run"] = result["run"]
     detail["envId"] = int(env["id"])
     detail["envName"] = str(env.get("name") or "")
     return detail
@@ -1025,12 +1028,22 @@ def run_batch(
     timeout: int = DEFAULT_TIMEOUT,
     executed_by: str = "local",
     on_progress: Callable[[int, int], None] | None = None,
+    base_url: str | None = None,
+    writeback: bool = True,
 ) -> dict[str, Any]:
-    """顺序执行轮次内全部接口用例；单条配置错误只失败该条，不中断整批。"""
+    """顺序执行轮次内全部接口用例；单条配置错误只失败该条，不中断整批。
+
+    ``base_url`` 只给执行矩阵用：同一环境下按不同应用服务器（端）逐个跑，
+    环境档案本身不改，回写仍记真实 env_id。
+    ``writeback=False`` 同样只给执行矩阵用：旁路执行不回写轮次结论，
+    否则第一格跑完整轮就被判完成，其余格子全被冻结拒绝；执行流水与证据照留。
+    """
     run = TestRunRepository(conn).get(run_id)
     if run is None:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "测试轮次不存在")
     env = _load_env(conn, env_id if env_id is not None else run.get("env_id"))
+    if base_url is not None:
+        env = {**env, "app_base_url": str(base_url)}
     rows = [
         row for row in TestRunCaseRepository(conn).list_by_run(run_id)
         if str(row.get("case_type") or "") == "interface"
@@ -1044,8 +1057,9 @@ def run_batch(
     details: list[dict[str, Any]] = []
     for index, row in enumerate(rows, start=1):
         duration_ms: int | None = None
+        detail: Detail = {}
         try:
-            detail = _run_run_case(conn, run, row, env, timeout, executed_by)
+            detail = _run_run_case(conn, run, row, env, timeout, executed_by, writeback=writeback)
             result = str(detail.get("result") or RUN_FAILED)
             status_code = detail.get("statusCode")
             duration_ms = detail.get("durationMs")
@@ -1054,14 +1068,15 @@ def run_batch(
             result = RUN_FAILED
             status_code = None
             message = str(exc)
-            test_run_service.record_result(
-                conn,
-                run_id,
-                int(row["id"]),
-                result=RUN_FAILED,
-                actual_result=message,
-                executed_by=executed_by,
-            )
+            if writeback:
+                test_run_service.record_result(
+                    conn,
+                    run_id,
+                    int(row["id"]),
+                    result=RUN_FAILED,
+                    actual_result=message,
+                    executed_by=executed_by,
+                )
         if result == RUN_PASSED:
             passed += 1
         else:
@@ -1075,6 +1090,7 @@ def run_batch(
             "statusCode": status_code,
             "durationMs": duration_ms,
             "message": message,
+            "assertions": detail.get("assertions") or [],
         })
         if on_progress is not None:
             on_progress(index, total)

@@ -26,6 +26,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from aitp.ai.client import RETRY_LIMIT  # noqa: E402
+from aitp.ai.capability_codes import CAPABILITIES, LAB_CAPABILITIES  # noqa: E402
 from aitp.app import create_app  # noqa: E402
 from aitp.config import AppConfig  # noqa: E402
 from aitp.db.migrator import init_db  # noqa: E402
@@ -697,7 +698,7 @@ def check_meta(api: Api) -> None:
     enums = api.data("GET", "/api/v1/meta/enums")
     check("枚举字典含缺陷状态机", "bugTransitions" in enums, str(sorted(enums.keys())))
     caps = api.data("GET", "/api/v1/meta/capabilities")
-    check("能力目录含 19 项", len(caps) == 19, str(len(caps)))
+    check("能力目录与注册表一致", len(caps) == len(CAPABILITIES), str(len(caps)))
     codes = {item["code"] for item in caps}
     check("能力目录覆盖需求确认与新增脚本能力",
           "requirement_confirm" in codes and "knowledge_assistant" not in codes
@@ -865,14 +866,14 @@ def check_lab(api: Api, project_id: int, feature_id: int) -> None:
 
 def _check_lab_inner(api: Api, project_id: int, feature_id: int) -> None:
     caps = api.data("GET", "/api/v1/lab/capabilities")
-    check("能力目录含 19 项", len(caps) == 19, str(len(caps)))
+    check("能力目录与注册表一致", len(caps) == len(CAPABILITIES), str(len(caps)))
     main_caps = api.data("GET", "/api/v1/lab/main-capabilities")
-    check("实验室主能力 19 个", len(main_caps) == 19, str(len(main_caps)))
+    check("实验室主能力与注册表一致", len(main_caps) == len(LAB_CAPABILITIES), str(len(main_caps)))
     check("每个能力都有卡片入口",
           {item["code"] for item in caps} == {item["code"] for item in main_caps},
           str(sorted({item["code"] for item in caps} ^ {item["code"] for item in main_caps})))
     check("扩展能力已并入核心能力",
-          sum(1 for item in main_caps if item.get("category") == "core") == 19
+          sum(1 for item in main_caps if item.get("category") == "core") == len(LAB_CAPABILITIES)
           and sum(1 for item in main_caps if item.get("category") == "extended") == 0,
           str([item.get("category") for item in main_caps]))
     check("能力目录含提示词编号",
@@ -884,7 +885,8 @@ def _check_lab_inner(api: Api, project_id: int, feature_id: int) -> None:
           all("requiredVariables" in item and "optionalVariables" in item
               for item in main_caps), str(main_caps[:1]))
     prompts = api.data("GET", "/api/v1/lab/prompts")
-    check("提示词库列出全部 23 个模板", len(prompts) == 23, str(len(prompts)))
+    template_count = len(list((ROOT / "backend" / "prompts").glob("*.md")))
+    check("提示词库列出全部模板", len(prompts) == template_count, str(len(prompts)))
 
     # 缺变量 → 120102 并列出缺失名
     body = api.expect("缺必填变量返回 120102", "POST", "/api/v1/lab/requirement_confirm/run",
@@ -1376,6 +1378,11 @@ def check_workbench_entries(api: Api) -> None:
     check("入口列表可查", any(int(item.get("id") or 0) == entry_id
                               for item in listing.get("list") or []), str(listing)[:200])
 
+    # 草稿态可编辑
+    updated = api.data("PUT", f"/api/v1/workbench/entries/{entry_id}",
+                       {"description": "冒烟改过的说明"})
+    check("入口草稿可编辑", updated.get("description") == "冒烟改过的说明", str(updated)[:200])
+
     published = api.data("POST", f"/api/v1/workbench/entries/{entry_id}/publish")
     check("入口发布后状态为已发布", published.get("status") == "published", str(published)[:200])
     check("入口发布后版本号递增", int(published.get("version") or 0) >= 2,
@@ -1384,9 +1391,11 @@ def check_workbench_entries(api: Api) -> None:
     detail = api.data("GET", f"/api/v1/workbench/entries/{entry_id}")
     check("入口详情带版本历史", bool(detail.get("versions")), str(detail)[:200])
 
-    updated = api.data("PUT", f"/api/v1/workbench/entries/{entry_id}",
-                       {"description": "冒烟改过的说明"})
-    check("入口可编辑", updated.get("description") == "冒烟改过的说明", str(updated)[:200])
+    # 已发布为终态：编辑/删除均被拒绝（BUG-1 修复后的语义）
+    api.expect("已发布编排不可编辑", "PUT", f"/api/v1/workbench/entries/{entry_id}",
+               ErrorCode.ILLEGAL_OPERATION, {"description": "再改"})
+    api.expect("已发布编排不可删除", "DELETE", f"/api/v1/workbench/entries/{entry_id}",
+               ErrorCode.ILLEGAL_OPERATION)
 
     api.expect("入口编码重复返回 140103", "POST", "/api/v1/workbench/entries",
                ErrorCode.UNIQUE_CONFLICT, {
@@ -1398,7 +1407,11 @@ def check_workbench_entries(api: Api) -> None:
     api.expect("入口缺主能力返回 100100", "POST", "/api/v1/workbench/entries",
                ErrorCode.PARAM_ERROR, {"code": "smoke-no-cap", "name": "缺能力"})
 
-    api.data("DELETE", f"/api/v1/workbench/entries/{entry_id}")
+    # 草稿态可删除：另建一个草稿验证删除通道仍开放
+    tmp = api.data("POST", "/api/v1/workbench/entries", {
+        "code": "smoke-del-tmp", "name": "冒烟-待删草稿", "capability": "case_generation",
+    })
+    api.data("DELETE", f"/api/v1/workbench/entries/{int(tmp.get('id') or 0)}")
 
 
 def check_validation_sandbox(api: Api, project_id: int) -> None:

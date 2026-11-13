@@ -1518,6 +1518,7 @@ def _search_kb_for_ask(
     让「支付回调幂等排查结论是什么样子？」这类自然语言问句也能召回正式条目。
     where_extra 仍强制 review_status='published'，待审版本不会进入检索。
     """
+    from ..common.knowledge_lexicon import expand_synonyms
     from ..db.fts import hybrid_search
 
     return hybrid_search(
@@ -1531,4 +1532,5 @@ def _search_kb_for_ask(
         page_num=1,
         page_size=max(1, int(limit)),
         fallback_on_empty=True,
+        synonyms=expand_synonyms(question),
     )

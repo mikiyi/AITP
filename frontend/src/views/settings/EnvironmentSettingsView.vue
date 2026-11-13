@@ -8,6 +8,8 @@
       </div>
     </div>
 
+    <RouteSubNav :items="EXEC_TABS" />
+
     <div class="panel panel-pad settings-block">
       <div class="settings-block__head">
         <h3>环境清单</h3>
@@ -187,6 +189,8 @@ import { onActivated, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Back, Lock, Plus } from '@element-plus/icons-vue'
+import RouteSubNav from '@/components/RouteSubNav.vue'
+import { EXEC_TABS } from '@/router/subnav'
 import { testEnvApi } from '@/api'
 import type { TestEnv, TestEnvListResult, TestEnvProbe } from '@/api/types'
 

@@ -14,7 +14,7 @@ from typing import Any
 
 from flask import Blueprint, Response, current_app, request, send_file
 
-from ..common.automation_frameworks import framework_codes
+from ..common.automation_frameworks import default_for, framework_codes, normalize_platforms
 from ..common.validators import check_choice, optional_str, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
@@ -579,6 +579,41 @@ def download_run_artifact(pk: str) -> Response:
     return send_file(path, as_attachment=True, download_name=path.name)
 
 
+@bp.get("/runs/<pk>/report")
+def export_run_report(pk: str) -> Response:
+    """把一次执行汇总成 Markdown 报告下载（四类脚本通用，性能附 JTL 摘要）。"""
+    conn = db()
+    target = path_int(pk)
+    row = AutomationRunRepository(conn).get(target)
+    if row is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "执行记录不存在")
+    _guard_run_scope(conn, row)
+    run_no = str(row.get("run_no") or "")
+    artifacts = automation_service.list_run_artifacts(_db_path(), run_no)
+    jtl = None
+    for item in artifacts:
+        if str(item["path"]).lower().endswith(".jtl"):
+            jtl_path = automation_service.artifact_file(_db_path(), run_no, str(item["path"]))
+            if jtl_path is not None:
+                jtl = automation_service.parse_jtl(jtl_path)
+            break
+    script = None
+    if row.get("script_id"):
+        script_row = AutomationScriptRepository(conn).get(int(row["script_id"]))
+        if script_row is not None:
+            script = dict(script_row)
+    report = automation_service.build_run_report(
+        dict(row), script, artifacts, jtl,
+        automation_writeback.case_results(conn, target),
+    )
+    file_name = f"automation-report-{run_no or target}.md"
+    return Response(
+        report,
+        mimetype="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
 # ---------------- 从 AI 产出一键入库 ----------------
 
 @bp.post("/scripts/from-output")
@@ -599,6 +634,9 @@ def create_from_output() -> Response:
     payload = _write_payload(data)
     if payload.get("project_id"):
         require_project(conn, int(payload["project_id"]))
+    if not str(payload.get("framework") or "").strip():
+        # AI 产出未带框架时按类别落默认框架，避免列表「框架」列空着
+        payload["framework"] = default_for(category, normalize_platforms(payload.get("app_platforms")))
     _check_framework(category, payload)
     _check_refs(conn, payload)
     _check_env(conn, payload)

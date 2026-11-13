@@ -359,9 +359,14 @@ async function saveCapabilities(): Promise<void> {
 }
 
 function openCreate(): void {
+  const nextType: Record<string, string> = {
+    module: 'submodule',
+    submodule: 'feature',
+    feature: 'feature',
+  }
   Object.assign(createForm, {
     name: '',
-    nodeType: current.value?.nodeType ?? 'module',
+    nodeType: current.value ? nextType[current.value.nodeType] ?? 'module' : 'module',
     parentId: current.value?.id ?? null,
     description: '',
   })

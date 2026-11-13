@@ -5,6 +5,8 @@
       <el-button :icon="Back" @click="router.push('/settings')">返回设置</el-button>
     </div>
 
+    <RouteSubNav :items="EXEC_TABS" />
+
     <div class="panel panel-pad settings-block">
       <div class="settings-block__head">
         <h3>JMeter 启动配置</h3>
@@ -64,6 +66,8 @@ import { onActivated, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Back } from '@element-plus/icons-vue'
+import RouteSubNav from '@/components/RouteSubNav.vue'
+import { EXEC_TABS } from '@/router/subnav'
 import { automationApi, settingsApi } from '@/api'
 import type { AutomationRuntime } from '@/api/types'
 

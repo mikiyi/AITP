@@ -232,13 +232,24 @@ def _start_task_queue(app: Flask, cfg: AppConfig) -> None:
     """恢复上次排队的后台任务；没有排队任务就不常驻轮询。"""
     from .services import automation_jobs  # noqa: F401 - 导入即注册处理器
     from .services import backup_schedule  # noqa: F401 - 导入即注册处理器
+    from .services import exploratory_jobs  # noqa: F401 - 导入即注册处理器
     from .services import interface_jobs  # noqa: F401 - 导入即注册处理器
     from .services import knowledge_assistant_service  # noqa: F401 - 导入即注册处理器
+    from .services import matrix_jobs  # noqa: F401 - 导入即注册处理器
+    from .services import retention_jobs  # noqa: F401 - 导入即注册处理器
     from .services import notification_service  # noqa: F401 - 导入即注册处理器
     from .services import job_queue
+    from .services import retention_service
+    from .db.connection import get_standalone_conn
 
     job_queue.set_app(app)
     job_queue.start_workers_if_pending(cfg.db_path)
+    # GAP-44：启动时补一次到期清理（默认每 20 小时一次，配置可关）
+    conn = get_standalone_conn(cfg.db_path)
+    try:
+        retention_service.maybe_auto_cleanup(conn, cfg.db_path)
+    finally:
+        conn.close()
     backup_schedule.start_scheduler(cfg.db_path)
 
 

@@ -46,12 +46,15 @@ STATUS_LABELS = {
 #: 新增 kind 时必须同时在这里补标签，`check_task_labels.py` 会比对「已注册 kind」与「已登记标签」。
 KIND_LABELS: dict[str, str] = {
     "automation.run": "自动化脚本执行",
+    "matrix.run": "执行矩阵",
+    "retention.cleanup": "数据留存到期清理",
     "interface.batch_run": "接口用例批量执行",
     "knowledge.organize": "知识库自动整理",
     "backup.auto": "定时整包备份",
     "data.export": "数据导出",
     "notification.webhook": "Webhook 通知",
     "validation.run_all": "案例验证全量跑批",
+    "exploratory.run": "Web 探索性测试",
 }
 
 #: 并发上限配置键；默认 2，单用户本机够用又不至于互相拖死

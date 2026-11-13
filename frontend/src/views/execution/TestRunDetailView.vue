@@ -336,6 +336,7 @@
     </el-dialog>
 
     <InterfaceResultDialog v-model="interfaceResultVisible" :result="interfaceResult" />
+    <ProdConfirmDialog ref="prodDialog" />
   </div>
 </template>
 
@@ -355,6 +356,7 @@ import type {
   TestRunCase,
 } from '@/api/types'
 import InterfaceResultDialog from '@/components/InterfaceResultDialog.vue'
+import ProdConfirmDialog from '@/components/ProdConfirmDialog.vue'
 import { dateTimeText } from '@/utils/format'
 
 const route = useRoute()
@@ -375,6 +377,7 @@ const envOptions = ref<TestEnv[]>([])
 const interfaceDialogVisible = ref(false)
 const interfaceResultVisible = ref(false)
 const interfaceRunning = ref(false)
+const prodDialog = ref<InstanceType<typeof ProdConfirmDialog> | null>(null)
 const interfaceTarget = ref<TestRunCase | null>(null)
 const interfaceEnvId = ref<number | null>(null)
 const interfaceTimeout = ref(10)
@@ -566,6 +569,14 @@ async function runInterfaceConfirm(): Promise<void> {
   if (!interfaceEnvId.value) {
     ElMessage.warning('请先选择执行环境')
     return
+  }
+  if (interfaceEnvKind.value === 'prod') {
+    const ok = (await prodDialog.value?.open(
+      '即将向生产环境发起真实接口请求，请确认接口无副作用。',
+    )) ?? false
+    if (!ok) {
+      return
+    }
   }
   interfaceRunning.value = true
   try {
