@@ -17,21 +17,21 @@
 
 **AI 能力卡片 · 用例生成** —— 选能力卡 → 填需求原文 → 本地模型产出结构化用例（含正向/异常/边界/接口多类），可导出 Excel/Word 或一键采纳为用例：
 
-![AI 能力卡片用例生成演示](docs/screenshots/demo-ai-capability.gif)
+![AI 能力卡片用例生成演示](https://gitee.com/mikiyi/AITP/raw/master/docs/screenshots/demo-ai-capability.gif)
 
 **知识库问答助手** —— 手工录入知识条目进待审池 → 提问 → 助手先检索知识库、再由模型整合，回答带 `[K1]` 等引用来源标注：
 
-![知识库问答助手演示](docs/screenshots/demo-knowledge-assistant.gif)
+![知识库问答助手演示](https://gitee.com/mikiyi/AITP/raw/master/docs/screenshots/demo-knowledge-assistant.gif)
 
 > 演示中默认档案为本地 mock 模型，不消耗任何云端额度；换成云端 Key 后同一套链路即可调用真实大模型。
 
 **首页工作台** —— 数据概览、知识库问答入口、卡片自定义：
 
-![首页工作台](docs/screenshots/01-dashboard.png)
+![首页工作台](https://gitee.com/mikiyi/AITP/raw/master/docs/screenshots/01-dashboard.png)
 
 **测试用例** —— 按功能点树浏览、筛选、导入导出、覆盖矩阵：
 
-![测试用例列表](docs/screenshots/02-cases.png)
+![测试用例列表](https://gitee.com/mikiyi/AITP/raw/master/docs/screenshots/02-cases.png)
 
 ---
 

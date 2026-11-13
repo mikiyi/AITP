@@ -17,21 +17,21 @@ Both demos below run on a **local Ollama mock model** (`docs/screenshots/` holds
 
 **AI capability cards · test-case generation** — pick a capability card → fill in the requirement → the local model produces structured test cases (positive / exception / boundary / interface), exportable to Excel/Word or adopted as cases in one click:
 
-![AI capability test-case generation demo](docs/screenshots/demo-ai-capability.gif)
+![AI capability test-case generation demo](https://gitee.com/mikiyi/AITP/raw/master/docs/screenshots/demo-ai-capability.gif)
 
 **Knowledge-base Q&A assistant** — enter a knowledge item into the review pool → ask a question → the assistant searches the knowledge base first, then lets the model synthesize, with `[K1]`-style citation markers:
 
-![Knowledge-base Q&A assistant demo](docs/screenshots/demo-knowledge-assistant.gif)
+![Knowledge-base Q&A assistant demo](https://gitee.com/mikiyi/AITP/raw/master/docs/screenshots/demo-knowledge-assistant.gif)
 
 > The demo uses a local mock model as the default profile and consumes no cloud quota; point it at a cloud key and the same pipeline calls a real LLM.
 
 **Home dashboard** — data overview, knowledge-base Q&A entry, customizable cards:
 
-![Home dashboard](docs/screenshots/01-dashboard.png)
+![Home dashboard](https://gitee.com/mikiyi/AITP/raw/master/docs/screenshots/01-dashboard.png)
 
 **Test cases** — browse by function-point tree, filter, import/export, coverage matrix:
 
-![Test case list](docs/screenshots/02-cases.png)
+![Test case list](https://gitee.com/mikiyi/AITP/raw/master/docs/screenshots/02-cases.png)
 
 ---
 
