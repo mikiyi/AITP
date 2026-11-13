@@ -124,6 +124,17 @@ export interface CaseStep {
   expected: string
 }
 
+/** 扩展字段「测试数据」解析预览：内联内容或本地 txt/Excel/Json/SQL 文件。 */
+export interface TestDataPreview {
+  kind: string
+  source: string
+  path: string
+  rowCount: number
+  columns: string[]
+  sampleRows: string[][]
+  textSample: string
+}
+
 /** 覆盖矩阵的用例统计（行内数字含全部下级功能点）。 */
 export interface ModuleCoverageStat {
   caseCount: number
@@ -739,6 +750,14 @@ export interface AiProfile {
   priceInputMicros?: number
   priceOutputMicros?: number
   priceCurrency?: string
+  /** Token Plan：'api' = 按量计费；'token_plan' = 套餐/订阅额度（按额度扣减、不计金额）。 */
+  billingMode?: 'api' | 'token_plan'
+  /** 套餐总 token 额度（0 = 未设额度，只统计不扣减）。 */
+  tokenQuota?: number
+  /** 已消耗 token。 */
+  tokenUsed?: number
+  /** 套餐剩余 token（未设额度时为 0）。 */
+  tokenRemaining?: number
   createdAt?: string
   updatedAt?: string
 }

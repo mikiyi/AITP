@@ -24,6 +24,7 @@ import sqlite3
 from typing import Any, cast
 
 from ..ai.capability_codes import label_of
+from ..ai import cost as ai_cost
 from ..common.time_utils import utcnow_iso
 from ..errors import AppError, ErrorCode
 
@@ -387,6 +388,16 @@ def create_record(conn: sqlite3.Connection, record: dict[str, Any]) -> int:
         payload["steps_json"] = _dump(steps)
     # 没配单价时 cost_micros 留 NULL，而不是写 0——0 会被汇总统计当成「免费」计入
     cost_micros = (record.get("cost") or {}).get("costMicros")
+    # Token Plan：套餐模式不按量计金额（强制 NULL），并在落库后按 totalTokens 扣减额度
+    profile_id = (record.get("cost") or {}).get("profileId")
+    token_plan = False
+    if profile_id:
+        mode_row = conn.execute(
+            "SELECT billing_mode FROM sys_ai_profile WHERE id = ?", (int(profile_id),)
+        ).fetchone()
+        token_plan = bool(mode_row) and str(mode_row[0] or "api") == "token_plan"
+    if token_plan:
+        cost_micros = None
     if cost_micros is not None:
         payload["cost_micros"] = int(cost_micros)
     # 只落库有值的字段：列名走白名单，值走命名参数，不拼 SQL 片段
@@ -398,7 +409,11 @@ def create_record(conn: sqlite3.Connection, record: dict[str, Any]) -> int:
         f"INSERT INTO biz_ai_record ({', '.join(columns)}) VALUES ({placeholders})",
         {name: payload[name] for name in columns},
     )
-    return int(cast(int, cursor.lastrowid))
+    record_id = int(cast(int, cursor.lastrowid))
+    if token_plan:
+        total = int((record.get("usage") or {}).get("totalTokens") or 0)
+        ai_cost.deduct_token_plan(conn, profile_id, total)
+    return record_id
 
 
 def _dump(value: Any) -> str:

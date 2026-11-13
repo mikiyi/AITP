@@ -11,7 +11,9 @@ AI 档案可以选择「从本地环境变量取 Key」：
 
 from __future__ import annotations
 
+import importlib
 import os
+from typing import Any
 
 SCOPE_USER = "user"
 SCOPE_SYSTEM = "system"
@@ -29,8 +31,10 @@ def normalize_scope(value: object) -> str:
 
 
 def _read_registry(name: str, scope: str) -> str:
+    # winreg 只有 Windows 才有：反射导入而不是直接 import，macOS / Linux 上的
+    # mypy --strict 才不会把 Windows 专属属性判成「模块无此属性」
     try:
-        import winreg
+        winreg: Any = importlib.import_module("winreg")
     except ImportError:
         return ""
     if scope == SCOPE_SYSTEM:
@@ -45,7 +49,7 @@ def _read_registry(name: str, scope: str) -> str:
     except OSError:
         return ""
     if isinstance(value, str):
-        return winreg.ExpandEnvironmentStrings(value).strip()
+        return str(winreg.ExpandEnvironmentStrings(value)).strip()
     return ""
 
 

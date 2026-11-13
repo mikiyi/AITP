@@ -21,8 +21,14 @@ import platform
 import sys
 import uuid
 from pathlib import Path
+from typing import Any
 
 from .security import decrypt, encrypt, get_or_create_secret_key
+
+# ctypes.WinDLL / get_last_error 只存在于 Windows：反射取出来，macOS / Linux 上的
+# mypy --strict 才不会把它们判成「模块无此属性」；调用点都由 sys.platform 把关。
+_WinDLL: Any = getattr(ctypes, "WinDLL", None)
+_get_last_error: Any = getattr(ctypes, "get_last_error", None)
 
 SERVICE_NAME = "com.aitestplatform.secrets"
 
@@ -69,8 +75,8 @@ def _dpapi_available() -> bool:
 
 
 def _dpapi_protect(data: bytes) -> bytes:
-    crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    crypt32 = _WinDLL("crypt32", use_last_error=True)
+    kernel32 = _WinDLL("kernel32", use_last_error=True)
 
     buffer = ctypes.create_string_buffer(data, len(data))
     in_blob = _DataBlob(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_char)))
@@ -80,7 +86,7 @@ def _dpapi_protect(data: bytes) -> bytes:
     if not crypt32.CryptProtectData(
         ctypes.byref(in_blob), None, None, None, None, 0x1, ctypes.byref(out_blob)
     ):
-        raise OSError(ctypes.get_last_error(), "CryptProtectData 失败")
+        raise OSError(_get_last_error(), "CryptProtectData 失败")
     try:
         return ctypes.string_at(out_blob.pbData, out_blob.cbData)
     finally:
@@ -88,8 +94,8 @@ def _dpapi_protect(data: bytes) -> bytes:
 
 
 def _dpapi_unprotect(blob: bytes) -> bytes:
-    crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    crypt32 = _WinDLL("crypt32", use_last_error=True)
+    kernel32 = _WinDLL("kernel32", use_last_error=True)
 
     buffer = ctypes.create_string_buffer(blob, len(blob))
     in_blob = _DataBlob(len(blob), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_char)))
@@ -98,7 +104,7 @@ def _dpapi_unprotect(blob: bytes) -> bytes:
     if not crypt32.CryptUnprotectData(
         ctypes.byref(in_blob), None, None, None, None, 0x1, ctypes.byref(out_blob)
     ):
-        raise OSError(ctypes.get_last_error(), "CryptUnprotectData 失败")
+        raise OSError(_get_last_error(), "CryptUnprotectData 失败")
     try:
         return ctypes.string_at(out_blob.pbData, out_blob.cbData)
     finally:

@@ -81,7 +81,7 @@ The launcher checks the port first: if AITP is already running it just opens the
 
 ## Feature map
 
-Frontend: 56 routes / 56 page components. Backend: 38 blueprints / 398 endpoints, all under `/api/v1`.
+Frontend: 54 routes / 57 page components. Backend: 40 blueprints / 404 endpoints, all under `/api/v1`.
 
 ### First-launch tour and demo project
 
@@ -99,7 +99,7 @@ Frontend: 56 routes / 56 page components. Backend: 38 blueprints / 398 endpoints
 ### Appearance and navigation
 
 - **10 themes**: Light, Dark, Blue, Red, Pink, Orange, Tech, Ocean, Botanical, Industrial. One click on the palette in the top-right applies the theme site-wide.
-- **Navigation groups**: the sidebar groups by purpose — AI Lab / Test Plans / Test Assets / **Quality Analysis** / Automation / Knowledge Base / Settings.
+- **Navigation groups**: the sidebar groups by purpose into 10 groups — AI Lab / Task Center / Test Plans / Test Assets / Quality Conclusions / Automation Scripts / Execution & Exploration / Knowledge Base / Data & Migration / Settings, plus Home and Help as direct entries.
 - **Filters are queries**: changing a filter runs the query immediately — no "Search" button. Filters and pagination are kept in the URL, so links are shareable.
 
 ### Task list
@@ -202,6 +202,15 @@ Three-level priority: **workspace configuration (database) > environment variabl
 - If no candidate works, it degrades to **local rules**
 - **Self-check is a real call**: it returns ✓/✗, latency, a reply snippet and token usage
 
+### Token Plan (subscription quota) mode
+
+Besides **pay-per-use API**, an AI profile can use **Token Plan** (`billing_mode=token_plan`, migration 060):
+
+- A prepaid token quota (`token_quota`) is consumed via the same OpenAI-compatible endpoint with the plan credential; the wire protocol and auth are unchanged.
+- Each call deducts `totalTokens` from the quota (`token_used`); the UI shows remaining = quota − used.
+- Token Plan **does not bill money per use** (`cost_micros` stays NULL), consistent with the "unpriced reports tokens only" rule.
+- `token_quota=0` means no quota set (statistics only, no deduction); deduction uses SQL self-increment so concurrent calls never lose counts.
+
 ---
 
 ## Data and knowledge governance
@@ -233,6 +242,8 @@ Three-level priority: **workspace configuration (database) > environment variabl
 - **Secret storage**: API keys live in the OS keystore (Windows DPAPI / macOS Keychain / Linux Fernet)
 - **Masking on AI egress**: cloud calls automatically replace phone numbers, ID numbers, emails, bank card numbers, API keys and more
 - **AI behavior safety**: states insufficient evidence instead of inventing it; never fabricates knowledge titles or defect IDs; AI never approves a release; P0/P1 and prompt test results always require human review
+- **Unified production confirmation**: any run / interface batch / automation / execution matrix touching a production environment opens a single "I acknowledge the risk" checkbox confirmation (unchecked by default, cannot execute until checked); the backend also enforces `confirmProd` — a double UI + API guard
+- **Terminal-state locking**: published orchestrations lock edit/delete; published/archived reports are terminal and archived cannot revert to draft; completed rounds freeze results — finalized assets cannot be silently changed back
 
 ---
 
@@ -270,8 +281,8 @@ cd frontend && npm run build                                              # fron
 - Any new gate script dropped into `backend/scripts` named `check_*.py` is picked up
   automatically without touching the runner.
 
-Gate inventory (53 entries = 52 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
-scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 52 items actually
+Gate inventory (55 entries = 54 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
+scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 54 items actually
 execute):
 
 | Script | Covers | When it fails, look at |
@@ -311,13 +322,23 @@ execute):
 | `check_prompts.py` | Prompt library: parseable, variables complete, no render leftovers, capability alignment | `backend/prompts` YAML and capability mapping |
 | `check_report_evidence.py` | Report failure samples and evidence drill-down: sample count matches real failures, all three export formats carry the chosen samples, Chinese degradation when no snapshot, and case-level-only snapshots resolve identically across report / drill-down / bug views (GAP-35) | the `failure-samples` routes in `api/reports.py` and `execution_protocol.latest_evidence_for_run_case` |
 | `check_report_trends.py` | Report trends and version diff (GAP-12) | report export and trend aggregation |
-| `check_routing.py` | Routing regression: 18 capability cards, each representative input must route correctly | routing rules and card config |
+| `check_routing.py` | Routing regression: 20 capability cards, each representative input must route correctly | routing rules and card config |
 | `check_secret_residue.py` | GAP-22 secret-at-rest closure: reference storage, residue scan, migrate/rollback, dual-read | secret reference table and residue scan (temp DB only) |
 | `check_stream_polling.py` | Streaming short-poll contract on both ends: launch returns only taskId plus the frames route, frame order and cursor, buffer-expiry fallback, and the frontend really consuming `mode:"poll"` and sending the current project (GAP-26 / GAP-29) | `api/lab.py` stream/frames and `frontend/src/api/stream.ts` |
 | `check_security.py` | Security and compliance: secrets, injection, path safety, same-origin guard | `backend/aitp/common` security utilities and middleware |
 | `check_task_labels.py` | Task-type labels: registered kinds and the label table agree in both directions, filter dropdown shares one source (GAP-37) | `KIND_LABELS` in `services/job_queue.py` |
 | `check_test_data.py` | Test data generation (file branch) | generation service and exported files |
 | `check_test_execution.py` | Execution loop: plan -> round -> batch results -> defect -> traceability -> release gate | locate the blueprint by failed step name |
+| `check_test_round_redesign.py` | Test plan/round multi-round redesign: round types, plan time windows, scope presets, 4/3-round template generation (migration 057) | `test_round_service.py` and plan/round endpoints |
+| `check_module_tree.py` | Feature-point tree: three levels, re-parenting, role by depth, capability binding and per-node prompt | `api/modules.py` and the module-tree repository |
+| `check_execution_matrix.py` | Execution matrix: multi-env x multi-endpoint per-cell real runs, cross-cell attribution, common-failure-to-defect, production confirmation (GAP-43) | `execution_matrix_service.py` and `biz_execution_matrix*` |
+| `check_exploratory_web.py` | Web exploratory testing: MCP stub driver, evidence-pack fields, dual-anchor ±5s log slices, findings to pending pool not defect store, no-model degradation, input masking (GAP-45) | `exploratory_service.py` and `biz_exploration_*` |
+| `check_knowledge_recall.py` | Knowledge semantic-recall evaluation (D1 conditional): hybrid vs pure-vector/keyword recall hit comparison | the recall evaluation script and `docs/AITP-三期-D1-召回评估.md` |
+| `check_knowledge_reuse.py` | Knowledge / report fragment cross-project reuse: fragment CRUD, reference relations, live body rendering, referenced-fragment delete protection (GAP-42) | `report_fragment_repo.py` and `biz_report_fragment*` |
+| `check_retention.py` | Data retention and archival: per-type retention and expiry actions, reference protection, soft-delete + zip archive, original readback, startup auto-cleanup (GAP-44) | `retention_service.py` and `data/archive/` |
+| `check_test_data_samples.py` | Test-data masked samples (GAP-39): missing sensitive-column config rejected, masked copy contains no raw PII, scheme reuse and expiry cleanup | the sample-pool service and masking engine |
+| `check_project_package.py` | Project asset package (GAP-41): structure counts, no secrets, same-code rejection, rename-import and FK remapping | the asset-package service and manifest |
+| `check_external_import.py` | External-platform read-only import (GAP-40): stub Zentao login-to-token, GET-only no writeback, mapping persistence, external-id dedup, two-layer auth, mapping templates and batch isolation, secrets not stored | `services/external_import*` and `api/external_imports.py` |
 | `check_types.py` | Type gate: mypy --strict over the backend plus real `vue-tsc --noEmit`; `--require-frontend` fails CI without frontend deps | the file:line reported by mypy / TypeScript |
 | `check_walkthrough.py` | Fixed walkthrough: routing order + fallback order + behavioral-safety rules + structured records + global search | per-step assertion output |
 | `smoke_api.py` | P3 API smoke: all blueprints' key paths on a temp DB | the failure list printed at the end |
@@ -342,17 +363,40 @@ run as the source of truth. On CI `check_isolation_matrix` is excluded via `--sk
 
 ---
 
+## End-to-end tests (E2E)
+
+Playwright-based full-flow E2E tests live in `frontend/e2e/`, configured by `frontend/playwright.config.ts`.
+The harness boots an **isolated environment** (separate backend on 8762 + temp DB, mock model on
+18790/18791, vite on 5199) and never touches the live 8760 service or `data/aitp.db`; teardown kills the
+process tree and removes the temp directory.
+
+```bash
+cd frontend && npx playwright install chromium   # first time
+cd frontend && npx playwright test               # serial, workers=1
+```
+
+- **BFS**: visit every route once, asserting no blank screen / no JS exception / no 5xx.
+- **DFS**: exhaust interactions on core pages (AI capability, cases, plan/round, defects, reports, knowledge, regression), capped at 20 elements per page to avoid loops.
+- **Non-happy paths**: back/cancel/discard, empty data, very large data (1000 rows pagination + virtual window), unauthenticated/passcode, refresh/back, form boundaries (empty / over-long / special characters).
+- Every step asserts a business result, not just "no error"; elements are re-located after page changes, never reusing stale refs.
+- Results: `frontend/e2e/results.json` + console list; failures keep trace/screenshots.
+- Convention in `AGENTS.md`: **after every code change, run the verification and report the real pass/fail results in the reply**.
+
+> The production-confirmation checkbox dialog renders unstably under Playwright's bundled browser, so `05-prod-confirm` asserts the API-level guard; the dialog UI was verified manually in a headed browser.
+
+---
+
 ## Directory layout
 
 ```
 backend/
   aitp/
-    api/          38 blueprints / 398 endpoints
-    ai/           resolver, client, masking, adapters
+    api/          40 blueprints / 404 endpoints
+    ai/           resolver, client, masking, adapters, cost, output_schema
     common/       constants, validation, pagination, keystore, security utilities
-    db/           connections and migrations (55 files)
+    db/           connections and migrations (58 files)
     repositories/ parameterized SQL repository layer
-    services/     knowledge persistence, report export, backup/restore, execution matrix, retention/archival, exploratory testing
+    services/     knowledge persistence, report export, backup/restore, execution matrix, retention/archival, exploratory testing, external import
     prompts/      prompt template library
     static/       built frontend assets
   prompts/        prompt YAML
@@ -361,7 +405,8 @@ frontend/
   src/
     api/          unified request layer
     components/   shared components
-    views/        56 page components
+    views/        57 page components
+  e2e/            Playwright end-to-end tests (isolated harness)
 data/             runtime data (SQLite, logs, keystore, archives, exploratory screenshots and log slices)
 knowledge/        Markdown knowledge base storage
 ```

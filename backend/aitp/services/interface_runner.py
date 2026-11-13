@@ -37,7 +37,7 @@ from ..repositories.test_run_repo import (
     TestRunCaseRepository,
     TestRunRepository,
 )
-from . import assertion_schema, execution_protocol, test_run_service
+from . import assertion_schema, case_test_data, execution_protocol, test_run_service
 
 DEFAULT_TIMEOUT = 10
 MAX_TIMEOUT = 60
@@ -732,21 +732,27 @@ def _evaluate(
 
 # ---------------------------------------------------------------- 执行主流程
 
-def execute(
+MAX_DATA_RECORDS = 20
+
+
+def _base_variables(extra: dict[str, Any], env: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
+    base_url = str(env.get("app_base_url") or "")
+    auth_headers, token = _auth_header(_text(extra, "token/鉴权方式", "鉴权方式", "token"))
+    variables = {"baseUrl": base_url.rstrip("/"), "base_url": base_url.rstrip("/"), "token": token}
+    return auth_headers, variables
+
+
+def _execute_once(
     extra: dict[str, Any],
     env: dict[str, Any],
+    variables: dict[str, str],
+    auth_headers: dict[str, str],
     *,
-    timeout: int = DEFAULT_TIMEOUT,
-    conn: sqlite3.Connection | None = None,
-    project_id: int | None = None,
-    module_id: int | None = None,
+    timeout: int,
+    conn: sqlite3.Connection | None,
+    project_id: int | None,
+    module_id: int | None,
 ) -> Detail:
-    """按接口用例扩展字段发一次真实请求，返回请求、响应与断言明细。
-
-    ``conn`` + ``project_id`` / ``module_id`` 只在需要展开 ``lib:`` 断言库引用时传；
-    不传则断言规则按原文逐行执行（一期口径不变）。
-    """
-    timeout = max(1, min(MAX_TIMEOUT, int(timeout or DEFAULT_TIMEOUT)))
     method = (_text(extra, "请求方式", "请求方法", "method") or "GET").upper()
     if method not in SUPPORTED_METHODS:
         raise AppError(ErrorCode.PARAM_ERROR, f"不支持的请求方式：{method}")
@@ -754,9 +760,6 @@ def execute(
     base_url = str(env.get("app_base_url") or "")
     raw_url = _text(extra, "接口URL", "接口url", "URL", "url")
     url, origin = _build_url(raw_url, base_url, str(env.get("name") or ""))
-
-    auth_headers, token = _auth_header(_text(extra, "token/鉴权方式", "鉴权方式", "token"))
-    variables = {"baseUrl": base_url.rstrip("/"), "base_url": base_url.rstrip("/"), "token": token}
 
     headers = _parse_mapping(_text(extra, "请求头"))
     headers = {key: _substitute(value, variables) for key, value in headers.items()}
@@ -818,6 +821,73 @@ def execute(
         "assertions": assertions,
     }
     return detail
+
+
+def execute(
+    extra: dict[str, Any],
+    env: dict[str, Any],
+    *,
+    timeout: int = DEFAULT_TIMEOUT,
+    conn: sqlite3.Connection | None = None,
+    project_id: int | None = None,
+    module_id: int | None = None,
+    test_data: dict[str, Any] | None = None,
+) -> Detail:
+    """按接口用例扩展字段发真实请求，返回请求、响应与断言明细。
+
+    ``conn`` + ``project_id`` / ``module_id`` 只在需要展开 ``lib:`` 断言库引用时传；
+    不传则断言规则按原文逐行执行（一期口径不变）。
+    ``test_data`` 为解析后的用例测试数据：带记录集时逐条参数化（{{字段}}）执行并汇总，
+    只有文本时注入 {{测试数据}} 变量；无数据时与单请求口径完全一致。
+    """
+    timeout = max(1, min(MAX_TIMEOUT, int(timeout or DEFAULT_TIMEOUT)))
+    auth_headers, base_vars = _base_variables(extra, env)
+    records = list((test_data or {}).get("records") or [])[:MAX_DATA_RECORDS]
+    if not records:
+        variables = dict(base_vars)
+        text = str((test_data or {}).get("text") or "")
+        if text:
+            variables["测试数据"] = text
+        return _execute_once(
+            extra, env, variables, auth_headers,
+            timeout=timeout, conn=conn, project_id=project_id, module_id=module_id,
+        )
+
+    details: list[Detail] = []
+    for index, record in enumerate(records, start=1):
+        variables = {
+            **base_vars,
+            **{str(key): str(value) for key, value in record.items()},
+            "测试数据": json.dumps(record, ensure_ascii=False),
+        }
+        detail = _execute_once(
+            extra, env, variables, auth_headers,
+            timeout=timeout, conn=conn, project_id=project_id, module_id=module_id,
+        )
+        detail["assertions"] = [
+            {**item, "name": f"记录{index}·{item.get('name') or ''}"}
+            for item in detail["assertions"]
+        ]
+        details.append(detail)
+
+    passed = all(item["passed"] for item in details)
+    assertions = [a for item in details for a in item["assertions"]]
+    failed = [a for a in assertions if not a["passed"]]
+    last = details[-1]
+    return {
+        "result": RUN_PASSED if passed else RUN_FAILED,
+        "passed": passed,
+        "statusCode": last["statusCode"],
+        "durationMs": sum(int(item.get("durationMs") or 0) for item in details),
+        "message": (
+            f"{len(records)} 条测试数据记录全部通过（{len(assertions)} 项断言）" if passed
+            else f"{len(records)} 条测试数据记录：{len(failed)}/{len(assertions)} 项断言失败"
+        ),
+        "request": last["request"],
+        "response": last["response"],
+        "assertions": assertions,
+        "testDataRecordCount": len(records),
+    }
 
 
 def _actual_text(detail: Detail) -> str:
@@ -929,6 +999,7 @@ def run_case(
     detail = execute(
         case.get("extra") or {}, env, timeout=timeout,
         conn=conn, project_id=case.get("project_id"), module_id=case.get("module_id"),
+        test_data=case_test_data.for_case(conn, case_id),
     )
 
     execution_id = record_detail(
@@ -972,6 +1043,7 @@ def _run_run_case(
     detail = execute(
         extra, env, timeout=timeout,
         conn=conn, project_id=run.get("project_id"), module_id=row.get("module_id"),
+        test_data=case_test_data.for_case(conn, int(row["case_id"])),
     )
     record_detail(
         conn,

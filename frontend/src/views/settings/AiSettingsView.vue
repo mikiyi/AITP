@@ -248,15 +248,23 @@
           {{ row.profileName }}
           <small>{{ row.model }}</small>
         </span>
-        <el-input-number v-model="row.priceInputMicros" :min="0" :step="100" size="small" controls-position="right" />
-        <el-input-number v-model="row.priceOutputMicros" :min="0" :step="100" size="small" controls-position="right" />
-        <el-select v-model="row.priceCurrency" size="small" class="ai-cost-price-currency">
-          <el-option label="CNY" value="CNY" />
-          <el-option label="USD" value="USD" />
-          <el-option label="EUR" value="EUR" />
-        </el-select>
-        <span class="ai-cost-price-spent">累计 {{ yuanText(row.costMicros) }} / {{ row.calls }} 次</span>
-        <el-button size="small" :loading="savingPriceId === row.profileId" @click="savePrice(row)">保存单价</el-button>
+        <template v-if="row.billingMode === 'token_plan'">
+          <el-tag size="small" type="warning">Token 套餐</el-tag>
+          <span class="ai-cost-price-spent">
+            剩余 {{ row.tokenRemaining }} / {{ row.tokenQuota }} token（已用 {{ row.tokenUsed }}）
+          </span>
+        </template>
+        <template v-else>
+          <el-input-number v-model="row.priceInputMicros" :min="0" :step="100" size="small" controls-position="right" />
+          <el-input-number v-model="row.priceOutputMicros" :min="0" :step="100" size="small" controls-position="right" />
+          <el-select v-model="row.priceCurrency" size="small" class="ai-cost-price-currency">
+            <el-option label="CNY" value="CNY" />
+            <el-option label="USD" value="USD" />
+            <el-option label="EUR" value="EUR" />
+          </el-select>
+          <span class="ai-cost-price-spent">累计 {{ yuanText(row.costMicros) }} / {{ row.calls }} 次</span>
+          <el-button size="small" :loading="savingPriceId === row.profileId" @click="savePrice(row)">保存单价</el-button>
+        </template>
       </div>
     </div>
 
@@ -318,6 +326,23 @@
           <div class="field-hint">
             <el-icon><InfoFilled /></el-icon>
             <span>单次调用最长等待秒数，默认 60。本地大模型首次加载较慢，建议 120~300；云端接口 30~60 即可。</span>
+          </div>
+        </el-form-item>
+        <el-form-item label="计费模式">
+          <el-radio-group v-model="form.billingMode">
+            <el-radio-button value="api">API 按量</el-radio-button>
+            <el-radio-button value="token_plan">Token 套餐</el-radio-button>
+          </el-radio-group>
+          <div class="field-hint">
+            <el-icon><InfoFilled /></el-icon>
+            <span>API 按量：按档案单价折算金额；Token 套餐：预购 token 额度，按额度扣减、显示剩余，不按量计金额。接口与鉴权方式不变。</span>
+          </div>
+        </el-form-item>
+        <el-form-item v-if="form.billingMode === 'token_plan'" label="套餐额度(token)">
+          <el-input-number v-model="form.tokenQuota" :min="0" :step="10000" />
+          <div class="field-hint">
+            <el-icon><InfoFilled /></el-icon>
+            <span>套餐总 token 额度，0 = 未设额度（只统计不扣减）。每次调用按 totalTokens 扣减，剩余 = 额度 − 已用。</span>
           </div>
         </el-form-item>
         <el-form-item label="默认档案">
@@ -521,6 +546,8 @@ const form = reactive({
   useEnvKey: false,
   envKeyName: '',
   envKeyScope: 'user' as 'user' | 'system',
+  billingMode: 'api' as 'api' | 'token_plan',
+  tokenQuota: 0,
 })
 
 /** 行内启用开关的加载态 */
@@ -658,6 +685,10 @@ interface CostPriceRow {
   priceCurrency: string
   calls: number
   costMicros: number
+  billingMode: 'api' | 'token_plan'
+  tokenQuota: number
+  tokenUsed: number
+  tokenRemaining: number
 }
 
 const priceRows = ref<CostPriceRow[]>([])
@@ -693,6 +724,10 @@ function rebuildPriceRows(): void {
       priceCurrency: row.priceCurrency || 'CNY',
       calls: used?.calls ?? 0,
       costMicros: used?.costMicros ?? 0,
+      billingMode: row.billingMode ?? 'api',
+      tokenQuota: Number(row.tokenQuota ?? 0),
+      tokenUsed: Number(row.tokenUsed ?? 0),
+      tokenRemaining: Number(row.tokenRemaining ?? 0),
     }
   })
 }
@@ -825,6 +860,8 @@ function openCreate(): void {
     useEnvKey: false,
     envKeyName: '',
     envKeyScope: 'user',
+    billingMode: 'api',
+    tokenQuota: 0,
   })
   draftApiKey.value = ''
   modelOptions.value = []
@@ -847,6 +884,8 @@ function openEdit(row: AiProfile): void {
     useEnvKey: row.useEnvKey,
     envKeyName: row.envKeyName,
     envKeyScope: row.envKeyScope,
+    billingMode: row.billingMode ?? 'api',
+    tokenQuota: row.tokenQuota ?? 0,
   })
   draftApiKey.value = ''
   modelOptions.value = []
@@ -877,6 +916,8 @@ async function save(): Promise<void> {
     useEnvKey: isLocalProvider.value ? false : form.useEnvKey,
     envKeyName: form.envKeyName.trim(),
     envKeyScope: form.envKeyScope,
+    billingMode: form.billingMode,
+    tokenQuota: Math.max(0, Math.round(Number(form.tokenQuota) || 0)),
   }
   saving.value = true
   try {

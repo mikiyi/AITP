@@ -18,7 +18,7 @@ from ..repositories.project_repo import ProjectRepository
 from ..repositories.requirement_repo import RequirementRepository
 from ..repositories.test_case_repo import TestCaseRepository
 from ..repositories.test_env_repo import TestEnvRepository
-from ..services import assertion_schema, audit_service, execution_protocol, export_jobs, interface_runner
+from ..services import assertion_schema, audit_service, case_test_data, execution_protocol, export_jobs, interface_runner
 from ..services import nav_badge_service
 from ..services import tabular_export, xlsx_exporter, xlsx_importer
 from .helpers import (
@@ -203,6 +203,14 @@ def list_cases() -> Response:
     payload = page_payload(page)
     payload["list"] = attach_version_codes(conn, [_to_public(row) for row in payload["list"]])
     return ok(payload)
+
+
+@bp.post("/preview-test-data")
+def preview_test_data() -> Response:
+    """扩展字段「测试数据」解析预览：内联内容或本地 txt/Excel/Json/SQL 路径。"""
+    data = body()
+    value = optional_str(data.get("value"), "value", 20000) or ""
+    return ok(case_test_data.preview(value))
 
 
 @bp.get("/tree")

@@ -101,6 +101,7 @@ import type {
   TestEnvListResult,
   TestEnvProbe,
   TestCase,
+  TestDataPreview,
   InterfaceBatchResult,
   InterfaceExecution,
   TestDataBatch,
@@ -428,6 +429,8 @@ export const caseApi = {
   create: (body: Record<string, unknown>) => post<TestCase>('/test-cases', body),
   update: (id: number, body: Record<string, unknown>) => put<TestCase>(`/test-cases/${id}`, body),
   remove: (id: number) => del(`/test-cases/${id}`),
+  previewTestData: (value: string) =>
+    post<TestDataPreview>('/test-cases/preview-test-data', { value }),
   batchRemove: (ids: number[]) => post<BatchDeleteResult>('/test-cases/batch-delete', { ids }),
   execute: (id: number, body: Record<string, unknown>) => post(`/test-cases/${id}/execute`, body),
   runInterface: (id: number, body: Record<string, unknown> = {}) =>

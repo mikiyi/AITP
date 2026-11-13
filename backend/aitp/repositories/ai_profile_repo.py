@@ -110,6 +110,11 @@ class AIProfileRepository(BaseRepository):
             "priceInputMicros": int(row.get("price_input_micros") or 0),
             "priceOutputMicros": int(row.get("price_output_micros") or 0),
             "priceCurrency": str(row.get("price_currency") or "CNY"),
+            # Token Plan（迁移 060）：计费模式与套餐额度；老库缺列按 api/0 兜底
+            "billingMode": str(row.get("billing_mode") or "api"),
+            "tokenQuota": int(row.get("token_quota") or 0),
+            "tokenUsed": int(row.get("token_used") or 0),
+            "tokenRemaining": max(0, int(row.get("token_quota") or 0) - int(row.get("token_used") or 0)),
             "isDefault": bool(row.get("is_default")),
             "isActive": bool(row.get("is_active")),
             "sortOrder": row.get("sort_order"),

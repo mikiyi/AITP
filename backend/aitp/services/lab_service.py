@@ -842,6 +842,9 @@ def build_cost_payload(
         output_micros=int(config.price_output_micros or 0),
         currency=config.price_currency or ai_cost.DEFAULT_CURRENCY,
     )
+    # Token Plan：套餐模式不按量计金额，costMicros 落 None；额度扣减在落库时统一做
+    if config.is_token_plan:
+        price = ai_cost.TokenPrice()
     payload = ai_cost.cost_report(
         usage, price,
         capability=plan.capability,
@@ -849,6 +852,14 @@ def build_cost_payload(
         profile_name=str(config.profile_name or ""),
         model=model,
     )
+    if config.is_token_plan:
+        payload["billingMode"] = "token_plan"
+        payload["tokenPlan"] = {
+            "tokenQuota": config.token_quota,
+            "tokenUsed": config.token_used,
+            "tokenRemaining": config.token_remaining,
+            "unlimited": config.token_quota <= 0,
+        }
     if conn is None:
         return payload
     try:

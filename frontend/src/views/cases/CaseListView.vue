@@ -85,7 +85,7 @@
       </div>
     </div>
 
-    <el-dialog v-model="dialogVisible" :title="editing ? '编辑用例' : '新建用例'" width="720px">
+    <el-dialog v-model="dialogVisible" :title="editing ? '编辑用例' : '新建用例'" width="720px" top="4vh">
       <el-form :model="form" label-width="90px">
         <el-form-item label="标题" required>
           <el-input v-model="form.title" placeholder="格式：场景-条件-预期" />
@@ -128,29 +128,72 @@
         <el-form-item label="前置条件">
           <el-input v-model="form.preconditions" type="textarea" :rows="2" />
         </el-form-item>
-        <el-form-item label="步骤 / 预期">
-          <div class="step-editor">
-            <div v-for="(step, index) in form.steps" :key="index" class="step-row">
-              <el-input v-model="step.action" placeholder="操作步骤" style="flex: 1" />
-              <el-input v-model="step.expected" placeholder="预期结果" style="flex: 1" />
-              <el-button link type="danger" @click="form.steps.splice(index, 1)">删除</el-button>
+        <el-form-item label="操作步骤">
+          <div class="multiline-editor">
+            <el-input
+              v-model="form.stepsText"
+              type="textarea"
+              :rows="6"
+              placeholder="每行一条操作步骤，支持换行；操作与预期分框填写，不要混写"
+            />
+            <div class="multiline-editor__meta">
+              <span class="muted">{{ stepLineCount }} 行步骤</span>
+              <span v-if="pairMismatch" class="multiline-editor__warn">
+                步骤 {{ stepLineCount }} 行 / 预期 {{ expectedLineCount }} 行：按行号配对，缺的预期留空
+              </span>
+              <span v-else class="muted">与「预期结果」按行号一一对应</span>
             </div>
-            <el-button size="small" :icon="Plus" @click="form.steps.push({ action: '', expected: '' })">
-              添加步骤
-            </el-button>
           </div>
         </el-form-item>
-        <el-form-item label="整体预期">
-          <el-input v-model="form.expectedResult" type="textarea" :rows="2" />
+        <el-form-item label="预期结果">
+          <div class="multiline-editor">
+            <el-input
+              v-model="form.expectedText"
+              type="textarea"
+              :rows="6"
+              placeholder="每行一条预期结果，与操作步骤按行号对应，支持换行"
+            />
+            <div class="multiline-editor__meta">
+              <span class="muted">{{ expectedLineCount }} 行预期</span>
+            </div>
+          </div>
         </el-form-item>
         <el-form-item label="标签">
           <el-input v-model="form.tags" placeholder="逗号分隔" />
         </el-form-item>
         <el-form-item v-if="extraFields.length" label="扩展字段">
           <div class="extra-editor">
-            <div v-for="field in extraFields" :key="field.key" class="step-row">
+            <div
+              v-for="field in extraFields"
+              :key="field.key"
+              class="extra-row"
+              :class="{ 'extra-row--data': field.key === '测试数据' }"
+            >
               <span class="extra-label">{{ field.label }}</span>
-              <el-input v-model="form.extra[field.key]" :placeholder="field.placeholder" style="flex: 1" />
+              <div v-if="field.key === '测试数据'" class="test-data-editor">
+                <el-input
+                  v-model="form.extra[field.key]"
+                  type="textarea"
+                  :rows="3"
+                  placeholder="直接填写测试数据，或填本地文件路径：.txt / .csv / .xlsx / .xls / .json / .sql"
+                />
+                <div class="test-data-editor__bar">
+                  <el-button size="small" :loading="previewLoading" @click="previewTestData">解析预览</el-button>
+                  <el-tag v-if="testDataPreview" size="small" effect="plain" :type="testDataPreview.kind === 'empty' ? 'info' : 'success'">
+                    {{ testDataPreviewLabel }}
+                  </el-tag>
+                  <span class="muted test-data-editor__hint">自动化 / 性能执行自动消费该数据</span>
+                </div>
+                <div v-if="testDataPreview && testDataPreview.sampleRows.length" class="test-data-editor__sample">
+                  <div v-for="(row, i) in testDataPreview.sampleRows" :key="i" class="test-data-editor__row text-mono">
+                    {{ row.join(' | ') }}
+                  </div>
+                </div>
+                <div v-else-if="testDataPreview && testDataPreview.textSample" class="test-data-editor__sample text-mono">
+                  {{ testDataPreview.textSample }}
+                </div>
+              </div>
+              <el-input v-else v-model="form.extra[field.key]" :placeholder="field.placeholder" style="flex: 1" />
             </div>
           </div>
         </el-form-item>
@@ -249,6 +292,7 @@ import type {
   ModuleOption,
   Requirement,
   TestCase,
+  TestDataPreview,
 } from '@/api/types'
 import { caseTypeText } from '@/utils/format'
 import { useProjectScope } from '@/composables/useProjectScope'
@@ -271,12 +315,9 @@ function caseMarkdown(row: TestCase): string {
   const lines = [`# ${row.title}`]
   if (row.preconditions) lines.push(`**前置条件**：${row.preconditions}`)
   if (row.steps?.length) {
-    lines.push('**测试步骤**')
-    row.steps.forEach((step, index) => {
-      lines.push(`${index + 1}. ${step.action}${step.expected ? `（预期：${step.expected}）` : ''}`)
-    })
+    lines.push('**测试步骤**\n' + row.steps.map((s, i) => `${i + 1}. ${s.action}`).join('\n'))
   }
-  if (row.expectedResult) lines.push(`**预期结果**：${row.expectedResult}`)
+  if (row.expectedResult) lines.push('**预期结果**\n' + row.expectedResult)
   if (row.tags) lines.push(`**标签**：${row.tags}`)
   return lines.join('\n\n')
 }
@@ -624,13 +665,43 @@ const form = reactive({
   priority: 'P2',
   status: 'not_executed',
   preconditions: '',
-  steps: [] as CaseStep[],
-  expectedResult: '',
+  stepsText: '',
+  expectedText: '',
   tags: '',
   extra: {} as Record<string, string>,
 })
 
 const extraFields = computed<ExtraField[]>(() => EXTRA_FIELDS[form.caseType] ?? [])
+
+const stepLineCount = computed(() => form.stepsText.split('\n').filter((l) => l.trim()).length)
+const expectedLineCount = computed(() => form.expectedText.split('\n').filter((l) => l.trim()).length)
+const pairMismatch = computed(() =>
+  stepLineCount.value > 0 && expectedLineCount.value > 0 && stepLineCount.value !== expectedLineCount.value)
+
+const previewLoading = ref(false)
+const testDataPreview = ref<TestDataPreview | null>(null)
+const testDataPreviewLabel = computed(() => {
+  const p = testDataPreview.value
+  if (!p) return ''
+  if (p.kind === 'empty') return '空数据'
+  const labels: Record<string, string> = {
+    excel: 'Excel', json: 'JSON', 'inline-json': 'JSON', sql: 'SQL', txt: '文本', 'inline-text': '文本',
+  }
+  const base = labels[p.kind] ?? p.kind
+  return p.rowCount > 0 ? `${base} · ${p.rowCount} 条记录` : `${base} · 文本`
+})
+
+async function previewTestData(): Promise<void> {
+  previewLoading.value = true
+  try {
+    testDataPreview.value = await caseApi.previewTestData(form.extra['测试数据'] ?? '')
+  } catch (err) {
+    testDataPreview.value = null
+    ElMessage.error(err instanceof Error ? err.message : '测试数据解析失败')
+  } finally {
+    previewLoading.value = false
+  }
+}
 
 /** 表单里的版本、功能点、需求下拉跟随表单中选的项目，切换项目时重新拉取该项目的清单。 */
 const formVersionOptions = ref<Array<{ label: string; value: number }>>([])
@@ -712,11 +783,12 @@ function openCreate(): void {
     priority: 'P2',
     status: 'not_executed',
     preconditions: '',
-    steps: [{ action: '', expected: '' }],
-    expectedResult: '',
+    stepsText: '',
+    expectedText: '',
     tags: '',
     extra: {},
   })
+  testDataPreview.value = null
   dialogVisible.value = true
 }
 
@@ -734,11 +806,14 @@ async function openEdit(row: TestCase): Promise<void> {
       priority: detail.priority ?? 'P2',
       status: detail.status ?? 'not_executed',
       preconditions: detail.preconditions ?? '',
-      steps: detail.steps?.length ? detail.steps : [{ action: '', expected: '' }],
-      expectedResult: detail.expectedResult ?? '',
+      stepsText: (detail.steps ?? []).map((s) => s.action ?? '').join('\n'),
+      expectedText: (detail.steps ?? []).some((s) => (s.expected ?? '').trim())
+        ? (detail.steps ?? []).map((s) => s.expected ?? '').join('\n')
+        : (detail.expectedResult ?? ''),
       tags: detail.tags ?? '',
       extra: { ...(detail.extra ?? {}) },
     })
+    testDataPreview.value = null
     dialogVisible.value = true
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载用例失败')
@@ -756,9 +831,23 @@ async function save(): Promise<void> {
   }
   saving.value = true
   try {
+    const trimTail = (lines: string[]): string[] => {
+      const out = lines.map((line) => line.trim())
+      while (out.length && !out[out.length - 1]) out.pop()
+      return out
+    }
+    const stepLines = trimTail(form.stepsText.split('\n'))
+    const expectedLines = trimTail(form.expectedText.split('\n'))
+    const steps: CaseStep[] = []
+    for (let i = 0; i < Math.max(stepLines.length, expectedLines.length); i++) {
+      const action = stepLines[i] ?? ''
+      const expected = expectedLines[i] ?? ''
+      if (action || expected) steps.push({ action, expected })
+    }
     const payload = {
       ...form,
-      steps: form.steps.filter((item) => item.action.trim() || item.expected.trim()),
+      steps,
+      expectedResult: form.expectedText,
     }
     if (editing.value) {
       await caseApi.update(editing.value.id, payload)
@@ -1014,15 +1103,65 @@ useProjectScope({
   }
 }
 
-.step-editor {
+.multiline-editor {
   width: 100%;
 }
 
-.step-row {
+.multiline-editor__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.multiline-editor__warn {
+  color: var(--el-color-warning);
+}
+
+.extra-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.extra-row--data {
+  align-items: stretch;
+}
+
+.test-data-editor {
+  flex: 1;
+  min-width: 0;
+}
+
+.test-data-editor__bar {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.test-data-editor__hint {
+  font-size: 12px;
+}
+
+.test-data-editor__sample {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: var(--aitp-subtle);
+  border: 1px solid var(--aitp-border);
+  border-radius: 6px;
+  font-size: 12px;
+  max-height: 132px;
+  overflow-y: auto;
+}
+
+.test-data-editor__row {
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .import-hint {
@@ -1039,6 +1178,7 @@ useProjectScope({
   flex: none;
   font-size: 12px;
   color: var(--aitp-text-secondary, #606266);
+  padding-top: 6px;
 }
 
 .coverage-table {
@@ -1048,5 +1188,31 @@ useProjectScope({
 .coverage-table :deep(.coverage-table__row--unassigned) {
   color: var(--el-text-color-secondary);
   font-style: italic;
+}
+</style>
+
+<style>
+/* 用例编辑对话框：内容超高时可滚动到底，滚动条沿用主题色而非浏览器默认。
+   用 :has 锁定含多行步骤编辑器的对话框，不依赖 Element Plus 的 custom-class（新版已忽略）。 */
+.el-dialog:has(.multiline-editor) .el-dialog__body {
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+  padding-right: 14px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--el-color-primary-light-5, #79bbff) var(--aitp-subtle, #f2f4f3);
+}
+.el-dialog:has(.multiline-editor) .el-dialog__body::-webkit-scrollbar {
+  width: 8px;
+}
+.el-dialog:has(.multiline-editor) .el-dialog__body::-webkit-scrollbar-track {
+  background: var(--aitp-subtle, #f2f4f3);
+  border-radius: 4px;
+}
+.el-dialog:has(.multiline-editor) .el-dialog__body::-webkit-scrollbar-thumb {
+  background: var(--el-color-primary-light-5, #79bbff);
+  border-radius: 4px;
+}
+.el-dialog:has(.multiline-editor) .el-dialog__body::-webkit-scrollbar-thumb:hover {
+  background: var(--el-color-primary-light-3, #a0cfff);
 }
 </style>

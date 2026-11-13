@@ -22,7 +22,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
-from json import loads
+from json import dumps, loads
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import URLError
@@ -48,7 +48,7 @@ from ..repositories.automation_repo import (
     AutomationScriptRepository,
 )
 from ..repositories.sys_config_repo import SysConfigRepository
-from . import automation_writeback, execution_protocol
+from . import automation_writeback, case_test_data, execution_protocol
 
 logger = logging.getLogger(__name__)
 
@@ -699,7 +699,8 @@ def _python_command(conn: sqlite3.Connection, script: dict[str, Any], script_pat
 
 
 def _jmeter_command(conn: sqlite3.Connection, script: dict[str, Any],
-                    script_path: Path, run_dir: Path) -> list[str]:
+                    script_path: Path, run_dir: Path,
+                    test_data: dict[str, Any] | None = None) -> list[str]:
     command = jmeter_command(conn)
     if not command or not Path(command).is_file():
         raise ExecutionError(
@@ -707,10 +708,28 @@ def _jmeter_command(conn: sqlite3.Connection, script: dict[str, Any],
         )
     result_file = run_dir / "result.jtl"
     log_file = run_dir / "jmeter.log"
+    target = script_path
+    props: list[str] = []
+    csv_path = run_dir / "testdata.csv"
+    if test_data and test_data.get("rows") and csv_path.is_file():
+        # 解析后的测试数据统一落 CSV；jmx 里已有 CSVDataSet 就改指向它，否则给 -J 属性供脚本引用
+        props.append(f"-JaitpTestDataFile={csv_path}")
+        jmx = script_path.read_text(encoding="utf-8", errors="replace")
+        if "CSVDataSet" in jmx:
+            pattern = re.compile(
+                r'(<CSVDataSet\b.*?<stringProp name="filename">)(.*?)(</stringProp>)', re.S
+            )
+            new_jmx, count = pattern.subn(
+                lambda m: m.group(1) + str(csv_path) + m.group(3), jmx
+            )
+            if count:
+                target = run_dir / script_path.name
+                target.write_text(new_jmx, encoding="utf-8")
     return [
-        command, "-n", "-t", str(script_path),
+        command, "-n", "-t", str(target),
         "-l", str(result_file),
         "-j", str(log_file),
+        *props,
         *jmeter_args(conn),
     ]
 
@@ -846,8 +865,25 @@ def execute_script(
         run_dir = _run_dir(db_path, run_no)
         script_path = _write_script_file(script, script_dir)
 
+        # 用例扩展字段「测试数据」→ 统一解析后注入子进程：文本 / CSV / JSON 三种口径
+        test_data = case_test_data.for_script(conn, script, {"testRunId": test_run_id})
+        data_env: dict[str, str] = {}
+        if test_data.get("kind") not in ("", "empty"):
+            csv_text = case_test_data.to_csv(test_data)
+            if csv_text:
+                (run_dir / "testdata.csv").write_text(csv_text, encoding="utf-8-sig")
+                data_env["AITP_TEST_DATA_FILE"] = str(run_dir / "testdata.csv")
+            if test_data.get("records"):
+                (run_dir / "testdata.json").write_text(
+                    dumps(test_data["records"], ensure_ascii=False), encoding="utf-8"
+                )
+                data_env["AITP_TEST_DATA_JSON"] = str(run_dir / "testdata.json")
+            data_env["AITP_TEST_DATA"] = str(test_data.get("text") or "")
+            data_env["AITP_TEST_DATA_KIND"] = str(test_data.get("kind") or "")
+        merged_env = {**(extra_env or {}), **data_env}
+
         if category == CATEGORY_PERFORMANCE or script.get("run_mode") == RUN_MODE_JMETER:
-            command = _jmeter_command(conn, script, script_path, run_dir)
+            command = _jmeter_command(conn, script, script_path, run_dir, test_data=test_data)
             limit = timeout_seconds or DEFAULT_JMETER_TIMEOUT
         else:
             command = _python_command(conn, script, script_path)
@@ -864,7 +900,7 @@ def execute_script(
             cwd=str(run_dir),
             env=_child_env(
                 run_dir=run_dir, script_dir=script_dir,
-                script=script, test_run_id=test_run_id, extra_env=extra_env,
+                script=script, test_run_id=test_run_id, extra_env=merged_env,
             ),
             limit=limit,
             cancel_check=cancel_check,

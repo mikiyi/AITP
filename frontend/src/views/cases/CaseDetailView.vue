@@ -51,12 +51,34 @@
         <div class="section-title">执行步骤</div>
         <el-table :data="detail.steps || []" size="small" border>
           <el-table-column type="index" label="#" width="50" />
-          <el-table-column prop="action" label="操作步骤" min-width="220" />
-          <el-table-column prop="expected" label="预期结果" min-width="220" />
+          <el-table-column label="操作步骤" min-width="220">
+            <template #default="{ row }"><span class="pre-line">{{ row.action }}</span></template>
+          </el-table-column>
+          <el-table-column label="预期结果" min-width="220">
+            <template #default="{ row }"><span class="pre-line">{{ row.expected }}</span></template>
+          </el-table-column>
         </el-table>
 
         <div class="section-title">整体预期结果</div>
         <div class="pre">{{ detail.expectedResult || '无' }}</div>
+
+        <template v-if="testDataRaw">
+          <div class="section-title">测试数据</div>
+          <div class="pre">{{ testDataRaw }}</div>
+          <div class="test-data-meta">
+            <el-button size="small" :loading="previewLoading" @click="loadTestDataPreview">解析预览</el-button>
+            <el-tag v-if="testDataPreview" size="small" effect="plain" :type="testDataPreview.kind === 'empty' ? 'info' : 'success'">
+              {{ testDataPreviewLabel }}
+            </el-tag>
+            <span class="muted test-data-meta__hint">自动化 / 性能执行自动消费该数据</span>
+          </div>
+          <div v-if="testDataPreview && testDataPreview.sampleRows.length" class="pre text-mono">
+            {{ testDataPreview.sampleRows.map((r) => r.join(' | ')).join('\n') }}
+          </div>
+          <div v-else-if="testDataPreview && testDataPreview.textSample" class="pre text-mono">
+            {{ testDataPreview.textSample }}
+          </div>
+        </template>
       </div>
 
       <div v-if="detail.caseType === 'interface'" class="panel panel-pad">
@@ -82,7 +104,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Back, VideoPlay } from '@element-plus/icons-vue'
 import { caseApi } from '@/api'
-import type { InterfaceExecution, TestCase } from '@/api/types'
+import type { InterfaceExecution, TestCase, TestDataPreview } from '@/api/types'
 import InterfaceResultDialog from '@/components/InterfaceResultDialog.vue'
 import { dateTimeText, caseSourceText, caseTypeText } from '@/utils/format'
 
@@ -97,6 +119,32 @@ const resultVisible = ref(false)
 const interfaceEntries = computed(() =>
   Object.entries(detail.value?.extra ?? {}).map(([key, value]) => ({ key, value })),
 )
+
+const testDataRaw = computed(() => String(detail.value?.extra?.['测试数据'] ?? ''))
+const previewLoading = ref(false)
+const testDataPreview = ref<TestDataPreview | null>(null)
+const testDataPreviewLabel = computed(() => {
+  const p = testDataPreview.value
+  if (!p) return ''
+  if (p.kind === 'empty') return '空数据'
+  const labels: Record<string, string> = {
+    excel: 'Excel', json: 'JSON', 'inline-json': 'JSON', sql: 'SQL', txt: '文本', 'inline-text': '文本',
+  }
+  const base = labels[p.kind] ?? p.kind
+  return p.rowCount > 0 ? `${base} · ${p.rowCount} 条记录` : `${base} · 文本`
+})
+
+async function loadTestDataPreview(): Promise<void> {
+  previewLoading.value = true
+  try {
+    testDataPreview.value = await caseApi.previewTestData(testDataRaw.value)
+  } catch (err) {
+    testDataPreview.value = null
+    ElMessage.error(err instanceof Error ? err.message : '测试数据解析失败')
+  } finally {
+    previewLoading.value = false
+  }
+}
 
 function priorityTag(priority: string): 'danger' | 'warning' | 'info' | 'primary' {
   if (priority === 'P0') {
@@ -198,5 +246,22 @@ onMounted(async () => {
 .iface-value {
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.pre-line {
+  white-space: pre-line;
+  word-break: break-word;
+}
+
+.test-data-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+
+.test-data-meta__hint {
+  font-size: 12px;
 }
 </style>

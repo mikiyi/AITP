@@ -135,11 +135,61 @@ def price_for_profile(conn: sqlite3.Connection, profile_id: int | None) -> Token
     return price_of_profile(dict(row))
 
 
+# ---------------- Token Plan（套餐/订阅额度，迁移 060） ----------------
+
+BILLING_API = "api"
+BILLING_TOKEN_PLAN = "token_plan"
+SUPPORTED_BILLING_MODES = (BILLING_API, BILLING_TOKEN_PLAN)
+
+
+def normalize_billing_mode(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in SUPPORTED_BILLING_MODES else BILLING_API
+
+
+def is_token_plan_row(row: Mapping[str, Any] | None) -> bool:
+    return normalize_billing_mode((row or {}).get("billing_mode")) == BILLING_TOKEN_PLAN
+
+
+def token_plan_summary(row: Mapping[str, Any] | None) -> dict[str, Any]:
+    """套餐额度口径：总额 / 已用 / 剩余；未设额度（0）= 不限量，只统计不扣减。"""
+    quota = int((row or {}).get("token_quota") or 0)
+    used = int((row or {}).get("token_used") or 0)
+    return {
+        "billingMode": normalize_billing_mode((row or {}).get("billing_mode")),
+        "tokenQuota": quota,
+        "tokenUsed": used,
+        "tokenRemaining": max(0, quota - used) if quota > 0 else 0,
+        "unlimited": quota <= 0,
+    }
+
+
+def deduct_token_plan(conn: sqlite3.Connection, profile_id: int | None, total_tokens: int) -> int:
+    """套餐模式按本次 totalTokens 累加已用额度，返回扣减后的剩余（未设额度返回 0）。
+
+    只更新 token_used，不动金额；并发调用靠 SQLite 行锁串行化，累加用 SQL 自增避免读改写竞态。
+    """
+    if not profile_id or total_tokens <= 0:
+        return 0
+    conn.execute(
+        "UPDATE sys_ai_profile SET token_used = token_used + ?,"
+        " updated_at = updated_at WHERE id = ? AND billing_mode = 'token_plan'",
+        (int(total_tokens), int(profile_id)),
+    )
+    row = conn.execute(
+        "SELECT token_quota, token_used FROM sys_ai_profile WHERE id = ?", (int(profile_id),)
+    ).fetchone()
+    if row is None:
+        return 0
+    return int(token_plan_summary(dict(row))["tokenRemaining"])
+
+
 def price_table(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """全部档案的单价 + 实际用量，供设置页与成本视图共用一套口径。"""
     rows = conn.execute(
         "SELECT id, name, provider, model, price_input_micros, price_output_micros,"
-        " price_currency FROM sys_ai_profile WHERE is_deleted = 0 ORDER BY id",
+        " price_currency, billing_mode, token_quota, token_used"
+        " FROM sys_ai_profile WHERE is_deleted = 0 ORDER BY id",
     ).fetchall()
     usage = spend_by_profile(conn)
     result: list[dict[str, Any]] = []
@@ -154,6 +204,7 @@ def price_table(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             "provider": str(row.get("provider") or ""),
             "model": str(row.get("model") or ""),
             **price.as_dict(),
+            **token_plan_summary(row),
             "calls": item.calls,
             "costMicros": item.micros,
             "costYuan": micros_to_yuan(item.micros),

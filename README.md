@@ -81,7 +81,7 @@ stop.bat          :: Windows
 
 ## 功能地图
 
-前端 56 条路由 / 56 个页面组件，后端 38 个蓝图 / 398 个接口统一挂在 `/api/v1` 下。
+前端 54 条路由 / 57 个页面组件，后端 40 个蓝图 / 404 个接口统一挂在 `/api/v1` 下。
 
 ### 首启引导与示例项目
 
@@ -99,7 +99,7 @@ stop.bat          :: Windows
 ### 外观与导航
 
 - **10 套主题**：白、黑、蓝、红、粉、橙、科技、海洋、植物、工业。右上调色盘一次点选即全站生效。
-- **导航分组**：侧栏按用途分成 AI 实验室 / 测试预案 / 测试资产 / **质量分析** / 自动化 / 知识库 / 设置 七个组。
+- **导航分组**：侧栏按用途分成 10 组——AI 实验室 / 任务中心 / 测试预案 / 测试资产 / 质量结论 / 自动化脚本 / 执行与探索 / 知识库 / 数据与迁移 / 设置，另有首页与帮助文档两个直达项。
 - **筛选即查询**：列表页筛选项一改就自动出结果，不再需要点「查询」；筛选与分页仍写进地址栏，链接可分享。
 
 ### 任务清单
@@ -206,6 +206,15 @@ stop.bat          :: Windows
 - 全部候选都不可用时降级到**本地规则**
 - **自检是真实调用**：返回 ✓/✗、延迟、回复片段、token 用量
 
+### Token Plan 套餐模式
+
+AI 档案除 **API 按量**外支持 **Token 套餐**（`billing_mode=token_plan`，迁移 060）：
+
+- 预购 token 额度（`token_quota`），用套餐凭证调用同一 OpenAI 兼容接口，接口与鉴权方式不变；
+- 每次调用按 `totalTokens` 扣减额度（`token_used`），界面显示剩余 = 额度 − 已用；
+- 套餐模式**不按量计金额**（`cost_micros` 落 NULL），与「未配价只报 token」口径一致；
+- `token_quota=0` = 未设额度，只统计不扣减；额度扣减用 SQL 自增，并发不丢计数。
+
 ---
 
 ## 数据与知识治理
@@ -237,6 +246,8 @@ stop.bat          :: Windows
 - **密钥存储**：API Key 存于操作系统密钥库（Windows DPAPI / macOS 钥匙串 / Linux Fernet）
 - **AI 外发脱敏**：云端调用默认自动替换手机号、身份证、邮箱、银行卡号、API Key 等
 - **AI 行为安全**：证据不足时明确提示而非编造；不编造知识标题或缺陷编号；AI 不批准上线；P0/P1 与 Prompt 测试结果必须人工复核
+- **生产环境执行统一确认**：轮次 / 接口批量 / 自动化 / 执行矩阵凡涉及生产环境，统一弹「已知晓风险」勾选确认（默认不勾选、不勾不能执行），后端同样强制 `confirmProd`，UI 与 API 双重守卫
+- **终态锁定防绕过**：编排发布后锁定编辑/删除；报告发布/归档为终态、归档不可退回草稿；轮次已完成结果冻结——定稿资产不会被悄悄改回
 
 ---
 
@@ -266,7 +277,7 @@ cd frontend && npm run build                                              # 前�
 - `check_ai_live` 被 runner 永久排除：它打真实商汤模型接口、烧额度且非确定性，需要时单独手工跑。
 - 新增门禁脚本只要放进 `backend/scripts` 且命名 `check_*.py`，runner 自动纳入，无需改 runner。
 
-门禁清单（53 个脚本 = 52 个 `check_*.py` + `smoke_api.py`，与 `backend/scripts` 下真实脚本一一对应；其中 `check_ai_live` 不进 runner，实际执行 52 项）：
+门禁清单（55 个脚本 = 54 个 `check_*.py` + `smoke_api.py`，与 `backend/scripts` 下真实脚本一一对应；其中 `check_ai_live` 不进 runner，实际执行 54 项）：
 
 | 脚本 | 含义 | 失败怎么查 |
 | --- | --- | --- |
@@ -320,6 +331,8 @@ cd frontend && npm run build                                              # 前�
 | `check_project_package.py` | 项目资产包（GAP-41）：结构包计数、无密钥、同编码拒绝、改名导入与外键重映射 | 看资产包服务与 manifest |
 | `check_external_import.py` | 外部平台只读导入（GAP-40）：桩禅道验证登录换 token、只发 GET 不回写、映射落库、外部 id 去重、两层认证、映射模板与批次隔离、密钥不落库 | 看 `services/external_import*` 与 `api/external_imports.py` |
 | `check_test_execution.py` | 执行闭环：计划 → 轮次 → 批量结果 → 失败转缺陷 → 追溯矩阵 → 发布准入 | 按失败环节名定位对应蓝图 |
+| `check_test_round_redesign.py` | 测试计划/轮次多轮改造：轮次类型、计划时间窗、范围预设、4/3 轮模板生成（迁移 057） | 看 `test_round_service.py` 与计划/轮次接口 |
+| `check_module_tree.py` | 功能点树：三层结构、换父节点、按深度角色、能力绑定与专属提示词 | 看 `api/modules.py` 与模块树仓储 |
 | `check_types.py` | 类型门禁：mypy --strict 扫全后端 + 真实执行 `vue-tsc --noEmit`；CI 可加 `--require-frontend` 让缺前端依赖直接失败 | 直接看 mypy/TS 报错的文件行号 |
 | `check_walkthrough.py` | 固定走查案例：路由顺序 + 降级顺序 + 行为安全 + 结构化记录 + 全局搜索 | 看走查各步骤断言输出 |
 | `smoke_api.py` | P3 API 冒烟：临时库跑通全部蓝图关键路径 | 按结尾「失败项」列表定位蓝图 |
@@ -342,17 +355,39 @@ cd frontend && npm run build                                              # 前�
 
 ---
 
+## 端到端测试（E2E）
+
+基于 Playwright 的全流程端到端测试，位于 `frontend/e2e/`，配置 `frontend/playwright.config.ts`。
+工装自动拉起**隔离环境**（独立后端 8762 + 临时库、mock 模型 18790/18791、vite 5199），
+绝不触碰正式 8760 与 `data/aitp.db`；teardown 树杀进程并删临时目录。
+
+```bash
+cd frontend && npx playwright install chromium   # 首次
+cd frontend && npx playwright test               # 串行 workers=1
+```
+
+- **BFS**：全部路由一次访问，断言无白屏 / 无 JS 异常 / 无 5xx。
+- **DFS**：核心业务页（AI 能力、用例、计划/轮次、缺陷、报告、知识库、回归）穷尽交互，每页 ≤20 元素防死循环。
+- **非快乐路径**：返回/取消/放弃保存、空数据、超大量（1000 条分页+虚拟窗口）、未登录/口令、刷新/后退、表单边界（空/超长/特殊字符）。
+- 每步断言业务结果，不只断言「没报错」；页面变化后重新定位元素，不复用旧 ref。
+- 结果：`frontend/e2e/results.json` + 控制台 list；失败留 trace/截图。
+- 约定见 `AGENTS.md`：**每次改完代码必须跑一遍验证，并把真实通过/失败结果写进回复**。
+
+> 生产确认勾选弹窗的 UI 交互在 Playwright 自带浏览器下渲染不稳定，故 `05-prod-confirm` 用 API 级守卫断言；弹窗 UI 已在有头浏览器人工验证。
+
+---
+
 ## 目录结构
 
 ```
 backend/
   aitp/
-    api/          38 个蓝图 / 398 个接口
-    ai/           resolver、client、masking、adapters
+    api/          40 个蓝图 / 404 个接口
+    ai/           resolver、client、masking、adapters、cost、output_schema
     common/       常量、校验、分页、密钥库、安全工具
-    db/           连接与迁移（55 份）
+    db/           连接与迁移（58 份）
     repositories/ 参数化 SQL 仓储层
-    services/     知识落盘、报告导出、备份恢复、执行矩阵、留存归档、探索性测试等
+    services/     知识落盘、报告导出、备份恢复、执行矩阵、留存归档、探索性测试、外部导入等
     prompts/      提示词模板库
     static/       前端构建产物
   prompts/        提示词 YAML
@@ -361,7 +396,8 @@ frontend/
   src/
     api/          统一请求层
     components/   通用组件
-    views/        56 个页面组件
+    views/        57 个页面组件
+  e2e/            Playwright 端到端测试（隔离工装）
 data/             运行时数据（SQLite、日志、密钥、归档、探索性截图与日志切片）
 knowledge/        知识库 Markdown 落盘目录
 ```

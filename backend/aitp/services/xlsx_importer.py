@@ -45,6 +45,15 @@ def steps_from_text(text: str) -> list[dict[str, Any]]:
     return steps
 
 
+def pair_steps(steps_text: str, expected_text: str) -> list[dict[str, Any]]:
+    """多行步骤与多行预期按行号一一配对；预期行数不足时留空，不串行。"""
+    steps = steps_from_text(steps_text)
+    expected_lines = [line.strip() for line in (expected_text or "").splitlines()]
+    for index, step in enumerate(steps):
+        step["expected"] = expected_lines[index] if index < len(expected_lines) else ""
+    return steps
+
+
 def _row_to_dict(headers: list[str], values: list[Any]) -> dict[str, str]:
     row: dict[str, str] = {}
     for index, header in enumerate(headers):
@@ -124,7 +133,7 @@ def _build_case(case_type: str, row: dict[str, str]) -> dict[str, Any]:
         "requirementNo": row.get("关联需求", ""),
         "priority": priority if priority in ("P0", "P1", "P2", "P3") else "P2",
         "preconditions": row.get("前置条件", ""),
-        "steps": steps_from_text(steps_text),
+        "steps": pair_steps(steps_text, expected),
         "expectedResult": expected,
         "actualResult": actual,
         "status": status,

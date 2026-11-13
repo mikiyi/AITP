@@ -30,10 +30,25 @@ class ResolvedAIConfig:
     price_input_micros: int = 0
     price_output_micros: int = 0
     price_currency: str = "CNY"
+    #: Token Plan：'api' = 按量计费；'token_plan' = 套餐/订阅额度，按额度扣减、不按量计金额
+    billing_mode: str = "api"
+    token_quota: int = 0
+    token_used: int = 0
 
     @property
     def has_api_key(self) -> bool:
         return bool(self.api_key)
+
+    @property
+    def is_token_plan(self) -> bool:
+        return self.billing_mode == "token_plan"
+
+    @property
+    def token_remaining(self) -> int:
+        """套餐剩余 token；未设额度（0）时返回 0 表示「不限量/未设」，由界面区分。"""
+        if self.token_quota <= 0:
+            return 0
+        return max(0, self.token_quota - self.token_used)
 
     @property
     def egress(self) -> str:
@@ -55,6 +70,10 @@ class ResolvedAIConfig:
             "isLocal": self.is_local,
             "locality": self.locality,
             "egress": self.egress,
+            "billingMode": self.billing_mode,
+            "tokenQuota": self.token_quota,
+            "tokenUsed": self.token_used,
+            "tokenRemaining": self.token_remaining,
         }
 
 

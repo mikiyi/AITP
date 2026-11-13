@@ -134,6 +134,8 @@ PROFILE_WRITE_FIELDS = {
     "max_tokens", "timeout", "is_default", "is_active", "sort_order", "priority",
     "is_local", "extra",
     "price_input_micros", "price_output_micros", "price_currency",
+    # Token Plan（迁移 060）：计费模式与套餐额度随档案维护
+    "billing_mode", "token_quota",
 }
 
 
@@ -193,6 +195,19 @@ def _price_micros(value: Any, field: str, default: int = 0) -> int:
 def _price_currency(value: Any) -> str:
     """币种归一：白名单外一律回落 CNY，与 ai.cost 的折算口径同源。"""
     return ai_cost.normalize_currency(value)
+
+
+def _billing_mode(value: Any) -> str:
+    """Token Plan：计费模式归一，白名单外回落 api（与 ai.cost 同源）。"""
+    return ai_cost.normalize_billing_mode(value)
+
+
+def _token_quota(value: Any, field: str = "tokenQuota", default: int = 0) -> int:
+    """套餐总 token 额度：非负整数；0 = 未设额度（只统计不扣减）。"""
+    quota = require_int(value, field, default)
+    if quota < 0:
+        raise AppError(ErrorCode.PARAM_ERROR, f"参数 {field} 不能为负数；0 表示未设额度")
+    return quota
 
 
 def _default_timeout(conn: Any) -> float:
@@ -269,6 +284,9 @@ def create_profile() -> Response:
         "price_input_micros": _price_micros(data.get("priceInputMicros"), "priceInputMicros"),
         "price_output_micros": _price_micros(data.get("priceOutputMicros"), "priceOutputMicros"),
         "price_currency": _price_currency(data.get("priceCurrency")),
+        # Token Plan（迁移 060）：计费模式与套餐额度随档案创建
+        "billing_mode": _billing_mode(data.get("billingMode")),
+        "token_quota": _token_quota(data.get("tokenQuota")),
         "timeout": require_float(data.get("timeout"), "timeout", _default_timeout(conn)),
         "is_default": 1 if data.get("isDefault") else 0,
         "is_active": 1 if data.get("isActive", True) else 0,
@@ -324,6 +342,11 @@ def update_profile(pk: str) -> Response:
         payload["price_currency"] = _price_currency(data["price_currency"])
     elif "priceCurrency" in data:
         payload["price_currency"] = _price_currency(data["priceCurrency"])
+    # Token Plan（迁移 060）：计费模式与套餐额度，没传保持现值
+    if "billing_mode" in data or "billingMode" in data:
+        payload["billing_mode"] = _billing_mode(data.get("billing_mode", data.get("billingMode")))
+    if "token_quota" in data or "tokenQuota" in data:
+        payload["token_quota"] = _token_quota(data.get("token_quota", data.get("tokenQuota")))
     for key in ("sort_order", "priority"):
         if key in payload:
             payload[key] = require_int(payload[key], key)

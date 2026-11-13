@@ -349,6 +349,10 @@ def _build_config(
         price_input_micros=_price_of(profile, "price_input_micros"),
         price_output_micros=_price_of(profile, "price_output_micros"),
         price_currency=normalize_currency((profile or {}).get("price_currency")),
+        # Token Plan：计费模式与套餐额度跟着档案走（迁移 060；老库缺列按 api/0 兜底）
+        billing_mode=str((profile or {}).get("billing_mode") or "api"),
+        token_quota=int((profile or {}).get("token_quota") or 0),
+        token_used=int((profile or {}).get("token_used") or 0),
     )
     if require_key:
         ensure_credential(config)
