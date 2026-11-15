@@ -81,7 +81,7 @@ The launcher checks the port first: if AITP is already running it just opens the
 
 ## Feature map
 
-Frontend: 54 routes / 57 page components. Backend: 40 blueprints / 404 endpoints, all under `/api/v1`.
+Frontend: 54 routes / 57 page components. Backend: 39 blueprints / 410 endpoints, all under `/api/v1`.
 
 ### First-launch tour and demo project
 
@@ -145,7 +145,8 @@ Page: **Task list** (`/todos`)
 - **Context assembly**: modules, existing cases, defects and knowledge are recalled per project/feature point and injected into the prompt; tiers are lite / standard / full, defaulting to standard (GAP-27)
 - **Output schema validation**: results are validated against a JSON Schema; missing or mistyped fields are blocked on the spot with a retryable Chinese message (GAP-28)
 - **Generation de-duplication**: new output is compared against cases already in the library, in "mark suspected" or "incremental against baseline" mode, and suspected items are unchecked by default (GAP-29)
-- **Cost accounting**: per-profile unit prices convert every call into tokens and money; daily/monthly budgets and per-call token limits are soft warnings that never block (GAP-30)
+- **Cost accounting**: per-profile unit prices convert every call into tokens and money; daily/monthly budgets and per-call token limits are soft warnings that never block (GAP-30); self-hosted (local) models incur no cloud spend and are never billed
+- **Disable thinking mode**: a per-profile switch that lets reasoning models such as qwen3 / DeepSeek-R1 skip the thinking phase and answer directly (measured 57s -> 13s for in-product Q&A on a local qwen3:8b); the field sent downstream follows the protocol automatically (Ollama native `think=false`; OpenAI-compatible `reasoning_effort=none` plus `chat_template_kwargs.enable_thinking=false`)
 - **Session records**: every run leaves a trace — input, output, model, usage and degradation
 - **Streaming output**: the request returns a task id immediately and the frontend polls `framesUrl` for incremental frames (long connections no longer occupy sync workers); if the primary model fails, a degradation notice appears before switching models
 
@@ -163,7 +164,7 @@ Page: **Task list** (`/todos`)
 | Execution and evidence | Interface / automation / manual / regression / **exploratory** runs each write one unified evidence snapshot, drillable from runs, defects and reports |
 | Regression checklist | CRUD, AI-generated regression items, auto items really executed by the server with evidence, manual items require evidence to pass |
 | Execution matrix (GAP-43) | Fan a batch of cases across multiple environments × endpoints (app servers), dispatch once and really run each cell; per-case cross-cell attribution (common pass / common failure / env-specific / endpoint-specific / mixed); one-click defect conversion for common failures with evidence attached; production environments require explicit confirmation to dispatch |
-| Web exploratory testing (GAP-45) | An MCP-driven browser explores in a read-snapshot → decide → act → observe loop, finding gaps that scripted cases miss; anomalous steps force 3 screenshots plus a dual-anchor ±N-second log slice, network snapshot, console errors and traceId as an evidence pack; password/token inputs are masked per PII rules; findings go to the pending pool for human review first and only become defects after approval |
+| Web exploratory testing (GAP-45) | An MCP-driven real browser (started by the `mcpCommand` you configure under "Exploratory testing settings"; `backend/scripts/browser_mcp_server.py`) explores in a read-snapshot → decide → act → observe loop, finding gaps that scripted cases miss; normal steps keep evidence at the configured per-step screenshot count, anomalous steps force 3 screenshots plus a dual-anchor ±N-second log slice, network snapshot, console errors and traceId as an evidence pack; password/token inputs are masked per PII rules; findings go to the pending pool for human review first and only become defects after approval |
 | Knowledge / report fragment reuse (GAP-42) | A fragment is maintained once in its source project; target reports register a reference and rendering / export reads the body live, avoiding drifting copies; referenced fragments cannot be deleted |
 | Data retention and archival (GAP-44) | Per-data-type retention days and expiry actions (archive / soft-delete / summary-only) for runs, automation runs, evidence, logs and todos; reference protection (bug-linked evidence, matrix-linked records survive expiry); expired data is zipped into `data/archive/` and searchable with original readback; dry-run preview and startup auto-cleanup supported |
 
@@ -173,12 +174,14 @@ Page: **Task list** (`/todos`)
 |---|---|
 | AI configuration | Provider profile CRUD, API keys in the OS keystore, priority ordering, real self-check, model list, profile unit prices and call cost, context tier and de-duplication mode, soft budget thresholds |
 | Knowledge base settings | Storage directory, file mode, rebuild index on startup |
-| Module tree | Three-level structure and capability binding |
+| Module tree | Three-level structure (a child's level role follows its parent: module -> sub-module -> feature), capability binding and per-node prompt |
 | System settings | Read/write all configuration items |
 | Test environment configuration | Multiple named environments, credentials in the system keystore, reachability probe |
 | Data backup | Database snapshot backup, full-bundle backup, restore |
 | Data retention and archival | Per-type retention days and expiry actions, expiry preview, dry-run, run cleanup now, archive search and original readback (GAP-44) |
-| Exploratory testing settings | Max steps / duration / per-step timeout / screenshots, record selectors, input masking toggle, log-slice window and sources, MCP server command and pinned-tool allowlist (GAP-45) |
+| Exploratory testing settings | Max steps / duration / per-step timeout / per-step screenshot count (anomalous steps force 3 more), record selectors, input masking toggle, log-slice window and sources, MCP server command and pinned-tool allowlist (GAP-45) |
+| Project asset package | Structure-package export / preview / rename-on-import: modules, versions, requirements, cases, defects, knowledge, scripts, assertion rules; every id is reallocated and foreign keys remapped; keystores and execution history never leave the package |
+| External platform import | Read-only one-way import from Zentao / Jira / TestLink: after login-token exchange only GET requests are sent and nothing is ever written back; Zentao and Jira import requirements / cases / defects, TestLink imports requirements / cases; credentials go to the system keystore, with two-layer "platform account + server-level HTTP Basic" auth; mapping templates are editable, dedup is per project + platform + external id, and every batch is recorded |
 | CI and notifications | CI tokens, webhook channels, event subscriptions, test send |
 | Home card customization | Show/hide and reorder non-fixed home cards |
 
@@ -221,6 +224,7 @@ Besides **pay-per-use API**, an AI profile can use **Token Plan** (`billing_mode
   - `llm`: answers from the model's own knowledge (sends data out)
   - `kb`: local retrieval only, returns verbatim excerpts (no egress)
   - `hybrid` (default): retrieves the knowledge base first and feeds matched text tagged `[K1]…` to the model for consolidation (sends data out)
+- **Q&A history is stored per session**: every question and answer is written to a session (capability `knowledge-assistant`), so switching menus, reloading or reopening the browser replays the thread; "clear conversation" starts a new session while the old one stays in the database and remains reachable under "AI records -> Session records" filtered by capability; the replay carries the answer mode, references and archived timestamp, so clicking "add to knowledge base" again is detected as a duplicate instead of entering the pool twice; Q&A sessions write no AI execution record and stay out of cost and budget accounting
 
 ---
 
@@ -281,19 +285,24 @@ cd frontend && npm run build                                              # fron
 - Any new gate script dropped into `backend/scripts` named `check_*.py` is picked up
   automatically without touching the runner.
 
-Gate inventory (55 entries = 54 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
-scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 54 items actually
+Gate inventory (61 entries = 60 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
+scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 60 items actually
 execute):
 
 | Script | Covers | When it fails, look at |
 | --- | --- | --- |
 | `check_ai_live.py` | Live SenseTime model full-path test (**never in the runner**: real calls, burns quota, non-deterministic) | run it manually; see env vars in the script header |
 | `check_ai_masking.py` | AI outbound masking (phone / ID / email / bank card / API key) | `backend/aitp/ai/masking` rules and profile config |
+| `check_ai_thinking.py` | "Disable thinking mode" end to end: `extra_json.thinking=off` -> resolver -> request body of both adapters; nothing is sent when the flag is unset (default semantics unchanged) | `ai/resolver.py::_disable_thinking` and `_body` in `ai/adapters/*` |
 | `check_ai_cost.py` | AI cost accounting: per-profile unit prices and micro-unit conversion, daily/monthly budgets and per-call token soft threshold, over-budget only warns and never blocks (GAP-30) | `backend/aitp/ai/cost.py` and the price fields of `sys_ai_profile` |
+| `check_ai_local_billing.py` | Self-hosted (local) profiles are never billed: write side zeroes out, the unit-price endpoint refuses, cost table and currency are not skewed by leftover values, real runs store NULL cost | `cost.is_local_profile`, plus billing handling in `api/settings.py` and `api/lab.py` |
+| `check_egress_guard.py` | The outbound-data confirmation looks only at the primary model actually used: local primary stays silent, cloud primary prompts, the candidate chain is still returned in full | `knowledge_assistant_service.egress_plan` and frontend `stores/aiGuard.ts` |
+| `check_assistant_history.py` | Q&A history stored per session: question and answer land in `biz_ai_session` / `biz_ai_message` (capability `knowledge-assistant`), replay carries mode and references, archived timestamps match so "add to knowledge base" never duplicates, foreign or other-module sessions are refused, over-limit replays only the newest and writes no `biz_ai_record` | `knowledge_assistant_service.history/record_qa` and `api/knowledge.py::_persist_qa` |
 | `check_attachments.py` | Attachments: document import + image watermark removal | attachment endpoints, Pillow, mock server output |
 | `check_automation.py` | Automation script assets and execution engine | execution records and engine log (`data/aitp.log`) |
 | `check_automation_writeback.py` | Automation result writeback to cases/rounds (GAP-07) | writeback service and round state machine |
 | `check_backup_schedule.py` | Scheduled backups and retention (GAP-13) | backup service and `data/` retention logic |
+| `check_case_test_data.py` | Case steps/expectations paired line by line + test-data parsing in many formats (inline text/JSON, txt/csv/xlsx/json/sql files, URLs and unknown formats refused), automation consumes `AITP_TEST_DATA`, JMeter points at the parsed `testdata.csv` (BUG-44/45) | the test-data parsing service and case step/data persistence |
 | `check_ci_boundary.py` | CI token access boundary: route allowlist, project scope, expiry, revocation, audit source (GAP-24) | CI token auth checks and audit source marking |
 | `check_ci_notifications.py` | CI triggers and webhook notifications (GAP-10), self-hosted HTTP collector | token hashing, channel scoping, delivery records |
 | `check_context_assembler.py` | Context assembly: three budget tiers, recall of modules/cases/defects/knowledge per project and feature point, preview and real build share one code path (GAP-27) | `backend/aitp/services/context_assembler.py` tiers and recall |
@@ -330,6 +339,7 @@ execute):
 | `check_test_data.py` | Test data generation (file branch) | generation service and exported files |
 | `check_test_execution.py` | Execution loop: plan -> round -> batch results -> defect -> traceability -> release gate | locate the blueprint by failed step name |
 | `check_test_round_redesign.py` | Test plan/round multi-round redesign: round types, plan time windows, scope presets, 4/3-round template generation (migration 057) | `test_round_service.py` and plan/round endpoints |
+| `check_token_plan.py` | Token-plan billing: `billing_mode='token_plan'` deducts tokens against a purchased quota, shows the remainder and stores `cost_micros` as NULL (no money conversion); pay-as-you-go semantics unchanged (migration 060) | `sys_ai_profile.billing_mode/token_quota` and the write branches in `ai/cost.py` |
 | `check_module_tree.py` | Feature-point tree: three levels, re-parenting, role by depth, capability binding and per-node prompt | `api/modules.py` and the module-tree repository |
 | `check_execution_matrix.py` | Execution matrix: multi-env x multi-endpoint per-cell real runs, cross-cell attribution, common-failure-to-defect, production confirmation (GAP-43) | `execution_matrix_service.py` and `biz_execution_matrix*` |
 | `check_exploratory_web.py` | Web exploratory testing: MCP stub driver, evidence-pack fields, dual-anchor ±5s log slices, findings to pending pool not defect store, no-model degradation, input masking (GAP-45) | `exploratory_service.py` and `biz_exploration_*` |
@@ -378,6 +388,7 @@ cd frontend && npx playwright test               # serial, workers=1
 - **BFS**: visit every route once, asserting no blank screen / no JS exception / no 5xx.
 - **DFS**: exhaust interactions on core pages (AI capability, cases, plan/round, defects, reports, knowledge, regression), capped at 20 elements per page to avoid loops.
 - **Non-happy paths**: back/cancel/discard, empty data, very large data (1000 rows pagination + virtual window), unauthenticated/passcode, refresh/back, form boundaries (empty / over-long / special characters).
+- **Q&A history survives** (`06-assistant-history`): after hopping through 8 menu pages — enough to evict the assistant from the `keep-alive` cache — the thread is still there, and a full reload still shows it (proving it comes from the database, not memory); after "clear conversation" the current thread is empty but the archived session remains queryable in "AI records -> Session records" filtered by "Knowledge-base Q&A".
 - Every step asserts a business result, not just "no error"; elements are re-located after page changes, never reusing stale refs.
 - Results: `frontend/e2e/results.json` + console list; failures keep trace/screenshots.
 - Convention in `AGENTS.md`: **after every code change, run the verification and report the real pass/fail results in the reply**.
@@ -391,10 +402,10 @@ cd frontend && npx playwright test               # serial, workers=1
 ```
 backend/
   aitp/
-    api/          40 blueprints / 404 endpoints
+    api/          39 blueprints / 410 endpoints
     ai/           resolver, client, masking, adapters, cost, output_schema
     common/       constants, validation, pagination, keystore, security utilities
-    db/           connections and migrations (58 files)
+    db/           connections and migrations (60 files)
     repositories/ parameterized SQL repository layer
     services/     knowledge persistence, report export, backup/restore, execution matrix, retention/archival, exploratory testing, external import
     prompts/      prompt template library
