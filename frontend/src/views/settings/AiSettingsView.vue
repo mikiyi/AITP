@@ -207,7 +207,7 @@
         <span>今日花费 <b>{{ yuanText(costStatus?.today?.costMicros) }}</b>（{{ costStatus?.today?.calls ?? 0 }} 次）</span>
         <span>本月花费 <b>{{ yuanText(costStatus?.month?.costMicros) }}</b>（{{ costStatus?.month?.calls ?? 0 }} 次）</span>
         <span v-if="(costStatus?.month?.unpricedCalls ?? 0) > 0">
-          其中 {{ costStatus?.month?.unpricedCalls }} 次未配单价，只报 token 不报钱
+          其中 {{ costStatus?.month?.unpricedCalls }} 次不计费（本地模型或云端未配单价），只报 token 不报钱
         </span>
       </div>
       <el-alert
@@ -237,7 +237,8 @@
             <span class="ai-config-hint__text">
               阈值都是软阈值：0 表示不设限，达到告警比例或超出只会在这里与调用结果里提示，
               不拦截调用、不自动降级。单价填「每 1000 token 的微元数」（1 元 = 1000000 微元），
-              两个都留 0 就是未配价，此时只统计 token 不统计钱。
+              两个都留 0 就是未配价，此时只统计 token 不统计钱。本地（自托管）模型不产生云服务费，
+              下面的单价行只读、不参与计费。
             </span>
           </div>
         </el-form-item>
@@ -248,7 +249,13 @@
           {{ row.profileName }}
           <small>{{ row.model }}</small>
         </span>
-        <template v-if="row.billingMode === 'token_plan'">
+        <template v-if="row.isLocal">
+          <el-tag size="small" type="success">本地模型</el-tag>
+          <span class="ai-cost-price-spent">
+            不计费（跑在本机，不产生云服务费）· 累计 {{ row.calls }} 次
+          </span>
+        </template>
+        <template v-else-if="row.billingMode === 'token_plan'">
           <el-tag size="small" type="warning">Token 套餐</el-tag>
           <span class="ai-cost-price-spent">
             剩余 {{ row.tokenRemaining }} / {{ row.tokenQuota }} token（已用 {{ row.tokenUsed }}）
@@ -321,6 +328,23 @@
             <span>单次回复的最大长度（含推理内容），默认 4096。长用例、长报告可调到 8192；调大更慢、消耗更多 token。</span>
           </div>
         </el-form-item>
+        <el-form-item label="关闭思考模式">
+          <el-switch v-model="form.disableThinking" />
+          <div class="field-hint">
+            <el-icon><InfoFilled /></el-icon>
+            <span>
+              qwen3、DeepSeek-R1 这类推理模型会先生成一大段思考再回答，问答要等思考全部生成完（本地 8B 模型一个简单问题也要 1 分钟左右）。
+              开启后直接出答案，实测站内问答从 57 秒降到 13 秒（本地 qwen3:8b）；复杂推理的质量会有所下降。
+            </span>
+          </div>
+          <div class="field-hint">
+            <el-icon><InfoFilled /></el-icon>
+            <span>
+              下发方式随协议自动选择：Ollama 原生发 think=false，OpenAI 兼容发 reasoning_effort=none 与 chat_template_kwargs。
+              个别云端接口不认这两个字段、可能报错，报错时把开关关掉即可。
+            </span>
+          </div>
+        </el-form-item>
         <el-form-item label="超时(秒)">
           <el-input-number v-model="form.timeout" :min="5" :max="600" />
           <div class="field-hint">
@@ -328,7 +352,7 @@
             <span>单次调用最长等待秒数，默认 60。本地大模型首次加载较慢，建议 120~300；云端接口 30~60 即可。</span>
           </div>
         </el-form-item>
-        <el-form-item label="计费模式">
+        <el-form-item v-if="!isLocalProvider" label="计费模式">
           <el-radio-group v-model="form.billingMode">
             <el-radio-button value="api">API 按量</el-radio-button>
             <el-radio-button value="token_plan">Token 套餐</el-radio-button>
@@ -338,7 +362,7 @@
             <span>API 按量：按档案单价折算金额；Token 套餐：预购 token 额度，按额度扣减、显示剩余，不按量计金额。接口与鉴权方式不变。</span>
           </div>
         </el-form-item>
-        <el-form-item v-if="form.billingMode === 'token_plan'" label="套餐额度(token)">
+        <el-form-item v-if="!isLocalProvider && form.billingMode === 'token_plan'" label="套餐额度(token)">
           <el-input-number v-model="form.tokenQuota" :min="0" :step="10000" />
           <div class="field-hint">
             <el-icon><InfoFilled /></el-icon>
@@ -542,6 +566,7 @@ const form = reactive({
   temperature: 0.7,
   maxTokens: 4096,
   timeout: 60,
+  disableThinking: false,
   isDefault: false,
   useEnvKey: false,
   envKeyName: '',
@@ -675,11 +700,13 @@ const callTokens = ref(0)
 /**
  * 单价行：单价现值只认「档案列表」这一个数据源（写也走档案接口），
  * 累计花费只有成本接口能给，所以按档案 id 拼上去，两者对不上时以档案为准。
+ * 是否本地以成本接口为准：它按「档案列 + 供应商内置标记」判定，比前端只看供应商全。
  */
 interface CostPriceRow {
   profileId: number
   profileName: string
   model: string
+  isLocal: boolean
   priceInputMicros: number
   priceOutputMicros: number
   priceCurrency: string
@@ -713,21 +740,23 @@ function rebuildPriceRows(): void {
   for (const item of priceSpend.value) {
     spend.set(Number(item.profileId), item)
   }
-  priceRows.value = profiles.value.map((row) => {
+  priceRows.value = profiles.value.map((row): CostPriceRow => {
     const used = spend.get(Number(row.id))
+    const local = Boolean(used?.isLocal ?? row.isLocal)
     return {
       profileId: Number(row.id),
       profileName: row.name,
       model: row.model,
-      priceInputMicros: Number(row.priceInputMicros ?? 0),
-      priceOutputMicros: Number(row.priceOutputMicros ?? 0),
+      isLocal: local,
+      priceInputMicros: local ? 0 : Number(row.priceInputMicros ?? 0),
+      priceOutputMicros: local ? 0 : Number(row.priceOutputMicros ?? 0),
       priceCurrency: row.priceCurrency || 'CNY',
       calls: used?.calls ?? 0,
       costMicros: used?.costMicros ?? 0,
-      billingMode: row.billingMode ?? 'api',
-      tokenQuota: Number(row.tokenQuota ?? 0),
+      billingMode: local ? 'api' : row.billingMode ?? 'api',
+      tokenQuota: local ? 0 : Number(row.tokenQuota ?? 0),
       tokenUsed: Number(row.tokenUsed ?? 0),
-      tokenRemaining: Number(row.tokenRemaining ?? 0),
+      tokenRemaining: local ? 0 : Number(row.tokenRemaining ?? 0),
     }
   })
 }
@@ -856,6 +885,7 @@ function openCreate(): void {
     temperature: 0.7,
     maxTokens: 4096,
     timeout: 60,
+    disableThinking: false,
     isDefault: false,
     useEnvKey: false,
     envKeyName: '',
@@ -880,6 +910,7 @@ function openEdit(row: AiProfile): void {
     temperature: row.temperature,
     maxTokens: row.maxTokens,
     timeout: row.timeout,
+    disableThinking: String(row.extra?.thinking ?? '') === 'off',
     isDefault: row.isDefault,
     useEnvKey: row.useEnvKey,
     envKeyName: row.envKeyName,
@@ -902,6 +933,12 @@ async function save(): Promise<void> {
     return
   }
   // 「启用」在列表里单独开关，这里不提交，避免用旧值覆盖
+  const extra: Record<string, unknown> = { ...(editing.value?.extra ?? {}) }
+  if (form.disableThinking) {
+    extra.thinking = 'off'
+  } else {
+    delete extra.thinking
+  }
   const payload = {
     name: form.name,
     provider: form.provider,
@@ -912,6 +949,7 @@ async function save(): Promise<void> {
     temperature: form.temperature,
     maxTokens: form.maxTokens,
     timeout: form.timeout,
+    extra,
     isDefault: form.isDefault,
     useEnvKey: isLocalProvider.value ? false : form.useEnvKey,
     envKeyName: form.envKeyName.trim(),

@@ -359,7 +359,7 @@ async function confirmExternal(nextMode: Mode, text: string): Promise<boolean> {
   }
   let externalPossible: boolean | undefined
   try {
-    // 以服务端候选链为准：本地首选失败会降级到云端，只看前端 isLocal 会漏判
+    // 以后端返回的首选模型为准：本地模型问答不弹外发确认，云端首选才弹
     externalPossible = (await knowledgeApi.assistantEgress(nextMode)).externalPossible
   } catch {
     externalPossible = undefined

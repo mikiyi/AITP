@@ -270,6 +270,8 @@ def create_profile() -> Response:
         spec.default_model if spec else ""
     )
     repo = AIProfileRepository(conn)
+    is_local = 1 if (data.get("isLocal") if data.get("isLocal") is not None
+                     else (spec.name == "ollama" if spec else False)) else 0
     new_id = repo.insert({
         "name": name,
         "provider": provider,
@@ -281,19 +283,19 @@ def create_profile() -> Response:
         "temperature": require_float(data.get("temperature"), "temperature", 0.7),
         "max_tokens": require_int(data.get("maxTokens"), "maxTokens", 4096),
         # GAP-30：单价随档案维护，没填就是未配价（0）——成本只报 token 不报钱
-        "price_input_micros": _price_micros(data.get("priceInputMicros"), "priceInputMicros"),
-        "price_output_micros": _price_micros(data.get("priceOutputMicros"), "priceOutputMicros"),
+        # 本地模型不产生云服务费，单价与套餐额度一律不计费（不接受传值）
+        "price_input_micros": 0 if is_local else _price_micros(data.get("priceInputMicros"), "priceInputMicros"),
+        "price_output_micros": 0 if is_local else _price_micros(data.get("priceOutputMicros"), "priceOutputMicros"),
         "price_currency": _price_currency(data.get("priceCurrency")),
         # Token Plan（迁移 060）：计费模式与套餐额度随档案创建
-        "billing_mode": _billing_mode(data.get("billingMode")),
-        "token_quota": _token_quota(data.get("tokenQuota")),
+        "billing_mode": "api" if is_local else _billing_mode(data.get("billingMode")),
+        "token_quota": 0 if is_local else _token_quota(data.get("tokenQuota")),
         "timeout": require_float(data.get("timeout"), "timeout", _default_timeout(conn)),
         "is_default": 1 if data.get("isDefault") else 0,
         "is_active": 1 if data.get("isActive", True) else 0,
         "sort_order": require_int(data.get("sortOrder"), "sortOrder", 0),
         "priority": require_int(data.get("priority"), "priority", 0),
-        "is_local": 1 if (data.get("isLocal") if data.get("isLocal") is not None
-                          else (spec.name == "ollama" if spec else False)) else 0,
+        "is_local": is_local,
         **_local_key_rule(spec, _env_key_columns(data)),
     })
     api_key = optional_str(data.get("apiKey"), "apiKey", 500)
@@ -361,6 +363,13 @@ def update_profile(pk: str) -> Response:
     if any(key in data for key in ("useEnvKey", "envKeyName", "envKeyScope")):
         final_provider = str(payload.get("provider") or row.get("provider") or "")
         payload.update(_local_key_rule(PROVIDERS.get(final_provider), _env_key_columns(data, row)))
+    # 本地模型跑在自己机器上，不产生云服务费：单价与套餐额度对它都不成立。
+    # 这里按「改完之后的档案」判定本地，云端转本地时顺带清掉历史残留的计费值。
+    if ai_cost.is_local_profile({**dict(row), **payload}):
+        payload["price_input_micros"] = 0
+        payload["price_output_micros"] = 0
+        payload["billing_mode"] = ai_cost.BILLING_API
+        payload["token_quota"] = 0
     repo.update(target, payload)
     if payload.get("is_default"):
         repo.clear_other_defaults(target)

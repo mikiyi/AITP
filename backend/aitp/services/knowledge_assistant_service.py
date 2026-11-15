@@ -122,10 +122,11 @@ def add_answer(conn: sqlite3.Connection, *, question: str, answer: str, mode: st
 # ---------------- 外发预检 ----------------
 
 def egress_plan(mode: str) -> dict[str, Any]:
-    """返回本次问答实际可能走到的模型链路。
+    """返回本次问答会走到的模型链路，以及「这次调用是否真的会把数据送出本机」。
 
-    只看首选模型不够：本地模型失败会降级到云端，
-    所以只要有任意一个候选会把数据带出本机，就必须先确认脱敏。
+    判定只看首选模型：首选是本地模型就不弹外发确认——本地问答不该被云端的事打扰。
+    万一首选挂了、降级到云端，云端候选本身仍会先自动脱敏，且响应里的
+    egress/egressWarning 会如实标出这次确实外发过，由界面事后提示。
     """
     if mode == "kb":
         return {"externalPossible": False, "egress": EGRESS_NONE, "candidates": []}
@@ -139,7 +140,7 @@ def egress_plan(mode: str) -> dict[str, Any]:
         }
         for item in candidates
     ]
-    external = any(str(item["egress"]) != EGRESS_NONE for item in items)
+    external = bool(items) and str(items[0]["egress"]) != EGRESS_NONE
     return {
         "externalPossible": external,
         "egress": EGRESS_THIRD_PARTY if external else EGRESS_NONE,

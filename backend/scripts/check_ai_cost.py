@@ -338,7 +338,9 @@ def storage_checks(client: Any, db_path: pathlib.Path) -> None:
     prices = data_of(client, "POST", f"{V1}/settings/ai/profiles", {
         "name": "成本门禁档案", "provider": "custom", "protocol": "openai_compat",
         "baseUrl": "http://127.0.0.1:1/v1", "model": "mock-cost",
-        "isLocal": True, "isActive": True, "priority": 10, "timeout": 5,
+        # 按量计费只对云端档案成立（本地档案不计费），这里的 mock 服务就是那台「云端」
+        "isLocal": False, "apiKey": "gate-mock-key",
+        "isActive": True, "priority": 10, "timeout": 5,
     })
     profile_id = int(prices["id"])
     updated = data_of(client, "PUT", f"{V1}/lab/cost/prices/{profile_id}", {
@@ -395,7 +397,8 @@ def live_checks(client: Any, db_path: pathlib.Path, mock_port: int) -> None:
     profile = data_of(client, "POST", f"{V1}/settings/ai/profiles", {
         "name": "活链路 mock 档案", "provider": "custom", "protocol": "openai_compat",
         "baseUrl": f"http://127.0.0.1:{mock_port}/v1", "model": "mock-cost",
-        "isLocal": True, "isActive": True, "priority": 200, "timeout": 10,
+        "isLocal": False, "apiKey": "gate-mock-key",
+        "isActive": True, "priority": 200, "timeout": 10,
     })
     profile_id = int(profile["id"])
     data_of(client, "PUT", f"{V1}/lab/cost/prices/{profile_id}", {
@@ -439,7 +442,8 @@ def live_checks(client: Any, db_path: pathlib.Path, mock_port: int) -> None:
     stream_profile = data_of(client, "POST", f"{V1}/settings/ai/profiles", {
         "name": "活链路 mock JSON 档案", "provider": "custom", "protocol": "openai_compat",
         "baseUrl": f"http://127.0.0.1:{mock_port}/v1", "model": "mock-json",
-        "isLocal": True, "isActive": True, "priority": 210, "timeout": 10,
+        "isLocal": False, "apiKey": "gate-mock-key",
+        "isActive": True, "priority": 210, "timeout": 10,
     })
     stream_profile_id = int(stream_profile["id"])
     data_of(client, "PUT", f"{V1}/lab/cost/prices/{stream_profile_id}", {

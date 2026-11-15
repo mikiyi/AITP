@@ -854,7 +854,7 @@ async function startOrganize(row: KnowledgeArticle): Promise<void> {
   } catch {
     return
   }
-  // 本地首选失败会降级到云端，是否外发以后端候选链为准
+  // 是否外发以后端返回的首选模型为准：本地首选不弹确认，云端首选才弹
   let externalPossible = true
   try {
     externalPossible = (await knowledgeApi.assistantEgress('hybrid')).externalPossible

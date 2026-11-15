@@ -147,7 +147,8 @@ stop.bat          :: Windows
 - **上下文装配**：按项目与功能点召回模块、既有用例、缺陷与知识注入提示词，档位「精简 / 标准 / 完整」，默认标准档（GAP-27）
 - **输出结构校验**：产出按 JSON Schema 校验，字段缺失或类型错位当场拦截，并给出可重试的中文说明（GAP-28）
 - **生成去重**：与库内已有用例逐条比对，判定模式「标记疑似重复 / 按基线增量补充」可配，疑似项默认不勾选（GAP-29）
-- **成本核算**：按供应商档案单价折算每次调用的 token 与金额，日/月预算与单次 token 上限只做软提示、不拦截（GAP-30）
+- **成本核算**：按云端供应商档案单价折算每次调用的 token 与金额，日/月预算与单次 token 上限只做软提示、不拦截（GAP-30）；本地（自托管）模型不产生云服务费，不参与计费
+- **关闭思考模式**：档案级开关，给 qwen3 / DeepSeek-R1 这类推理模型跳过思考阶段直出答案（本地 qwen3:8b 站内问答实测 57 秒 → 13 秒）；下发字段随协议自动选择（Ollama 原生 `think=false`，OpenAI 兼容 `reasoning_effort=none` + `chat_template_kwargs.enable_thinking=false`）
 - **会话记录**：每次运行留痕，可回看输入、输出、模型、用量与降级情况
 - **流式输出**：发起后立即返回任务号，前端按 `framesUrl` 增量轮询取帧（长连接不再占用同步 worker），首选模型失败时先弹降级提示再切模型
 
@@ -213,7 +214,9 @@ AI 档案除 **API 按量**外支持 **Token 套餐**（`billing_mode=token_plan
 - 预购 token 额度（`token_quota`），用套餐凭证调用同一 OpenAI 兼容接口，接口与鉴权方式不变；
 - 每次调用按 `totalTokens` 扣减额度（`token_used`），界面显示剩余 = 额度 − 已用；
 - 套餐模式**不按量计金额**（`cost_micros` 落 NULL），与「未配价只报 token」口径一致；
-- `token_quota=0` = 未设额度，只统计不扣减；额度扣减用 SQL 自增，并发不丢计数。
+- `token_quota=0` = 未设额度，只统计不扣减；额度扣减用 SQL 自增，并发不丢计数；
+- **本地（自托管）档案不参与计费**：既不配单价也不选套餐，创建/更新时计费字段一律归零，
+  成本接口把它标成 `isLocal=true` + 不计费，给它的单价写接口直接拒绝。
 
 ---
 
@@ -283,7 +286,10 @@ cd frontend && npm run build                                              # 前�
 | --- | --- | --- |
 | `check_ai_live.py` | 真实大模型全路径测试（**不进 runner**，打商汤接口烧额度、非确定性） | 需要时手工单跑，见脚本头部环境变量说明 |
 | `check_ai_masking.py` | AI 外发脱敏：手机号/身份证/邮箱/银行卡/API Key 自动替换 | 看 `backend/aitp/ai/masking` 规则与档案配置 |
+| `check_ai_thinking.py` | 「关闭思考模式」全链路：`extra_json.thinking=off` → resolver 解析 → 两个适配器的请求体字段，未置位时不下发（默认语义不变） | 看 `ai/resolver.py::_disable_thinking` 与 `ai/adapters/*` 的 `_body` |
 | `check_ai_cost.py` | AI 成本核算：档案单价与微元折算、日/月预算与单次 token 软阈值、超预算只提示不拦截（GAP-30） | 看 `backend/aitp/ai/cost.py` 与 `sys_ai_profile` 的单价字段 |
+| `check_ai_local_billing.py` | 本地（自托管）档案不参与计费：写侧归零、单价接口拒绝、成本表与币种不被残留值带偏、实跑成本落 NULL | 看 `cost.is_local_profile` 与 `api/settings.py`、`api/lab.py` 的计费字段处理 |
+| `check_egress_guard.py` | 数据外发确认只看实际会用的首选模型：本地首选不打扰，云端首选才弹，候选链照旧完整返回 | 看 `knowledge_assistant_service.egress_plan` 与前端 `stores/aiGuard.ts` |
 | `check_attachments.py` | 附件能力：文档导入 + 图片去水印 | 看附件接口、Pillow 依赖与临时 mock 服务日志 |
 | `check_automation.py` | 自动化脚本资产与执行引擎 | 看自动化执行记录与引擎日志（`data/aitp.log`） |
 | `check_automation_writeback.py` | 自动化结果回写用例/轮次（GAP-07） | 核对回写服务与轮次状态机 |

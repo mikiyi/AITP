@@ -1688,7 +1688,10 @@ def cost_budget_update() -> Response:
 
 @bp.get("/cost/prices")
 def cost_prices() -> Response:
-    """各模型档案的 token 单价与累计花费：AI 设置页的成本区数据源。"""
+    """各模型档案的 token 单价与累计花费：AI 设置页的成本区数据源。
+
+    本地（自托管）档案在这里被标成 `isLocal=true` 且不配价：它不产生云服务费。
+    """
     conn = db()
     return ok({
         "currency": ai_cost.currency_of(conn),
@@ -1706,12 +1709,16 @@ def cost_price_update(profile_id: int) -> Response:
     迁移 047），GAP-30 收口后档案接口也已能吃这三个字段，所以两条路只有分工不同：
     本接口回给前端「单价 + 该档案累计花费」一行看全，档案接口负责档案本身的增改；
     两边都不做第二套折算口径。
+
+    本地（自托管）模型不接受单价：不产生云服务费，配了单价只会把成本报表算成假钱。
     """
     conn = db()
     repo = AIProfileRepository(conn)
     row = repo.get(profile_id)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "模型档案不存在")
+    if ai_cost.is_local_profile(row):
+        raise AppError(ErrorCode.ILLEGAL_OPERATION, "本地模型不产生云服务费，无需配置单价")
     data = body()
     price = ai_cost.TokenPrice(
         input_micros=_price_field(data, row, "priceInputMicros", "price_input_micros"),

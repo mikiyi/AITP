@@ -6,6 +6,8 @@
 - 单价是「每 1000 token 的微元数」，分入参 / 出参两项，存在 `sys_ai_profile`；
 - **两个单价都为 0 = 未配价**：此时 `cost_micros` 落 NULL 而不是 0，
   因为 0 会被日/月汇总当成「免费」计入，把未配价伪装成零成本；
+- **本地（自托管）档案不参与计费**：模型跑在自己机器上不产生云服务费，
+  单价与 Token 套餐对它都不成立，读写两侧都按「不计费」归一（`is_local_profile`）；
 - 预算是**软阈值**：只给提示，绝不拦截调用（工程清单第 7 节决策 3），
   单次调用 token 上限同理，只做「接近/超出」提示，不强制降级。
 
@@ -24,6 +26,8 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
+
+from ..common.constants import PROVIDERS
 
 MICROS_PER_YUAN = 1_000_000
 TOKENS_PER_UNIT = 1000
@@ -104,6 +108,20 @@ def normalize_price_micros(value: Any, name: str) -> int:
     if number < 0:
         raise ValueError(f"{name} 不能为负数")
     return number
+
+
+def is_local_profile(row: Mapping[str, Any] | None) -> bool:
+    """档案是否跑在本机模型上；口径与 resolver 一致（档案列 or 供应商内置本地标记）。
+
+    本地模型不产生任何云服务费，单价与 Token 套餐对它都不适用，
+    所以计费读写与成本表都先问这一句。
+    """
+    if not row:
+        return False
+    if bool(row.get("is_local")):
+        return True
+    spec = PROVIDERS.get(str(row.get("provider") or ""))
+    return bool(spec and spec.is_local)
 
 
 def price_of_profile(row: Mapping[str, Any] | None) -> TokenPrice:
@@ -187,7 +205,7 @@ def deduct_token_plan(conn: sqlite3.Connection, profile_id: int | None, total_to
 def price_table(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """全部档案的单价 + 实际用量，供设置页与成本视图共用一套口径。"""
     rows = conn.execute(
-        "SELECT id, name, provider, model, price_input_micros, price_output_micros,"
+        "SELECT id, name, provider, model, is_local, price_input_micros, price_output_micros,"
         " price_currency, billing_mode, token_quota, token_used"
         " FROM sys_ai_profile WHERE is_deleted = 0 ORDER BY id",
     ).fetchall()
@@ -196,15 +214,22 @@ def price_table(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     for raw in rows:
         row = dict(raw)
         profile_id = int(row["id"])
-        price = price_of_profile(row)
+        local = is_local_profile(row)
+        # 本地模型不产生云服务费：库里万一残留过单价或套餐额度，也一律按「不计费」呈现
+        price = TokenPrice() if local else price_of_profile(row)
+        plan_row = dict(row)
+        if local:
+            plan_row["billing_mode"] = BILLING_API
+            plan_row["token_quota"] = 0
         item = usage.get(profile_id) or Spend()
         result.append({
             "profileId": profile_id,
             "profileName": str(row.get("name") or ""),
             "provider": str(row.get("provider") or ""),
             "model": str(row.get("model") or ""),
+            "isLocal": local,
             **price.as_dict(),
-            **token_plan_summary(row),
+            **token_plan_summary(plan_row),
             "calls": item.calls,
             "costMicros": item.micros,
             "costYuan": micros_to_yuan(item.micros),
@@ -698,9 +723,9 @@ def daily_trend(
 
 
 def currency_of(conn: sqlite3.Connection) -> str:
-    """展示用币种：取第一个配了单价的档案的币种，都没配就是 CNY。"""
+    """展示用币种：取第一个配了单价的云端档案的币种，都没配就是 CNY。"""
     row = conn.execute(
-        "SELECT price_currency FROM sys_ai_profile WHERE is_deleted = 0"
+        "SELECT price_currency FROM sys_ai_profile WHERE is_deleted = 0 AND is_local = 0"
         " AND (price_input_micros > 0 OR price_output_micros > 0)"
         " ORDER BY id LIMIT 1",
     ).fetchone()

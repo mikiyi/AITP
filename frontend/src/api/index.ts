@@ -507,7 +507,7 @@ export const knowledgeApi = {
   /** 把模型回答连同溯源信息加入待审池；同一问同答同时间只入池一次。 */
   addAssistantAnswer: (body: Record<string, unknown>) =>
     post<KnowledgeDraft>('/knowledge/assistant/add', body),
-  /** 问答链路实际外发评估：本地首选 + 云端兜底也算可能外发。 */
+  /** 问答链路外发评估：只看实际会用的首选模型，本地首选不算外发。 */
   assistantEgress: (mode: 'llm' | 'hybrid') =>
     get<AssistantEgress>('/knowledge/assistant/egress', { mode }),
   /** 外发前的站内检查：问答助手来源正式条目的 .md 全文与落盘路径。 */

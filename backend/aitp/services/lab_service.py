@@ -836,6 +836,8 @@ def build_cost_payload(
     - 未配价时 `costMicros` 是 None（落库为 NULL），不是 0——0 会被日/月汇总当成免费；
     - 预算与 token 上限都是**软提示**，不拦截、不降级（工程清单第 7 节决策 3），
       所以这里读不到配置就只少一份提示，绝不能反过来让已经拿到的产出失败。
+
+    本地（自托管）模型不产生云服务费：即使档案里残留过单价，也按不计费出结论。
     """
     price = ai_cost.TokenPrice(
         input_micros=int(config.price_input_micros or 0),
@@ -843,7 +845,7 @@ def build_cost_payload(
         currency=config.price_currency or ai_cost.DEFAULT_CURRENCY,
     )
     # Token Plan：套餐模式不按量计金额，costMicros 落 None；额度扣减在落库时统一做
-    if config.is_token_plan:
+    if config.is_local or config.is_token_plan:
         price = ai_cost.TokenPrice()
     payload = ai_cost.cost_report(
         usage, price,

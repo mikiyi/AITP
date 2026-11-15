@@ -4,8 +4,8 @@ import { settingsApi } from '@/api'
 
 interface ExternalConfirmOptions {
   /**
-   * 后端给出的「本次是否可能外发」。
-   * 只看前端 status.isLocal 会漏判：本地首选不可用时会降级到云端模型。
+   * 后端给出的「本次是否会把数据送出本机」，口径 = 实际会用的首选模型。
+   * 传进来就不再看前端 status；不传时由 status.isLocal 推断。
    */
   externalPossible?: boolean
   /** 「先检查数据是否脱敏」：打开站内检查，返回的 Promise 在用户关闭检查后 resolve。 */
@@ -31,8 +31,9 @@ export const useAiGuardStore = defineStore('aiGuard', () => {
         const status = await settingsApi.status()
         isLocal = Boolean(status.isLocal)
         configured = Boolean(status.configured)
-        // 首选模型可能是本地的，但降级链里只要有一个云端候选，数据仍可能外发
-        external = !isLocal || (status.candidates ?? []).some((item) => !item.isLocal)
+        // 只看实际会用的首选模型：本地首选不打扰；真降级到云端时后端会自动脱敏，
+        // 并由响应里的 egressWarning 事后如实提示这次确实外发。
+        external = !isLocal
       } catch {
         // 状态取不到时不阻断主流程，后续调用会自行报错
         return true

@@ -34,6 +34,8 @@ class ResolvedAIConfig:
     billing_mode: str = "api"
     token_quota: int = 0
     token_used: int = 0
+    #: 档案勾选「关闭思考模式」：推理模型（qwen3 / deepseek-r1 等）跳过思考直出答案
+    disable_thinking: bool = False
 
     @property
     def has_api_key(self) -> bool:

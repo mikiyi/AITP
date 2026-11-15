@@ -58,6 +58,12 @@ class OpenAICompatAdapter(BaseAdapter):
         }
         if stream:
             body["stream_options"] = {"include_usage": True}
+        # 关闭思考的两条写法各管一摊：chat_template_kwargs 是 vLLM / SGLang 自建服务认的，
+        # reasoning_effort=none 是 Ollama 兼容层与新式推理接口认的；两者互不冲突，都发。
+        # 服务端不支持时通常直接忽略字段，个别严格校验的会报错——档案级开关，用户可自行关掉。
+        if cfg.disable_thinking:
+            body["chat_template_kwargs"] = {"enable_thinking": False}
+            body["reasoning_effort"] = "none"
         return body
 
     # ---------- 非流式 ----------

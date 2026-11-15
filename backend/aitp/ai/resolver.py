@@ -16,6 +16,7 @@ sources 字段记录每一项最终来自哪一层，设置页据此展示「当
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -109,6 +110,19 @@ def sort_profiles(profiles: list[dict[str, Any]]) -> list[dict[str, Any]]:
             int(p.get("id") or 0),
         ),
     )
+
+
+def _disable_thinking(profile: dict[str, Any] | None) -> bool:
+    """档案额外参数 thinking=off 时，推理模型跳过思考阶段直出答案。"""
+    raw: Any = (profile or {}).get("extra_json")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return False
+    if not isinstance(raw, dict):
+        raw = (profile or {}).get("extra")
+    return isinstance(raw, dict) and str(raw.get("thinking") or "").strip().lower() == "off"
 
 
 def _env_first(*names: str) -> str:
@@ -310,6 +324,7 @@ def _build_config(
 
     priority = int((profile or {}).get("priority") or 0)
     is_local = bool((profile or {}).get("is_local")) or spec.is_local
+    disable_thinking = _disable_thinking(profile)
 
     env_hint = ""
     if use_env_key and spec.requires_api_key and not is_local and not api_key:
@@ -353,6 +368,7 @@ def _build_config(
         billing_mode=str((profile or {}).get("billing_mode") or "api"),
         token_quota=int((profile or {}).get("token_quota") or 0),
         token_used=int((profile or {}).get("token_used") or 0),
+        disable_thinking=disable_thinking,
     )
     if require_key:
         ensure_credential(config)

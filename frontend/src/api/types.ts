@@ -1802,7 +1802,7 @@ export interface KnowledgeAnswer {
   mask?: MaskInfo
 }
 
-/** 问答链路的实际外发评估：任一候选会出本机即为可能外发。 */
+/** 问答链路的外发评估：以实际会用的首选模型为准，本地首选不外发。 */
 export interface AssistantEgress {
   externalPossible: boolean
   egress: string
@@ -2489,6 +2489,8 @@ export interface AiProfilePrice {
   profileName: string
   provider: string
   model: string
+  /** 本地（自托管）模型：不产生云服务费，单价与套餐额度都不适用 */
+  isLocal: boolean
   priced: boolean
   priceInputMicros: number
   priceOutputMicros: number

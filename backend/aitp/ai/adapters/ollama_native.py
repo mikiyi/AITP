@@ -33,7 +33,7 @@ class OllamaNativeAdapter(BaseAdapter):
     def _body(
         self, cfg: ResolvedAIConfig, messages: list[Message], stream: bool, **opts: Any
     ) -> dict[str, Any]:
-        return {
+        body: dict[str, Any] = {
             "model": cfg.model,
             "messages": [m.as_ollama_dict() for m in messages],
             "stream": stream,
@@ -42,6 +42,11 @@ class OllamaNativeAdapter(BaseAdapter):
                 "num_predict": opts.get("max_tokens", cfg.max_tokens),
             },
         }
+        # qwen3 一类思考型模型默认先进思考阶段，非流式调用要等它全部生成完；
+        # think 只在档案显式关闭思考时才下发，否则不支持该参数的模型会报错。
+        if cfg.disable_thinking:
+            body["think"] = False
+        return body
 
     # ---------- 非流式 ----------
     def chat(self, cfg: ResolvedAIConfig, messages: list[Message], **opts: Any) -> ChatResult:
