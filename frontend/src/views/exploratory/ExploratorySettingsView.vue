@@ -46,8 +46,22 @@
           <span class="muted" style="margin-left: 12px">双锚点 ±N 秒，默认 5</span>
         </el-form-item>
         <el-form-item label="MCP 服务命令">
-          <el-input v-model="form.mcpCommand" placeholder='例如：python path/to/mock_mcp_server.py'
+          <el-input v-model="form.mcpCommand"
+                    placeholder='一条完整启动命令，例如："D:\…\.venv\Scripts\python.exe" "D:\…\backend\scripts\browser_mcp_server.py"'
                     style="width: 100%" />
+          <div class="muted" style="margin-top: 4px">
+            这里填<strong>一条完整启动命令</strong>，不是两个配置项：第 1 段是解释器（建议用本项目 .venv 里的
+            python.exe），第 2 段是要运行的 MCP 服务脚本；两段用空格分隔，路径用英文双引号包裹最稳妥。
+          </div>
+          <div style="margin-top: 6px">
+            <el-button size="small" :disabled="!suggestedCommand" @click="fillSuggested">填入本机推荐命令</el-button>
+            <span class="muted" style="margin-left: 8px">
+              真实探索用 browser_mcp_server.py（拉起 Chromium 真浏览器）；mock_mcp_server.py 仅门禁/演示用，不拉浏览器。
+            </span>
+          </div>
+          <div v-if="suggestedCommand" class="muted" style="margin-top: 4px; word-break: break-all">
+            本机推荐：<code class="text-mono">{{ suggestedCommand }}</code>
+          </div>
           <div class="muted" style="margin-top: 4px">
             钉住工具（只允许调用这些）：
             <el-tag v-for="tool in form.pinnedTools" :key="tool" size="small" style="margin-right: 6px">
@@ -101,6 +115,7 @@ import type { ExploratorySettings } from '@/api/types'
 const router = useRouter()
 const saving = ref(false)
 const savedMsg = ref('')
+const suggestedCommand = ref('')
 
 const form = reactive<ExploratorySettings>({
   maxSteps: 20,
@@ -124,6 +139,16 @@ async function load(): Promise<void> {
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载配置失败')
   }
+  try {
+    const meta = await exploratoryApi.meta()
+    suggestedCommand.value = meta.suggestedMcpCommand
+  } catch {
+    suggestedCommand.value = ''
+  }
+}
+
+function fillSuggested(): void {
+  form.mcpCommand = suggestedCommand.value
 }
 
 async function save(): Promise<void> {

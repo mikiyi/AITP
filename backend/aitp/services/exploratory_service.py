@@ -21,8 +21,10 @@ import json
 import queue
 import re
 import shlex
+import shutil
 import sqlite3
 import subprocess
+import sys
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -144,6 +146,8 @@ def update_settings(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str,
     for key in ("screenshotDir", "logSliceDir", "mcpCommand"):
         if key in data:
             candidate[key] = str(data[key] or "").strip()
+    if "mcpCommand" in data:
+        candidate["mcpCommand"] = _validate_mcp_command(candidate["mcpCommand"])
     if "logSources" in data:
         candidate["logSources"] = _validate_log_sources(data["logSources"])
     SysConfigRepository(conn).set_value(
@@ -193,6 +197,40 @@ def _validate_log_sources(value: Any) -> list[dict[str, str]]:
             "source": str(item.get("source") or "file")[:20],
         })
     return result
+
+
+def suggested_mcp_command() -> str:
+    """本机推荐命令：当前解释器 + 仓库内真实浏览器 MCP 脚本，两段各用双引号包裹。"""
+    script = Path(__file__).resolve().parents[2] / "scripts" / "browser_mcp_server.py"
+    return f'"{sys.executable}" "{script}"'
+
+
+def _validate_mcp_command(command: str) -> str:
+    """保存时把「命令写错」挡在配置页，而不是等探索运行才报启动失败。"""
+    if not command:
+        return command
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        raise AppError(
+            ErrorCode.PARAM_ERROR,
+            f"MCP 服务命令无法解析：{exc}。它是一条完整启动命令（解释器 + 脚本路径），"
+            "两段用空格分隔，路径请用英文双引号包裹",
+        )
+    if not argv:
+        return command
+    exe = argv[0]
+    path_like = "\\" in exe or "/" in exe
+    exists = Path(exe).exists() if path_like else shutil.which(exe) is not None
+    if not exists:
+        raise AppError(
+            ErrorCode.PARAM_ERROR,
+            f"找不到解释器/可执行文件：{exe}。请填绝对路径（如 .venv 里的 python.exe），"
+            "或确认它在 PATH 中",
+        )
+    if len(argv) > 1 and argv[1].endswith(".py") and not Path(argv[1]).exists():
+        raise AppError(ErrorCode.PARAM_ERROR, f"MCP 服务脚本不存在：{argv[1]}")
+    return command
 
 
 # --------------------------------------------------------------------- MCP 客户端
@@ -696,6 +734,13 @@ def _run_step(
     conn.commit()
 
     if not is_anomaly:
+        evidence_id = _capture_normal_step(
+            conn, client, settings, session, step_id, index, duration_ms,
+            console, network, data_root,
+        )
+        if evidence_id:
+            step_repo.update(step_id, {"evidence_id": evidence_id})
+            conn.commit()
         return anomaly_count, draft_count, dedup_skipped, detected_at or utcnow_iso()
 
     anomaly_count += 1
@@ -719,6 +764,62 @@ def _run_step(
     if draft_id:
         draft_count += 1
     return anomaly_count, draft_count, dedup_skipped, last_ok_at
+
+
+def _capture_normal_step(
+    conn: sqlite3.Connection,
+    client: McpClient,
+    settings: dict[str, Any],
+    session: dict[str, Any],
+    step_id: int,
+    index: int,
+    duration_ms: int,
+    console: list[dict[str, Any]],
+    network: list[dict[str, Any]],
+    data_root: Path,
+) -> int | None:
+    """正常步按「单步截图数」留证（异常步另由 _capture_anomaly 强制 3 张）。"""
+    count = max(0, int(settings.get("perStepScreenshots", 1)))
+    if not count:
+        return None
+    shot_dir = data_root / str(settings.get("screenshotDir") or "exploratory/screenshots")
+    shot_dir = shot_dir / str(session["session_no"])
+    shot_dir.mkdir(parents=True, exist_ok=True)
+    screenshots: list[dict[str, Any]] = []
+    for i in range(count):
+        shot = client.call_tool("browser_screenshot", {"step": index, "index": i})
+        file_name = str(shot.get("fileName") or f"step{index}-{i + 1}.png")
+        file_path = shot_dir / file_name
+        content = shot.get("content") or shot.get("data") or ""
+        try:
+            file_path.write_bytes(base64.b64decode(content) if content else b"")
+        except (ValueError, OSError):
+            file_path.write_bytes(b"")
+        screenshots.append({"fileName": file_name, "filePath": str(file_path), "kind": "screenshot"})
+    trace_id = next((str(item["traceId"])[:64] for item in network if item.get("traceId")), "")
+    result = execution_protocol.ExecutionResult(
+        source_type=execution_protocol.SOURCE_EXPLORATORY,
+        source_row_id=step_id,
+        project_id=int(session["project_id"]),
+        title=f"{session['name']} / 第{index}步 正常",
+        result="passed",
+        duration_ms=duration_ms,
+        log_summary="正常步，无异常日志切片",
+        request_summary=execution_protocol.summarize(network, 1500),
+        response_summary=execution_protocol.summarize(console, 1500),
+        attachments=screenshots,
+        source_ref={
+            "table": "biz_exploration_step", "id": step_id,
+            "sessionId": int(session["id"]), "targetUrl": str(session["target_url"]),
+        },
+        trace_id=trace_id,
+        error_message="",
+        executed_by=str(session.get("created_by") or "exploratory"),
+        executed_at=utcnow_iso(),
+    )
+    evidence_id = execution_protocol.capture(conn, result)
+    conn.commit()
+    return evidence_id
 
 
 def _capture_anomaly(

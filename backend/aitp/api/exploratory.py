@@ -38,6 +38,7 @@ def meta_api() -> Response:
         ],
         "pinnedTools": list(exploratory_service.PINNED_TOOLS),
         "defaults": exploratory_service.DEFAULT_SETTINGS,
+        "suggestedMcpCommand": exploratory_service.suggested_mcp_command(),
     })
 
 

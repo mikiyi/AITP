@@ -295,8 +295,8 @@
                 <BrandName size="small" />（AITP）
               </el-descriptions-item>
               <el-descriptions-item label="产品定位">单用户、本地优先、离线可用的 AI 测试工作台</el-descriptions-item>
-              <el-descriptions-item label="作者 / 维护者">mikiyi（yichengren）</el-descriptions-item>
-              <el-descriptions-item label="应用版本">1.0.0（取自后端 <code class="text-mono">backend/aitp/db/migrator.py</code> 的 APP_VERSION）</el-descriptions-item>
+              <el-descriptions-item label="作者 / 维护者">mikiyi</el-descriptions-item>
+              <el-descriptions-item label="应用版本">{{ appVersion }}（实时取自后端 <code class="text-mono">/health</code>，与 <code class="text-mono">backend/aitp/db/migrator.py</code> 的 APP_VERSION 一致）</el-descriptions-item>
               <el-descriptions-item label="后端技术栈">Python 3.11+ · Flask · SQLite（参数化仓储层）· SSE 流式输出</el-descriptions-item>
               <el-descriptions-item label="前端技术栈">Vue 3 + TypeScript · Element Plus · Pinia · ECharts · Vite</el-descriptions-item>
               <el-descriptions-item label="运行环境要求">Windows / macOS / Linux；Python 3.11+；Node.js 20+（仅首次构建前端需要）；现代浏览器</el-descriptions-item>
@@ -315,7 +315,7 @@
               </el-descriptions-item>
             </el-descriptions>
             <p class="muted doc-p">
-              本页为纯静态文档，正文数据集中在 <code class="text-mono">frontend/src/views/settings/productHelpContent.ts</code>；
+              本页为静态文档（仅应用版本实时取自 /health），正文数据集中在 <code class="text-mono">frontend/src/views/settings/productHelpContent.ts</code>；
               内容口径以 <code class="text-mono">frontend/src/router/menu.ts</code> 导航结构与后端能力目录为准，
               更深入的功能地图与安全边界说明见仓库根目录 <code class="text-mono">README.md</code> 与 <code class="text-mono">docs/</code> 目录。
             </p>
@@ -328,11 +328,13 @@
 
 <script setup lang="ts">
 /**
- * 「帮助文档」：纯静态文档页，不请求任何后端接口。
+ * 「帮助文档」：静态文档页，仅作者信息页的应用版本实时取自 /health。
  * 正文数据与口径集中在同目录的 productHelpContent.ts，本文件只负责排版。
  */
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { Guide, MagicStick } from '@element-plus/icons-vue'
+import { get } from '@/api/request'
+import type { HealthStatus } from '@/api/types'
 import BrandName from '@/components/BrandName.vue'
 import type { DemoCase } from './productHelpContent'
 import {
@@ -350,6 +352,16 @@ import {
 } from './productHelpContent'
 
 const activeTab = ref('intro')
+
+const appVersion = ref('…')
+onMounted(async () => {
+  try {
+    const health = await get<HealthStatus>('/health')
+    appVersion.value = health.appVersion
+  } catch {
+    appVersion.value = '未知（后端未连接）'
+  }
+})
 
 /** 回首启引导：重置服务端状态并弹引导（引导挂全局 AppLayout，自己会跳到第一步目标页）。 */
 async function reopenTour(): Promise<void> {

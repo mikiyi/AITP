@@ -2829,6 +2829,7 @@ export interface ExploratoryMeta {
   anomalyTypes: ExploratoryOption[]
   pinnedTools: string[]
   defaults: ExploratorySettings
+  suggestedMcpCommand: string
 }
 
 export interface ExplorationPlanStep {
