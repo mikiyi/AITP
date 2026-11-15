@@ -228,6 +228,7 @@ AI 档案除 **API 按量**外支持 **Token 套餐**（`billing_mode=token_plan
   - `llm`：只用模型自身知识作答（外发）
   - `kb`：纯本地检索并直接摘出原文（不外发）
   - `hybrid`（默认）：先检索知识库，把命中正文带 `[K1]…` 标记喂给模型整合（外发）
+- **问答历史按会话留痕**：每次一问一答都写进会话（能力标识「知识库问答」），换个菜单再回来、刷新、重开浏览器都能回放；「清空对话」= 另起一条会话，问过的内容仍在库里，去「AI 记录 → 会话记录」按能力筛选可查；回放会带回答模式、引用来源与留档时间，因此重点「加入知识库」会被判定为重复而不会二次入池；问答会话不写 AI 执行记录，不进成本与预算口径
 
 ---
 
@@ -280,7 +281,7 @@ cd frontend && npm run build                                              # 前�
 - `check_ai_live` 被 runner 永久排除：它打真实商汤模型接口、烧额度且非确定性，需要时单独手工跑。
 - 新增门禁脚本只要放进 `backend/scripts` 且命名 `check_*.py`，runner 自动纳入，无需改 runner。
 
-门禁清单（55 个脚本 = 54 个 `check_*.py` + `smoke_api.py`，与 `backend/scripts` 下真实脚本一一对应；其中 `check_ai_live` 不进 runner，实际执行 54 项）：
+门禁清单（61 个脚本 = 60 个 `check_*.py` + `smoke_api.py`，与 `backend/scripts` 下真实脚本一一对应；其中 `check_ai_live` 不进 runner，实际执行 60 项）：
 
 | 脚本 | 含义 | 失败怎么查 |
 | --- | --- | --- |
@@ -290,10 +291,12 @@ cd frontend && npm run build                                              # 前�
 | `check_ai_cost.py` | AI 成本核算：档案单价与微元折算、日/月预算与单次 token 软阈值、超预算只提示不拦截（GAP-30） | 看 `backend/aitp/ai/cost.py` 与 `sys_ai_profile` 的单价字段 |
 | `check_ai_local_billing.py` | 本地（自托管）档案不参与计费：写侧归零、单价接口拒绝、成本表与币种不被残留值带偏、实跑成本落 NULL | 看 `cost.is_local_profile` 与 `api/settings.py`、`api/lab.py` 的计费字段处理 |
 | `check_egress_guard.py` | 数据外发确认只看实际会用的首选模型：本地首选不打扰，云端首选才弹，候选链照旧完整返回 | 看 `knowledge_assistant_service.egress_plan` 与前端 `stores/aiGuard.ts` |
+| `check_assistant_history.py` | 问答历史按会话落库：一问一答进 `biz_ai_session/biz_ai_message`（能力 `knowledge-assistant`）、回放带模式与引用、留档时间一致所以「加入知识库」不会重复入池、非法/别的模块会话不被放行、超上限只回放最近这些且不落 `biz_ai_record` | 看 `knowledge_assistant_service.history/record_qa` 与 `api/knowledge.py::_persist_qa` |
 | `check_attachments.py` | 附件能力：文档导入 + 图片去水印 | 看附件接口、Pillow 依赖与临时 mock 服务日志 |
 | `check_automation.py` | 自动化脚本资产与执行引擎 | 看自动化执行记录与引擎日志（`data/aitp.log`） |
 | `check_automation_writeback.py` | 自动化结果回写用例/轮次（GAP-07） | 核对回写服务与轮次状态机 |
 | `check_backup_schedule.py` | 定时备份与保留策略（GAP-13） | 看备份服务与 `data/` 目录保留逻辑 |
+| `check_case_test_data.py` | 用例多行步骤/预期按行配对 + 测试数据多格式解析（内联文本/JSON、txt/csv/xlsx/json/sql 文件、URL 与未知格式拒绝）、自动化执行消费 `AITP_TEST_DATA`、JMeter 指向解析后的 `testdata.csv`（BUG-44/45） | 看测试数据解析服务与用例步骤/数据落库 |
 | `check_ci_boundary.py` | CI Token 访问边界：路由白名单、项目范围、有效期、吊销、审计区分（GAP-24） | 看 CI 令牌鉴权中间件与审计来源标记 |
 | `check_ci_notifications.py` | CI 触发与 Webhook 通知（GAP-10），自带本地 HTTP 接收器 | 看令牌哈希、通知渠道生效范围与发送记录 |
 | `check_context_assembler.py` | 上下文装配：三档限量、按项目/功能点召回模块/用例/缺陷/知识、预览与实装同口径（GAP-27） | 看 `backend/aitp/services/context_assembler.py` 的档位与召回 |
@@ -338,6 +341,7 @@ cd frontend && npm run build                                              # 前�
 | `check_external_import.py` | 外部平台只读导入（GAP-40）：桩禅道验证登录换 token、只发 GET 不回写、映射落库、外部 id 去重、两层认证、映射模板与批次隔离、密钥不落库 | 看 `services/external_import*` 与 `api/external_imports.py` |
 | `check_test_execution.py` | 执行闭环：计划 → 轮次 → 批量结果 → 失败转缺陷 → 追溯矩阵 → 发布准入 | 按失败环节名定位对应蓝图 |
 | `check_test_round_redesign.py` | 测试计划/轮次多轮改造：轮次类型、计划时间窗、范围预设、4/3 轮模板生成（迁移 057） | 看 `test_round_service.py` 与计划/轮次接口 |
+| `check_token_plan.py` | Token Plan 套餐额度计费：`billing_mode='token_plan'` 按额度扣减 token、显示剩余、`cost_micros` 落 NULL（不按量折算金额），按量模式口径不变（迁移 060） | 看 `sys_ai_profile.billing_mode/token_quota` 与 `ai/cost.py` 的写入分支 |
 | `check_module_tree.py` | 功能点树：三层结构、换父节点、按深度角色、能力绑定与专属提示词 | 看 `api/modules.py` 与模块树仓储 |
 | `check_types.py` | 类型门禁：mypy --strict 扫全后端 + 真实执行 `vue-tsc --noEmit`；CI 可加 `--require-frontend` 让缺前端依赖直接失败 | 直接看 mypy/TS 报错的文件行号 |
 | `check_walkthrough.py` | 固定走查案例：路由顺序 + 降级顺序 + 行为安全 + 结构化记录 + 全局搜索 | 看走查各步骤断言输出 |
@@ -375,6 +379,7 @@ cd frontend && npx playwright test               # 串行 workers=1
 - **BFS**：全部路由一次访问，断言无白屏 / 无 JS 异常 / 无 5xx。
 - **DFS**：核心业务页（AI 能力、用例、计划/轮次、缺陷、报告、知识库、回归）穷尽交互，每页 ≤20 元素防死循环。
 - **非快乐路径**：返回/取消/放弃保存、空数据、超大量（1000 条分页+虚拟窗口）、未登录/口令、刷新/后退、表单边界（空/超长/特殊字符）。
+- **问答历史不丢**（`06-assistant-history`）：走够 8 个菜单页把助手页挤出 keep-alive 缓存后回来看历史仍在，整页刷新后仍在（证明在库里而不是内存里），「清空对话」后当前线程空了但「会话记录」按「知识库问答」还能查到。
 - 每步断言业务结果，不只断言「没报错」；页面变化后重新定位元素，不复用旧 ref。
 - 结果：`frontend/e2e/results.json` + 控制台 list；失败留 trace/截图。
 - 约定见 `AGENTS.md`：**每次改完代码必须跑一遍验证，并把真实通过/失败结果写进回复**。

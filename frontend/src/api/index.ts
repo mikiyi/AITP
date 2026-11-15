@@ -55,6 +55,7 @@ import type {
   HomeCardItem,
   KnowledgeAnswer,
   AssistantEgress,
+  AssistantHistory,
   AssistantPreview,
   KnowledgeArticle,
   KnowledgeCategory,
@@ -502,8 +503,11 @@ export const bugApi = {
 /** 知识库：待审池 + 正式库。 */
 export const knowledgeApi = {
   /** 知识库问答助手：kb 纯本地检索 / llm 纯大模型 / hybrid 检索 + 大模型补强。 */
-  ask: (body: { question: string; mode: 'kb' | 'llm' | 'hybrid' }) =>
+  ask: (body: { question: string; mode: 'kb' | 'llm' | 'hybrid'; sessionId?: number | null }) =>
     postLong<KnowledgeAnswer>('/knowledge/ask', body),
+  /** 问答助手历史：默认最近一条会话，页面挂载时回放，换菜单/重启后不丢问答。 */
+  assistantHistory: (sessionId?: number | null) =>
+    get<AssistantHistory>('/knowledge/assistant/history', sessionId ? { sessionId } : {}),
   /** 把模型回答连同溯源信息加入待审池；同一问同答同时间只入池一次。 */
   addAssistantAnswer: (body: Record<string, unknown>) =>
     post<KnowledgeDraft>('/knowledge/assistant/add', body),

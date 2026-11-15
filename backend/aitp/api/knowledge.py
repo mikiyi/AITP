@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from typing import Any
 
 from flask import Blueprint, Response, request
@@ -55,13 +56,66 @@ DRAFT_FILTERS = {"projectId": "project_id", "reviewStatus": "review_status",
 ASSISTANT_MODES = ("kb", "llm", "hybrid")
 
 
+def _persist_qa(
+    conn: Any,
+    session_id: int | None,
+    *,
+    question: str,
+    mode: str,
+    answer: str,
+    refs: list[dict[str, Any]],
+    model: str = "",
+    latency_ms: int = 0,
+    usage: dict[str, Any] | None = None,
+    mask: dict[str, Any] | None = None,
+    egress: str = EGRESS_NONE,
+    egress_warning: str = "",
+    review_required: bool = False,
+) -> tuple[int | None, str]:
+    """把一问一答落进会话，返回 (会话 id, 回答留档时间)。
+
+    落库失败只记日志并回滚：回答已经拿到，不该因为写历史失败而丢掉本次提问。
+    """
+    try:
+        sid = knowledge_assistant_service.ensure_session(conn, session_id, question)
+        stamp = knowledge_assistant_service.record_qa(
+            conn,
+            session_id=sid,
+            question=question,
+            mode=mode,
+            answer=answer,
+            refs=refs,
+            model=model,
+            latency_ms=latency_ms,
+            usage=usage,
+            mask=mask,
+            egress=egress,
+            egress_warning=egress_warning,
+            review_required=review_required,
+        )
+        commit(conn)
+        return sid, stamp
+    except (sqlite3.Error, OSError, ValueError) as exc:
+        conn.rollback()
+        logger.warning("问答历史落库失败: %s", exc, exc_info=True)
+        return None, ""
+
+
 @bp.post("/ask")
 def ask_assistant() -> Response:
-    """知识库问答助手：知识库直答 / 纯大模型 / 知识库 + 大模型补强。"""
+    """知识库问答助手：知识库直答 / 纯大模型 / 知识库 + 大模型补强。
+
+    每次问答都按会话落库（biz_ai_session / biz_ai_message），换菜单、关浏览器、
+    重启服务之后回到助手，问题与回答都还在；响应回带 sessionId 供前端续用同一会话。
+    """
     conn = db()
     data = body()
     question = require_str(data.get("question"), "question", 2000)
     mode = check_choice(str(data.get("mode") or "hybrid"), ASSISTANT_MODES, "mode", "hybrid") or "hybrid"
+    session_id = optional_int(data.get("sessionId"), "sessionId")
+    if session_id is not None:
+        # 先校验会话再调模型：会话不存在就别白烧一次额度
+        knowledge_assistant_service.ensure_session(conn, session_id, question)
 
     from ..services import lab_service
     from ..prompts.registry import get_registry
@@ -78,6 +132,8 @@ def ask_assistant() -> Response:
             answer = "以下内容摘自知识库，未经模型加工：" + chr(10) + chr(10) + context
         else:
             answer = retrieval_error or "知识库中没有检索到与问题相关的内容。可以换个说法，或先到「知识库管理」补充条目。"
+        sid, stamp = _persist_qa(conn, session_id, question=question, mode=mode,
+                                 answer=answer, refs=refs)
         return ok({
             "mode": mode,
             "answer": answer,
@@ -88,6 +144,8 @@ def ask_assistant() -> Response:
             "egress": EGRESS_NONE,
             "egressWarning": "",
             "reviewRequired": False,
+            "sessionId": sid,
+            "answeredAt": stamp,
         })
 
     prompt = get_registry().render("knowledge-assistant", {
@@ -99,10 +157,25 @@ def ask_assistant() -> Response:
         lab_service.build_messages(prompt),
         mask_enabled=cloud_mask_enabled(conn),
     )
-    # 问答助手不落 AI 执行记录，模板调用次数单独计入提示词库
+    # 问答助手不写 biz_ai_record（不进 AI 执行记录与成本口径），历史只落会话；
+    # 模板调用次数单独计入提示词库
     prompt_usage.record(conn, "knowledge-assistant")
     answer = (outcome.result.content or "").strip()
     third_party = outcome.config.egress == EGRESS_THIRD_PARTY
+    egress_warning = (
+        "本次回答会把问题和检索到的知识发送到第三方模型，请注意数据脱敏。" if third_party else ""
+    )
+    review_required = needs_human_review(answer)
+    sid, stamp = _persist_qa(
+        conn, session_id, question=question, mode=mode, answer=answer, refs=refs,
+        model=outcome.result.model or outcome.config.model,
+        latency_ms=int(outcome.result.latency_ms or 0),
+        usage=outcome.result.usage.as_dict(),
+        mask=outcome.mask.as_dict(),
+        egress=outcome.config.egress,
+        egress_warning=egress_warning,
+        review_required=review_required,
+    )
     return ok({
         "mode": mode,
         "answer": answer,
@@ -111,13 +184,20 @@ def ask_assistant() -> Response:
         "latencyMs": outcome.result.latency_ms,
         "usage": outcome.result.usage.as_dict(),
         "egress": outcome.config.egress,
-        "egressWarning": (
-            "本次回答会把问题和检索到的知识发送到第三方模型，请注意数据脱敏。" if third_party else ""
-        ),
-        "reviewRequired": needs_human_review(answer),
+        "egressWarning": egress_warning,
+        "reviewRequired": review_required,
         "degrade": outcome.degrade.as_dict(),
         "mask": outcome.mask.as_dict(),
+        "sessionId": sid,
+        "answeredAt": stamp,
     })
+
+
+@bp.get("/assistant/history")
+def assistant_history() -> Response:
+    """问答助手的历史：默认回放最近一条问答会话，带 sessionId 就回放指定那条。"""
+    conn = db()
+    return ok(knowledge_assistant_service.history(conn, optional_int(request.args.get("sessionId"), "sessionId")))
 
 
 @bp.post("/assistant/add")

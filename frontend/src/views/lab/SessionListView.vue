@@ -51,6 +51,7 @@ const labStore = useLabStore()
 const MODULE_LABELS: Record<string, string> = {
   lab: '实验室',
   composite: '多入口顺序执行',
+  'knowledge-assistant': '知识库问答',
 }
 
 /** 能力编码 → 中文名称；列表展示中文，筛选仍按编码提交。 */

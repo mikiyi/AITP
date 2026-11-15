@@ -1800,6 +1800,40 @@ export interface KnowledgeAnswer {
   reviewRequired: boolean
   /** 纯知识库回答不调模型，没有脱敏信息。 */
   mask?: MaskInfo
+  /** 本次问答落在哪条会话上；落库失败时为空，前端下次重新开会话。 */
+  sessionId?: number | null
+  /** 回答的服务端留档时间，加入知识库与历史回放都用它算同一条记录。 */
+  answeredAt?: string
+}
+
+/** 问答助手历史回放里的一条消息（一问一答成对出现）。 */
+export interface AssistantHistoryMessage {
+  role: 'user' | 'assistant'
+  content: string
+  mode: string
+  answeredAt?: string
+  question?: string
+  refs?: AssistantRef[]
+  egressWarning?: string
+  mask?: MaskInfo
+  submitState?: 'idle' | 'submitted'
+  meta?: {
+    mode: string
+    modeLabel: string
+    model: string
+    latencyMs: number
+    reviewRequired: boolean
+  }
+}
+
+/** 问答助手的历史：默认最近一条会话，换菜单 / 重启后回到同一条对话线。 */
+export interface AssistantHistory {
+  sessionId: number | null
+  title: string
+  model: string
+  messages: AssistantHistoryMessage[]
+  /** 消息超过回放上限时为真，更早的问答去「会话记录」看。 */
+  truncated: boolean
 }
 
 /** 问答链路的外发评估：以实际会用的首选模型为准，本地首选不外发。 */

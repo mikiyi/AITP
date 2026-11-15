@@ -10,7 +10,15 @@
         <el-radio-button value="hybrid">知识库+大模型补强</el-radio-button>
       </el-radio-group>
       <div class="spacer" />
-      <el-button v-if="messages.length" link size="small" @click="clearChat">清空对话</el-button>
+      <el-button
+        v-if="messages.length"
+        link
+        size="small"
+        title="另起一条会话；问过的内容仍保留在「会话记录」里"
+        @click="clearChat"
+      >
+        清空对话
+      </el-button>
     </div>
 
     <div
@@ -33,6 +41,9 @@
     </div>
 
     <div v-if="messages.length" class="assistant__messages-wrap">
+      <div v-if="truncated" class="assistant__history-note" role="note">
+        这里只回放最近的一部分问答，更早的在「AI 记录 → 会话记录」里（能力：知识库问答）。
+      </div>
       <div
         ref="listEl"
         class="assistant__messages"
@@ -189,12 +200,14 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { storeToRefs } from 'pinia'
 import { Collection, Cpu, MagicStick, Promotion } from '@element-plus/icons-vue'
 import MarkdownView from '@/components/MarkdownView.vue'
 import { aiApi, knowledgeApi } from '@/api'
-import type { AssistantRef, MaskInfo } from '@/api/types'
+import type { MaskInfo } from '@/api/types'
 import { useAiGuardStore } from '@/stores/aiGuard'
 import { useKnowledgeAssistantStore } from '@/stores/knowledgeAssistant'
+import type { AssistantChatItem as ChatItem, AssistantMode as Mode } from '@/stores/knowledgeAssistant'
 import { textareaHint } from '@/utils/inputHints'
 
 withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
@@ -202,30 +215,6 @@ withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
 const router = useRouter()
 const aiGuard = useAiGuardStore()
 const assistantStore = useKnowledgeAssistantStore()
-
-type Mode = 'kb' | 'llm' | 'hybrid'
-
-interface ChatItem {
-  role: 'user' | 'assistant'
-  content: string
-  /** 提问时所选模式，用于给问题气泡染上对应主题色 */
-  mode?: Mode
-  /** 对应提问，加入知识库时要一起留档 */
-  question?: string
-  refs?: AssistantRef[]
-  egressWarning?: string
-  answeredAt?: string
-  /** 本次回答的外发脱敏结果 */
-  mask?: MaskInfo
-  submitState?: 'idle' | 'submitting' | 'submitted'
-  meta?: {
-    mode: Mode
-    modeLabel: string
-    model: string
-    latencyMs: number
-    reviewRequired: boolean
-  }
-}
 
 const MODE_LABELS: Record<Mode, string> = {
   llm: '大模型回答',
@@ -243,7 +232,8 @@ const mode = ref<Mode>(assistantStore.defaultMode)
 const defaultMode = computed(() => assistantStore.defaultMode)
 const question = ref('')
 const sending = ref(false)
-const messages = ref<ChatItem[]>([])
+// 对话与会话 id 都在 store 上：换菜单把组件挤掉、或首页卡片与问答页并存，看到的都是同一条线
+const { messages, truncated } = storeToRefs(assistantStore)
 const listEl = ref<HTMLElement | null>(null)
 
 // 默认模式可能来自设置页；加载完成前用户已经手动切过，就不再覆盖他的选择
@@ -254,9 +244,12 @@ watch(mode, () => {
 
 onMounted(async () => {
   const touched = modeTouched
-  await assistantStore.load()
+  await Promise.all([assistantStore.load(), assistantStore.loadHistory()])
   if (!touched) {
     mode.value = assistantStore.defaultMode
+  }
+  if (messages.value.length) {
+    await scrollToBottom()
   }
 })
 
@@ -342,7 +335,8 @@ async function openInspect(text: string, nextMode: Mode): Promise<void> {
 }
 
 function clearChat(): void {
-  messages.value = []
+  // 另起一条会话：清掉当前线程，问过的内容仍在库里，去「会话记录」按「知识库问答」可查
+  assistantStore.resetThread()
   messagesHeight.value = null
 }
 
@@ -385,7 +379,13 @@ async function send(): Promise<void> {
   question.value = ''
   await scrollToBottom()
   try {
-    const result = await knowledgeApi.ask({ question: text, mode: mode.value })
+    const result = await knowledgeApi.ask({
+      question: text,
+      mode: mode.value,
+      sessionId: assistantStore.sessionId,
+    })
+    // 后端落库失败时 sessionId 为空：下次提问重新开会话，不把无效 id 记在本地
+    assistantStore.sessionId = result.sessionId ?? null
     messages.value = [
       ...messages.value,
       {
@@ -394,7 +394,8 @@ async function send(): Promise<void> {
         question: text,
         refs: result.refs ?? [],
         egressWarning: result.egressWarning,
-        answeredAt: new Date().toISOString(),
+        // 留档时间以服务端为准：历史回放与「加入知识库」要用同一个值算同一条记录
+        answeredAt: result.answeredAt || new Date().toISOString(),
         mask: result.mask,
         submitState: 'idle',
         meta: {
@@ -609,6 +610,14 @@ html[data-theme='industry'] .assistant__mode-banner {
 .assistant__messages-wrap {
   display: flex;
   flex-direction: column;
+}
+
+/* 历史只回放一部分时给一句去向说明，别让用户以为更早的问答丢了 */
+.assistant__history-note {
+  margin-bottom: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--aitp-text-weak);
 }
 
 .assistant__messages {

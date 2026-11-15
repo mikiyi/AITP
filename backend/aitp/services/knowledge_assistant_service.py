@@ -1,10 +1,12 @@
 """知识库问答助手自演进。
 
-三件事：
-  1. 把模型回答连同溯源信息（提问、回答时间、模式、模型、引用）送进待审池；
-  2. 自动整理只产出「待审版本」，不直接改正式库——否则会绕过编辑审核规则、
+四件事：
+  1. 把每次问答按会话留痕（biz_ai_session / biz_ai_message），换菜单、关浏览器、
+     重启服务后还能回到同一条对话线；
+  2. 把模型回答连同溯源信息（提问、回答时间、模式、模型、引用）送进待审池；
+  3. 自动整理只产出「待审版本」，不直接改正式库——否则会绕过编辑审核规则、
      也会撞上引用保护；
-  3. 整理走后台任务，状态落库，进程被杀后由启动对账回退到「待自动整理」。
+  4. 整理走后台任务，状态落库，进程被杀后由启动对账回退到「待自动整理」。
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from ..ai.client import chat_with_fallback
 from ..ai.masking import cloud_mask_enabled
 from ..errors import AppError, ErrorCode
 from ..prompts.registry import get_registry
+from ..repositories.ai_session_repo import AISessionRepository
 from ..repositories.knowledge_draft_repo import (
     SOURCE_ASSISTANT,
     KnowledgeDraftRepository,
@@ -199,6 +202,198 @@ def preview_files(conn: sqlite3.Connection) -> dict[str, Any]:
         "storagePath": str(root),
         "articleCount": len(files),
         "files": files,
+    }
+
+
+# ---------------- 会话历史 ----------------
+
+#: 问答历史按会话落进 biz_ai_session / biz_ai_message：换菜单、关浏览器、重启服务之后
+#: 都能回到同一条对话线；这些会话同时出现在「会话记录」页，便于回看与追溯。
+SESSION_MODULE = "knowledge-assistant"
+SESSION_TITLE_CHARS = 60
+#: 一次最多回放这么多条消息：长期不清空也不会把页面和内存撑爆
+HISTORY_LIMIT = 200
+
+
+def _session_title(question: str) -> str:
+    text = " ".join((question or "").split())
+    if not text:
+        return "知识库问答"
+    if len(text) > SESSION_TITLE_CHARS:
+        return text[:SESSION_TITLE_CHARS] + "…"
+    return text
+
+
+def _meta_of(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str) or not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def ensure_session(conn: sqlite3.Connection, session_id: int | None, question: str) -> int:
+    """续用给定会话，没有就新开一条；只认问答助手自己的会话。
+
+    「清空对话」在前端就是不再带 sessionId：下一条提问自然落到新会话，
+    旧会话留在库里由「会话记录」页继续可查。
+    """
+    repo = AISessionRepository(conn)
+    if session_id is not None:
+        row = repo.get(int(session_id))
+        if not row or str(row.get("module") or "") != SESSION_MODULE:
+            raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "问答会话不存在")
+        return int(session_id)
+    return repo.insert({"title": _session_title(question), "module": SESSION_MODULE})
+
+
+def record_qa(
+    conn: sqlite3.Connection,
+    *,
+    session_id: int,
+    question: str,
+    mode: str,
+    answer: str,
+    refs: list[dict[str, Any]],
+    model: str,
+    latency_ms: int = 0,
+    usage: dict[str, Any] | None = None,
+    mask: dict[str, Any] | None = None,
+    egress: str = EGRESS_NONE,
+    egress_warning: str = "",
+    review_required: bool = False,
+) -> str:
+    """把一问一答写进会话，返回这条回答的留档时间。
+
+    时间由服务端定：前端「加入知识库」要拿它算指纹，回放时也得用同一个值，
+    否则同一问同答会因为时间变了再入一次待审池。
+    """
+    repo = AISessionRepository(conn)
+    token_usage = usage or {}
+    repo.add_message(
+        session_id, "user", question,
+        message_meta=json.dumps({"mode": mode}, ensure_ascii=False),
+    )
+    stamp = utcnow_iso()
+    repo.add_message(
+        session_id, "assistant", answer,
+        model=model,
+        prompt_code=None if mode == "kb" else "knowledge-assistant",
+        tokens_prompt=int(token_usage.get("promptTokens") or 0),
+        tokens_completion=int(token_usage.get("completionTokens") or 0),
+        message_meta=json.dumps({
+            "mode": mode,
+            "refs": refs,
+            "answeredAt": stamp,
+            "latencyMs": int(latency_ms or 0),
+            "egress": egress,
+            "egressWarning": egress_warning,
+            "mask": mask or {},
+            "reviewRequired": bool(review_required),
+        }, ensure_ascii=False),
+    )
+    # 会话列表的「模型」列取会话上的 model；知识库直答没有模型，保持原值不动
+    if model:
+        repo.update(session_id, {"model": model})
+    return stamp
+
+
+def _message_public(item: dict[str, Any], submitted_ids: set[str]) -> dict[str, Any]:
+    meta = _meta_of(item.get("message_meta"))
+    mode = str(meta.get("mode") or "")
+    base: dict[str, Any] = {
+        "role": item.get("role"),
+        "content": item.get("content") or "",
+        "mode": mode,
+        "answeredAt": item.get("created_at"),
+    }
+    if item.get("role") != "assistant":
+        return base
+    answered_at = str(meta.get("answeredAt") or item.get("created_at") or "")
+    digest = fingerprint(str(meta.get("question") or ""), str(item.get("content") or ""), answered_at)
+    base.update({
+        "question": str(meta.get("question") or ""),
+        "refs": meta.get("refs") if isinstance(meta.get("refs"), list) else [],
+        "egressWarning": str(meta.get("egressWarning") or ""),
+        "mask": meta.get("mask") if isinstance(meta.get("mask"), dict) else {},
+        "answeredAt": answered_at,
+        "submitState": "submitted" if digest in submitted_ids else "idle",
+        "meta": {
+            "mode": mode,
+            "modeLabel": MODE_LABELS.get(mode, mode),
+            "model": str(item.get("model") or ""),
+            "latencyMs": int(meta.get("latencyMs") or 0),
+            "reviewRequired": bool(meta.get("reviewRequired")),
+        },
+    })
+    return base
+
+
+def history(conn: sqlite3.Connection, session_id: int | None = None) -> dict[str, Any]:
+    """回放一条问答会话：默认最近一次，前端挂载时调用。"""
+    repo = AISessionRepository(conn)
+    if session_id is not None:
+        session = repo.get(int(session_id))
+        if not session or str(session.get("module") or "") != SESSION_MODULE:
+            raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "问答会话不存在")
+    else:
+        row = conn.execute(
+            "SELECT * FROM biz_ai_session WHERE is_deleted = 0 AND module = ?"
+            " ORDER BY updated_at DESC, id DESC LIMIT 1",
+            (SESSION_MODULE,),
+        ).fetchone()
+        session = dict(row) if row else None
+    if not session:
+        return {"sessionId": None, "title": "", "model": "", "messages": [], "truncated": False}
+
+    sid = int(session["id"])
+    total = int(conn.execute(
+        "SELECT COUNT(*) FROM biz_ai_message WHERE session_id = ? AND is_deleted = 0", (sid,)
+    ).fetchone()[0])
+    rows = conn.execute(
+        "SELECT * FROM biz_ai_message WHERE session_id = ? AND is_deleted = 0"
+        " ORDER BY id DESC LIMIT ?",
+        (sid, HISTORY_LIMIT),
+    ).fetchall()
+
+    draft_hashes: list[str] = []
+    items: list[dict[str, Any]] = []
+    last_question = ""
+    for raw in reversed(rows):
+        item = dict(raw)
+        if item.get("role") == "user":
+            last_question = str(item.get("content") or "")
+            items.append(item)
+            continue
+        meta = _meta_of(item.get("message_meta"))
+        meta["question"] = last_question
+        item["message_meta"] = meta
+        if str(meta.get("mode") or "") in ASSISTANT_MODES and last_question:
+            # 回放时要如实标出「已提交待审」，否则同一答会被再点一次入池
+            draft_hashes.append(
+                fingerprint(last_question, str(item.get("content") or ""),
+                            str(meta.get("answeredAt") or item.get("created_at") or ""))
+            )
+        items.append(item)
+    submitted: set[str] = set()
+    if draft_hashes:
+        placeholders = ", ".join("?" for _ in draft_hashes)
+        hits = conn.execute(
+            f"SELECT DISTINCT content_hash FROM biz_knowledge_draft"  # noqa: S608
+            f" WHERE content_hash IN ({placeholders}) AND is_deleted = 0",
+            draft_hashes,
+        ).fetchall()
+        submitted = {str(hit["content_hash"]) for hit in hits}
+    return {
+        "sessionId": sid,
+        "title": str(session.get("title") or ""),
+        "model": str(session.get("model") or ""),
+        "messages": [_message_public(item, submitted) for item in items],
+        "truncated": total > len(rows),
     }
 
 
