@@ -185,12 +185,19 @@ def build_messages(
     prompt_text: str,
     extra_system: str = "",
     images: list[str] | None = None,
+    history: list[Message] | None = None,
 ) -> list[Message]:
+    """拼消息数组：system 安全规则 + 可选历史角色数组 + 当前 prompt。
+
+    history 是「问答助手多轮记忆」用的：把同会话前几轮作为独立 user/assistant
+    消息插在本次提问之前，模型按多轮对话语义理解指代（刚才/上面/之前），
+    而不是把历史压成一段文本当自述读。默认 None 时行为不变（单轮）。
+    """
     system = build_safety_prompt(extra_system)
-    return [
-        Message(role="system", content=system),
-        Message(role="user", content=prompt_text, images=list(images or [])),
-    ]
+    messages: list[Message] = [Message(role="system", content=system)]
+    messages.extend(list(history or []))
+    messages.append(Message(role="user", content=prompt_text, images=list(images or [])))
+    return messages
 
 
 def prepare_variables(

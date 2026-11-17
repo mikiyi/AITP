@@ -68,6 +68,8 @@ def check(name: str, condition: bool, detail: str = "") -> None:
 class _MockHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     hits = 0
+    #: 每次 /chat/completions 收到的 messages，用来断言多轮上下文真的进了模型请求
+    last_messages: list[dict[str, Any]] = []
 
     def log_message(self, fmt: str, *args: object) -> None:  # noqa: D102 - 屏蔽 stderr 噪声
         pass
@@ -79,6 +81,9 @@ class _MockHandler(BaseHTTPRequestHandler):
             body = cast("dict[str, Any]", json.loads(self.rfile.read(length).decode("utf-8")))
         except Exception:
             body = {}
+        messages = body.get("messages")
+        if isinstance(messages, list):
+            _MockHandler.last_messages = cast("list[dict[str, Any]]", messages)
         payload = json.dumps({
             "id": "chatcmpl-history",
             "object": "chat.completion",
@@ -287,6 +292,30 @@ def main() -> int:
               bool(at(query(db_path, "SELECT model FROM biz_ai_session WHERE id = ?", (called_sid,)), 0)
                   .get("model")),
               str(called_sid))
+
+        # ---------- ④b 多轮记忆：同会话前几轮以角色数组直传模型 ----------
+        multi_first = ask(client, "帮我列一下回归测试的准入标准", "llm")
+        multi_sid = int(multi_first.get("sessionId") or 0)
+        _MockHandler.last_messages = []
+        _ = ask(client, "我刚才问了哪些问题？", "llm", multi_sid)
+        sent = [str(m.get("content") or "") for m in _MockHandler.last_messages]
+        roles = [str(m.get("role") or "") for m in _MockHandler.last_messages]
+        check("多轮记忆：第一条提问的原文进了模型请求",
+              any("回归测试的准入标准" in s for s in sent),
+              str(sent)[:400])
+        check("多轮记忆：追问的原文也在最后一条 user 消息里",
+              bool(sent) and "我刚才问了哪些问题" in sent[-1],
+              str(sent[-1:]) if sent else "(no messages)")
+        check("多轮记忆：历史以独立角色数组直传（不是拼成一段文本）",
+              roles[-3:-1] == ["user", "assistant"]
+              and "回归测试的准入标准" in sent[-3],
+              str(list(zip(roles, sent)))[:400])
+        # 单轮冷启动：无历史，只有 system + 当前问题
+        _MockHandler.last_messages = []
+        _ = ask(client, "单轮冷启动", "llm")
+        first_roles = [str(m.get("role") or "") for m in _MockHandler.last_messages]
+        check("单轮冷启动时只有 system 与当前提问（没有历史消息）",
+              first_roles == ["system", "user"], str(first_roles))
 
         # ---------- ⑤ 会话校验：不存在 / 不是问答助手，都不该白烧额度 ----------
         hits_before = _MockHandler.hits

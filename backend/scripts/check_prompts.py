@@ -72,7 +72,11 @@ SAMPLES: dict[str, dict[str, Any]] = {
     "project-progress-board": {
         "projectName": "示例电商", "progressData": "完成 60%", "period": "第 3 周", "milestones": "登录上线",
     },
-    "knowledge-assistant": {"question": "登录失败怎么排查", "context": "[K1] 验证码 5 分钟有效"},
+    "knowledge-assistant": {
+        "question": "登录失败怎么排查",
+        "context": "[K1] 验证码 5 分钟有效",
+        "history": "用户：登录一直失败；助手：先确认验证码是否过期",
+    },
     "knowledge-organize": {
         "articles": "[A1] 标题：支付回调重复推送\n分类：踩坑记录\n正文：…",
         "categories": "通用、测试方法、踩坑记录",

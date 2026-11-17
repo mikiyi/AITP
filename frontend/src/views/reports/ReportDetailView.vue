@@ -26,7 +26,16 @@
       </div>
     </div>
 
-    <div class="report-metrics">
+    <div class="report-toc panel panel-pad">
+      <span class="muted">目录</span>
+      <el-button link type="primary" @click="scrollTo('report-metrics')">指标概览</el-button>
+      <el-button link type="primary" @click="scrollTo('report-charts')">质量图表</el-button>
+      <el-button link type="primary" @click="scrollTo('report-trend')">指标趋势</el-button>
+      <el-button link type="primary" @click="scrollTo('report-content')">章节与正文</el-button>
+      <el-button link type="primary" @click="scrollTo('report-samples')">失败样本与证据</el-button>
+    </div>
+
+    <div id="report-metrics" class="report-metrics">
       <MetricCard
         label="用例总数"
         :value="metrics.caseTotal"
@@ -56,12 +65,12 @@
       />
     </div>
 
-    <div class="panel panel-pad">
+    <div id="report-charts" class="panel panel-pad">
       <div class="section-title">质量图表</div>
       <ReportCharts :stats="stats" />
     </div>
 
-    <div v-if="report" class="panel panel-pad">
+    <div v-if="report" id="report-trend" class="panel panel-pad">
       <ReportTrendPanel
         ref="trendPanel"
         :project-id="report.projectId"
@@ -70,7 +79,7 @@
       />
     </div>
 
-    <div v-loading="loading" class="report-layout">
+    <div id="report-content" v-loading="loading" class="report-layout">
       <div class="panel panel-pad report-main">
         <el-descriptions v-if="report" :column="3" border size="small">
           <el-descriptions-item label="编号">{{ report.reportNo ?? '-' }}</el-descriptions-item>
@@ -97,7 +106,7 @@
         </div>
 
         <MarkdownView v-if="report?.content" :source="report.content" />
-        <el-empty v-if="!report?.content && !items.length" description="报告还没有正文" :image-size="80" />
+        <el-empty v-if="!report?.content && !items.length" description="报告还没有正文或章节" :image-size="80" />
       </div>
 
       <div class="panel panel-pad report-side">
@@ -161,7 +170,7 @@
       </el-collapse>
     </div>
 
-    <div v-loading="samplesLoading" class="panel panel-pad">
+    <div id="report-samples" v-loading="samplesLoading" class="panel panel-pad">
       <div class="section-title">
         失败样本与执行证据
         <el-tag size="small" effect="plain">范围内失败 {{ sampleTotal }} 条</el-tag>
@@ -555,6 +564,10 @@ const reportSections = ref<SectionOption[]>(reportSectionOptions.map((item) => (
 
 const enabledSections = computed(() => reportSections.value.filter((item) => item.enabled).map((item) => item.value))
 
+function scrollTo(id: string): void {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
 async function load(): Promise<void> {
   loading.value = true
   try {
@@ -810,6 +823,17 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.report-toc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  position: sticky;
+  top: 8px;
+  z-index: 5;
+  margin-bottom: 12px;
+}
+
 .report-metrics {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));

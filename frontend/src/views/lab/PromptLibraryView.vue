@@ -10,6 +10,9 @@
           style="width: 200px"
           @input="filter"
         />
+        <el-select v-model="category" placeholder="分类" clearable style="width: 140px">
+          <el-option v-for="item in categoryOptions" :key="item.value" :label="item.label" :value="item.value" />
+        </el-select>
         <el-button :icon="Refresh" @click="load">刷新</el-button>
       </div>
     </div>
@@ -28,7 +31,12 @@
         v-for="item in filtered"
         :key="item.code"
         class="prompt-card"
+        role="button"
+        tabindex="0"
+        :aria-label="`${item.title}（${item.code}）`"
         @click="open(item)"
+        @keydown.enter="open(item)"
+        @keydown.space.prevent="open(item)"
       >
         <div class="prompt-card__head">
           <span class="prompt-card__title">{{ item.title }}</span>
@@ -139,6 +147,11 @@
           placeholder="（正文加载中…）"
         />
         <p v-if="dirty" class="body-hint">正文已改动，保存后才会生效。</p>
+        <el-collapse v-if="current.customized && current.defaultBody" class="default-compare">
+          <el-collapse-item title="查看默认正文（backend/prompts）" name="default">
+            <pre class="default-body">{{ current.defaultBody }}</pre>
+          </el-collapse-item>
+        </el-collapse>
       </template>
     </el-drawer>
   </div>
@@ -153,6 +166,21 @@ import type { PromptTemplate } from '@/api/types'
 
 const templates = ref<PromptTemplate[]>([])
 const keyword = ref('')
+const category = ref('')
+
+const PROMPT_CATEGORIES: Array<{ value: string; label: string; codes: string[] }> = [
+  { value: 'requirement', label: '需求与设计', codes: ['requirement-confirm', 'testpoint-generation', 'case-generation', 'xmind-to-case', 'case-review'] },
+  { value: 'quality', label: '缺陷与回归', codes: ['bug-analysis', 'bug-classification', 'regression-generation', 'risk-assessment'] },
+  { value: 'report', label: '报告与计划', codes: ['report-generation', 'project-progress-board', 'test-plan'] },
+  { value: 'engineering', label: '自动化与数据', codes: ['api-test-design', 'log-analysis', 'sql-analysis', 'test-data-generation', 'automation-script', 'performance-script'] },
+  { value: 'explore', label: '探索与优化', codes: ['exploratory-web', 'prompt-optimizer'] },
+  { value: 'router', label: '幕后路由与整理', codes: ['intent-router', 'module-router', 'knowledge-assistant'] },
+]
+const categoryOptions = PROMPT_CATEGORIES.map((item) => ({ value: item.value, label: item.label }))
+
+function categoryOf(code: string): string {
+  return PROMPT_CATEGORIES.find((item) => item.codes.includes(code))?.value ?? 'extended'
+}
 const loading = ref(false)
 const detailVisible = ref(false)
 const current = ref<PromptTemplate | null>(null)
@@ -169,13 +197,13 @@ const dirty = computed(() => {
 
 const filtered = computed(() => {
   const key = keyword.value.trim().toLowerCase()
-  const list = key
-    ? templates.value.filter((item) =>
-        [item.code, item.title, item.description].some((field) =>
-          String(field ?? '').toLowerCase().includes(key),
-        ),
-      )
-    : templates.value
+  const list = templates.value.filter((item) => {
+    if (category.value && categoryOf(item.code) !== category.value) return false
+    if (!key) return true
+    return [item.code, item.title, item.description].some((field) =>
+      String(field ?? '').toLowerCase().includes(key),
+    )
+  })
   // 用得越多越靠前；次数相同按名称首字母排序
   return [...list].sort((a, b) => {
     const diff = (b.useCount ?? 0) - (a.useCount ?? 0)
@@ -431,6 +459,20 @@ onMounted(load)
 .body-source {
   font-size: 12px;
   color: var(--aitp-text-weak);
+}
+
+.default-compare {
+  margin: 8px 0;
+}
+
+.default-body {
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  background: var(--el-fill-color-light);
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 12px;
 }
 
 .body-hint {

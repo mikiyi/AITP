@@ -1,7 +1,7 @@
 <template>
   <div class="page">
     <div class="page-header">
-      <h2 class="page-title">多入口顺序执行</h2>
+      <h2 class="page-title">AI 流水线</h2>
       <div class="toolbar" style="margin: 0">
         <ProjectSwitcher />
         <el-button :icon="MagicStick" @click="generateFromPreflight">预检生成步骤</el-button>
@@ -43,9 +43,17 @@
               刷新
             </el-button>
           </h3>
+          <div class="toolbar saved-panel__filters">
+            <el-input v-model="entryKeyword" placeholder="搜索编排名称 / 编号" clearable style="width: 180px" />
+            <el-select v-model="entryStatus" placeholder="状态" clearable style="width: 110px">
+              <el-option label="草稿" value="draft" />
+              <el-option label="已发布" value="published" />
+              <el-option label="已归档" value="archived" />
+            </el-select>
+          </div>
           <div v-loading="entriesLoading" class="saved-entry-list">
             <div
-              v-for="entry in entries"
+              v-for="entry in filteredEntries"
               :key="entry.id"
               class="saved-entry"
               :class="{ 'is-active': loadedEntry?.id === entry.id }"
@@ -62,10 +70,11 @@
                 <el-button link :disabled="entry.status === 'published'" @click="publishEntry(entry)">
                   发布
                 </el-button>
+                <el-button link type="primary" @click="copyEntry(entry)">复制</el-button>
                 <el-button link type="danger" :disabled="entry.status === 'published'" @click="removeEntry(entry)">删除</el-button>
               </div>
             </div>
-            <span v-if="!entries.length && !entriesLoading" class="muted saved-panel__empty">
+            <span v-if="!filteredEntries.length && !entriesLoading" class="muted saved-panel__empty">
               还没有保存的编排；配好步骤后点「保存为编排」
             </span>
           </div>
@@ -299,7 +308,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Bottom,
@@ -351,6 +360,17 @@ const checking = ref(false)
 const stepsFullscreen = ref(false)
 
 const entries = ref<WorkbenchEntry[]>([])
+const entryKeyword = ref('')
+const entryStatus = ref('')
+
+const filteredEntries = computed(() => {
+  const text = entryKeyword.value.trim().toLowerCase()
+  return entries.value.filter((entry) => {
+    if (entryStatus.value && entry.status !== entryStatus.value) return false
+    if (!text) return true
+    return `${entry.name} ${entry.code}`.toLowerCase().includes(text)
+  })
+})
 const entriesLoading = ref(false)
 const loadedEntry = ref<WorkbenchEntry | null>(null)
 const saveVisible = ref(false)
@@ -563,6 +583,24 @@ async function loadEntry(entry: WorkbenchEntry): Promise<void> {
   steps.value.forEach(ensureVariables)
   loadedEntry.value = entry
   ElMessage.success(`已载入「${entry.name}」，可直接执行`)
+}
+
+async function copyEntry(entry: WorkbenchEntry): Promise<void> {
+  result.value = null
+  preflight.value = null
+  steps.value = (entry.workflow ?? []).map((item) => ({
+    key: `step-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    capability: item.capability,
+    name: item.name || labelOf(item.capability),
+    moduleId: item.moduleId ?? null,
+    variables: Object.fromEntries(
+      Object.entries(item.variables ?? {}).map(([name, value]) => [name, toText(value)]),
+    ),
+  }))
+  await Promise.all(steps.value.map((step) => refreshVars(step.capability)))
+  steps.value.forEach(ensureVariables)
+  loadedEntry.value = null
+  ElMessage.success(`已复制「${entry.name}」到编辑区，保存时会生成新编排`)
 }
 
 async function publishEntry(entry: WorkbenchEntry): Promise<void> {
@@ -815,6 +853,10 @@ onMounted(async () => {
   flex-direction: column;
   gap: 12px;
   min-width: 0;
+}
+
+.saved-panel__filters {
+  margin: 8px 0;
 }
 
 .saved-panel__refresh {

@@ -625,7 +625,9 @@ def check_workbench(api: Api, project_id: int) -> None:
           f"{metrics['knowledgeTotal']} vs {articles['total']}")
 
     passed = sum(1 for item in cases["list"] if item["status"] == "pass")
-    expected_rate = round(passed / cases["total"], 4) if cases["total"] else 0.0
+    not_executed = sum(1 for item in cases["list"] if item["status"] == "not_executed")
+    executed = max(0, cases["total"] - not_executed)
+    expected_rate = round(passed / executed, 4) if executed else None
     check("工作台用例通过率计算正确", metrics["casePassRate"] == expected_rate,
           f"{metrics['casePassRate']} vs {expected_rate}")
 

@@ -1,5 +1,7 @@
 <template>
   <div class="page">
+    <DetailNotFound v-if="notFound" @back="goBack" @retry="load" />
+
     <div v-if="run" class="page-header">
       <div class="title-wrap">
         <el-button :icon="ArrowLeft" circle size="small" @click="goBack" />
@@ -197,6 +199,12 @@
             >
               执行接口
             </el-button>
+            <el-button
+              v-if="scope.row.result === 'failed' || scope.row.result === 'blocked'"
+              link
+              type="primary"
+              @click="openEvidence(scope.row)"
+            >证据</el-button>
             <el-button link type="danger" @click="removeCase(scope.row)">移除</el-button>
           </template>
         </el-table-column>
@@ -397,6 +405,12 @@
       </div>
     </el-dialog>
 
+    <EvidenceDrawer
+      v-model="evidenceVisible"
+      :locator="evidenceLocator"
+      title="轮次用例执行证据"
+    />
+
     <InterfaceResultDialog v-model="interfaceResultVisible" :result="interfaceResult" />
     <ProdConfirmDialog ref="prodDialog" />
   </div>
@@ -409,6 +423,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { TableInstance } from 'element-plus'
 import { ArrowLeft, CircleCheck, Cpu, DataAnalysis, Document, Download, Refresh, VideoPlay } from '@element-plus/icons-vue'
 import { automationApi, reportApi, testEnvApi, testRunApi } from '@/api'
+import { ApiError, ErrorCode } from '@/api/request'
 import type {
   AutomationRun,
   AutomationScript,
@@ -418,6 +433,8 @@ import type {
   TestRun,
   TestRunCase,
 } from '@/api/types'
+import DetailNotFound from '@/components/DetailNotFound.vue'
+import EvidenceDrawer from '@/components/EvidenceDrawer.vue'
 import InterfaceResultDialog from '@/components/InterfaceResultDialog.vue'
 import ProdConfirmDialog from '@/components/ProdConfirmDialog.vue'
 import { dateTimeText } from '@/utils/format'
@@ -437,6 +454,9 @@ const selectedRows = ref<TestRunCase[]>([])
 const dirtyIds = ref<number[]>([])
 const savingAll = ref(false)
 const reporting = ref(false)
+const notFound = ref(false)
+const evidenceVisible = ref(false)
+const evidenceLocator = ref<Record<string, string | number>>({})
 
 const envOptions = ref<TestEnv[]>([])
 const interfaceDialogVisible = ref(false)
@@ -552,6 +572,7 @@ function resultClass(value: string): string {
 }
 
 async function load(): Promise<void> {
+  notFound.value = false
   try {
     const detail = await testRunApi.get(runId.value)
     run.value = detail
@@ -563,6 +584,11 @@ async function load(): Promise<void> {
     }
     await loadAutomationRuns()
   } catch (err) {
+    if (err instanceof ApiError && err.code === ErrorCode.RESOURCE_NOT_FOUND) {
+      run.value = null
+      notFound.value = true
+      return
+    }
     ElMessage.error(err instanceof Error ? err.message : '加载轮次失败')
   }
 }
@@ -859,6 +885,11 @@ function openCase(row: TestRunCase): void {
 
 function openBug(bugId: number): void {
   void router.push({ name: 'bug-detail', params: { id: bugId } })
+}
+
+function openEvidence(row: TestRunCase): void {
+  evidenceLocator.value = { runCaseId: row.id }
+  evidenceVisible.value = true
 }
 
 function goBack(): void {

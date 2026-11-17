@@ -11,6 +11,17 @@
 
     <SmartEntry class="lab-entry" />
 
+    <div class="toolbar lab-filter">
+      <el-input
+        v-model="keyword"
+        placeholder="搜索能力名称 / 说明 / 关键词"
+        clearable
+        style="width: 260px"
+      />
+      <el-checkbox v-model="favoriteOnly">只看收藏</el-checkbox>
+      <span class="muted">共 {{ filteredCapabilities.length }} 个能力</span>
+    </div>
+
     <section v-for="group in groups" :key="group.category" class="lab-section">
       <div class="lab-section__head">
         <span class="lab-section__title">{{ group.title }}</span>
@@ -24,10 +35,19 @@
           :key="item.code"
           class="lab-card panel"
           type="button"
+          :aria-label="item.label"
           @click="open(item.code)"
         >
           <div class="lab-card__head">
-            <span class="lab-card__title">{{ item.label }}</span>
+            <span class="lab-card__title">
+              <span
+                class="lab-card__fav"
+                :class="{ 'is-active': favorites.has(item.code) }"
+                :title="favorites.has(item.code) ? '取消收藏' : '收藏该能力'"
+                @click.stop="toggleFavorite(item.code)"
+              >★</span>
+              {{ item.label }}
+            </span>
             <span class="lab-card__head-tags">
               <span
                 v-if="item.category !== 'extended'"
@@ -117,7 +137,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ChatDotRound, Notebook } from '@element-plus/icons-vue'
 import SmartEntry from '@/components/SmartEntry.vue'
@@ -132,6 +152,66 @@ const labStore = useLabStore()
 // 必须走 computed：store 加载完成后会整体替换 capabilities 数组，
 // 直接解构拿到的是旧数组快照，卡片永远渲染不出来。
 const capabilities = computed(() => labStore.capabilities)
+const keyword = ref('')
+const favoriteOnly = ref(false)
+const FAVORITES_KEY = 'aitp.lab.favorites'
+
+function readFavorites(): Set<string> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(FAVORITES_KEY) || '[]')
+    return new Set(Array.isArray(raw) ? raw.map(String) : [])
+  } catch {
+    return new Set()
+  }
+}
+
+const favorites = ref<Set<string>>(readFavorites())
+
+function toggleFavorite(code: string): void {
+  const next = new Set(favorites.value)
+  if (next.has(code)) next.delete(code)
+  else next.add(code)
+  favorites.value = next
+  try {
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify([...next]))
+  } catch {
+    // 隐私模式禁用存储只影响记忆收藏，不影响本次筛选
+  }
+}
+
+const filteredCapabilities = computed(() => {
+  const text = keyword.value.trim().toLowerCase()
+  return capabilities.value.filter((item) => {
+    if (favoriteOnly.value && !favorites.value.has(item.code)) return false
+    if (!text) return true
+    const haystack = [item.label, item.goal, item.promptDescription, item.promptCode, ...(item.keywords ?? [])]
+      .join(' ')
+      .toLowerCase()
+    return haystack.includes(text)
+  })
+})
+
+const DOMAIN_GROUPS: Record<string, { title: string; hint: string }> = {
+  requirement: { title: '需求与设计', hint: '需求确认、测试点、用例生成与评审' },
+  quality: { title: '缺陷与回归', hint: '缺陷分析、归类、回归清单与风险评估' },
+  report: { title: '报告与计划', hint: '报告、进度看板与测试计划' },
+  engineering: { title: '自动化与数据', hint: '接口设计、日志、SQL、脚本与测试数据' },
+  explore: { title: '探索与优化', hint: '探索性测试与提示词优化' },
+  extended: { title: '扩展能力', hint: '提示词库里已就绪的其他提示词，点开即可用' },
+}
+
+function groupKey(code: string): string {
+  if (code === 'requirement-confirm' || code === 'testpoint-generation' || code === 'case-generation'
+    || code === 'xmind-to-case' || code === 'case-review') return 'requirement'
+  if (code === 'bug-analysis' || code === 'bug-classification' || code === 'regression-generation'
+    || code === 'risk-assessment') return 'quality'
+  if (code === 'report-generation' || code === 'project-progress-board' || code === 'test-plan') return 'report'
+  if (code === 'api-test-design' || code === 'log-analysis' || code === 'sql-analysis'
+    || code === 'test-data-generation' || code === 'automation-script'
+    || code === 'performance-script') return 'engineering'
+  if (code === 'exploratory-web' || code === 'prompt-optimizer') return 'explore'
+  return 'extended'
+}
 
 interface CapabilityGroup {
   category: string
@@ -142,22 +222,21 @@ interface CapabilityGroup {
 
 /** 卡片按「核心能力 / 扩展能力」两段展示，扩展能力来自提示词库里其余可直接跑的提示词。 */
 const groups = computed<CapabilityGroup[]>(() => {
-  const core = capabilities.value.filter((item) => item.category !== 'extended')
-  const extended = capabilities.value.filter((item) => item.category === 'extended')
-  return [
-    {
-      category: 'core',
-      title: '核心能力',
-      hint: '质量闭环主干：需求 → 用例 → 缺陷 → 回归 → 报告',
-      items: core,
-    },
-    {
-      category: 'extended',
-      title: '扩展能力',
-      hint: '提示词库里已就绪的其他提示词，点开即可用',
-      items: extended,
-    },
-  ].filter((group) => group.items.length)
+  const buckets = new Map<string, CapabilitySpec[]>()
+  for (const item of filteredCapabilities.value) {
+    const key = item.category === 'extended' ? 'extended' : groupKey(item.code)
+    const bucket = buckets.get(key) ?? []
+    bucket.push(item)
+    buckets.set(key, bucket)
+  }
+  return [...buckets.entries()]
+    .map(([category, items]) => ({
+      category,
+      title: DOMAIN_GROUPS[category]?.title ?? category,
+      hint: DOMAIN_GROUPS[category]?.hint ?? '',
+      items: [...items].sort((a, b) => (b.useCount ?? 0) - (a.useCount ?? 0)),
+    }))
+    .filter((group) => group.items.length)
 })
 
 /** 产出物模板由页面开关驱动，不算用户要手填的输入，卡片上不列。 */
@@ -328,5 +407,21 @@ onMounted(() => {
 
 .lab-card__keyword {
   color: var(--aitp-text-weak);
+}
+
+.lab-filter {
+  margin-bottom: 12px;
+  align-items: center;
+}
+
+.lab-card__fav {
+  color: var(--aitp-text-weak);
+  cursor: pointer;
+  margin-right: 4px;
+  font-size: 13px;
+}
+
+.lab-card__fav.is-active {
+  color: var(--el-color-warning);
 }
 </style>

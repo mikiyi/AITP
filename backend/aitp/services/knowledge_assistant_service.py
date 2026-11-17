@@ -20,6 +20,7 @@ from ..common.constants import EGRESS_NONE, EGRESS_THIRD_PARTY
 from ..common.time_utils import utcnow_iso
 from ..ai.client import chat_with_fallback
 from ..ai.masking import cloud_mask_enabled
+from ..ai.types import Message
 from ..errors import AppError, ErrorCode
 from ..prompts.registry import get_registry
 from ..repositories.ai_session_repo import AISessionRepository
@@ -333,6 +334,61 @@ def _message_public(item: dict[str, Any], submitted_ids: set[str]) -> dict[str, 
         },
     })
     return base
+
+
+#: 多轮记忆的最近轮数与字符上限：以角色数组直传模型（不是拼成一段文本），
+#: 轮数取大一点让「刚才/上面/之前」这类指代有足够上下文，又按字符预算裁掉过远的轮次
+CHAT_TURNS_LIMIT = 10
+CHAT_TURNS_CHARS = 8000
+
+
+def recent_chat_history(conn: sqlite3.Connection, session_id: int | None) -> list[Message]:
+    """把同一会话里最近几轮问答按原生角色数组取出，供多轮对话直传模型。
+
+    与「拼成一段文本」不同：这里每条历史消息保留自己的 role（user/assistant），
+    模型按多轮对话语义理解，能正确解析「刚才/上面/之前」这类指代，而不是当成一段
+    自述来读。只认问答助手自己会话且未软删的消息；取本条提问之前的记录，
+    所以当前这次问答不会把自己算进「之前聊过的」。没有历史返回空数组，
+    由调用方决定是否还要带「（无）」占位。
+    """
+    if session_id is None:
+        return []
+    row = AISessionRepository(conn).get(int(session_id))
+    if not row or str(row.get("module") or "") != SESSION_MODULE:
+        return []
+    rows = conn.execute(
+        "SELECT role, content FROM biz_ai_message WHERE session_id = ? AND is_deleted = 0"
+        " ORDER BY id ASC",
+        (int(session_id),),
+    ).fetchall()
+    #: 按「问 → 答」配对，再从最近的往前裁到 CHAT_TURNS_LIMIT 轮
+    turns: list[tuple[str, str]] = []
+    for raw in rows:
+        item = dict(raw)
+        content = " ".join(str(item.get("content") or "").split())
+        if not content:
+            continue
+        if str(item.get("role") or "") == "user":
+            turns.append((content, ""))
+        elif turns:
+            turns[-1] = (turns[-1][0], content)
+    turns = turns[-CHAT_TURNS_LIMIT:]
+
+    budget = CHAT_TURNS_CHARS
+    chosen: list[tuple[str, str]] = []
+    for question, answer in reversed(turns):
+        if budget - len(question) - len(answer) < 0 and chosen:
+            break
+        chosen.append((question, answer))
+        budget -= len(question) + len(answer)
+    chosen.reverse()
+
+    history: list[Message] = []
+    for question, answer in chosen:
+        history.append(Message(role="user", content=question))
+        if answer:
+            history.append(Message(role="assistant", content=answer))
+    return history
 
 
 def history(conn: sqlite3.Connection, session_id: int | None = None) -> dict[str, Any]:

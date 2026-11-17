@@ -50,10 +50,11 @@
           tone="info"
         />
         <MetricCard
-          label="测试用例"
+          label="资产用例"
           :value="assets.case"
           icon="Tickets"
           tone="primary"
+          hint="不含轮次快照"
         />
         <MetricCard
           label="缺陷"
@@ -76,18 +77,20 @@
           tone="primary"
         />
         <MetricCard
-          label="用例执行通过率"
-          :value="(metrics.casePassRate ?? 0) * 100"
+          label="资产用例通过率"
+          :value="casePassRateText"
           :precision="2"
-          suffix="%"
+          :suffix="casePassRateSuffix"
           icon="TrendCharts"
           tone="success"
+          :hint="`已执行 ${metrics.caseExecuted ?? 0} 条为分母，未执行不计入`"
         />
         <MetricCard
-          label="用例总数"
+          label="资产用例总数"
           :value="metrics.caseTotal ?? 0"
           icon="Tickets"
           tone="primary"
+          hint="按用例资产状态统计，不含轮次快照"
         />
         <MetricCard
           label="未关闭缺陷"
@@ -360,6 +363,9 @@
                 <div class="home__env-target">{{ server.target }}</div>
 
                 <div v-if="server.metrics" class="home__metrics">
+                  <div v-if="server.side === 'db' && server.ok === false" class="muted">
+                    数据库连接不可达，以下为所在主机的资源指标
+                  </div>
                   <div class="home__metric">
                     <div class="home__metric-head">
                       <span class="home__metric-name">CPU</span>
@@ -487,6 +493,10 @@ const aiUsageChartEl = ref<HTMLElement | null>(null)
 const bugSeverityChartEl = ref<HTMLElement | null>(null)
 
 const metrics = computed(() => overview.value?.metrics ?? ({} as WorkbenchOverview['metrics']))
+const casePassRateText = computed(() =>
+  metrics.value.caseExecuted ? Number(((metrics.value.casePassRate ?? 0) * 100).toFixed(2)) : '—',
+)
+const casePassRateSuffix = computed(() => (metrics.value.caseExecuted ? '%' : ''))
 const assets = computed(() => overview.value?.assets ?? ({} as WorkbenchOverview['assets']))
 const shortcuts = computed<QuickEntry[]>(() => overview.value?.shortcuts ?? [])
 const recentTasks = computed(() => overview.value?.recentTasks ?? [])

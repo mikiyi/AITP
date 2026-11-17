@@ -227,10 +227,15 @@ def overview() -> Response:
 
     knowledge_total = knowledge_repo.published_count(project_id)
 
+    case_not_executed = int(case_status.get("not_executed", 0))
+    case_executed = max(0, case_total - case_not_executed)
     return ok({
         "metrics": {
             "caseTotal": case_total,
-            "casePassRate": round(case_pass / case_total, 4) if case_total else 0.0,
+            "caseExecuted": case_executed,
+            "caseNotExecuted": case_not_executed,
+            # 未执行不计入分母；没有执行记录时给 null，前端显示「—」而不是 0%
+            "casePassRate": round(case_pass / case_executed, 4) if case_executed else None,
             "bugTotal": bug_total,
             "bugOpen": bug_open,
             "requirementTotal": requirement_total,

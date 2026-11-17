@@ -715,7 +715,9 @@ export interface KnowledgeRef {
 export interface WorkbenchOverview {
   metrics: {
     caseTotal: number
-    casePassRate: number
+    caseExecuted: number
+    caseNotExecuted: number
+    casePassRate: number | null
     bugTotal: number
     bugOpen: number
     requirementTotal: number

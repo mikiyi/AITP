@@ -1,6 +1,14 @@
 <template>
   <div class="page">
-    <div class="page-header">
+    <DetailNotFound
+      v-if="notFound"
+      title="探索会话不存在或不属于当前项目"
+      message="会话可能已删除，或属于另一个项目。确认当前项目，或切换项目后重试。"
+      @back="router.push('/exploratory')"
+      @retry="load"
+    />
+
+    <div v-if="!notFound" class="page-header">
       <h2 class="page-title">探索会话 {{ detail?.session?.sessionNo }}</h2>
       <el-button :icon="Back" @click="router.push('/exploratory')">返回列表</el-button>
     </div>
@@ -145,6 +153,8 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Back } from '@element-plus/icons-vue'
 import { exploratoryApi } from '@/api'
+import DetailNotFound from '@/components/DetailNotFound.vue'
+import { ApiError, ErrorCode } from '@/api/request'
 import { dateTimeText } from '@/utils/format'
 import type { ExplorationSessionDetail, ExplorationStep, ExploratoryOption, ExecutionEvidence } from '@/api/types'
 
@@ -157,6 +167,7 @@ let timer: ReturnType<typeof setTimeout> | null = null
 const evidenceVisible = ref(false)
 const evidence = ref<ExecutionEvidence | null>(null)
 const registeringBugId = ref<number | null>(null)
+const notFound = ref(false)
 
 const summaryNotes = computed<string[]>(() => {
   const summary = detail.value?.session?.summary
@@ -184,10 +195,16 @@ function statusTagType(status: string): 'info' | 'warning' | 'success' | 'danger
 async function load(): Promise<void> {
   const id = Number(router.currentRoute.value.params.id)
   if (!id) return
+  notFound.value = false
   try {
     detail.value = await exploratoryApi.session(id)
     schedulePoll()
   } catch (err) {
+    if (err instanceof ApiError && err.code === ErrorCode.RESOURCE_NOT_FOUND) {
+      detail.value = null
+      notFound.value = true
+      return
+    }
     ElMessage.error(err instanceof Error ? err.message : '加载探索会话失败')
   }
 }

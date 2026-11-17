@@ -14,9 +14,8 @@ test('跨项目直达详情 URL 不泄露别项目数据', async ({ page }) => {
   const health = attachHealth(page)
   await page.goto(`/bugs/${bug.id}`)
   await page.locator('.page, .page-header, .el-message').first().waitFor({ state: 'visible' })
-  await expect(page.locator('.el-message', { hasText: /目标不存在|不存在|无法/ })).toBeVisible({
-    timeout: 10_000,
-  })
+  await expect(page.getByText(/不存在.*当前项目/)).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByRole('button', { name: '返回列表' })).toBeVisible()
   await expect(page.locator('body')).not.toContainText(title)
   assertHealthy(health)
 })

@@ -3,7 +3,7 @@
     <!-- 顶部指标卡：先看宏观再下钻 -->
     <div class="overview-metrics">
       <div class="ov-metric">
-        <span class="ov-metric__label">总用例数</span>
+        <span class="ov-metric__label" title="按轮次快照统计，不是用例资产总数">快照用例数</span>
         <span class="ov-metric__value">{{ metrics.totalCases }}</span>
       </div>
       <div class="ov-metric">

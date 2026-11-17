@@ -7,6 +7,14 @@
 
     <el-skeleton v-if="loading" :rows="6" animated />
 
+    <DetailNotFound
+      v-else-if="notFound"
+      title="缺陷不存在或不属于当前项目"
+      message="缺陷可能已删除，或属于另一个项目。确认当前项目，或切换项目后重试。"
+      @back="router.back()"
+      @retry="loadDetail"
+    />
+
     <div v-else-if="detail" class="bug-detail">
       <div class="panel panel-pad">
         <div class="bug-detail__head">
@@ -136,6 +144,8 @@ import { ElMessage } from 'element-plus'
 import { Back } from '@element-plus/icons-vue'
 import EvidenceDrawer from '@/components/EvidenceDrawer.vue'
 import { bugApi } from '@/api'
+import DetailNotFound from '@/components/DetailNotFound.vue'
+import { ApiError, ErrorCode } from '@/api/request'
 import type { Bug, BugLog, ExecutionEvidence } from '@/api/types'
 import { dateTimeText } from '@/utils/format'
 
@@ -146,6 +156,7 @@ const logs = ref<BugLog[]>([])
 const evidences = ref<ExecutionEvidence[]>([])
 const evidenceHint = ref('')
 const evidenceVisible = ref(false)
+const notFound = ref(false)
 const evidenceLocator = ref<Record<string, string | number>>({})
 const loading = ref(true)
 const nextStatus = ref('')
@@ -270,16 +281,27 @@ async function doTransition(): Promise<void> {
   }
 }
 
-onMounted(async () => {
+async function loadDetail(): Promise<void> {
+  loading.value = true
+  notFound.value = false
   try {
     detail.value = await bugApi.get(Number(route.params.id))
     await loadLogs()
     await loadEvidences()
   } catch (err) {
+    if (err instanceof ApiError && err.code === ErrorCode.RESOURCE_NOT_FOUND) {
+      detail.value = null
+      notFound.value = true
+      return
+    }
     ElMessage.error(err instanceof Error ? err.message : '加载缺陷失败')
   } finally {
     loading.value = false
   }
+}
+
+onMounted(() => {
+  void loadDetail()
 })
 </script>
 

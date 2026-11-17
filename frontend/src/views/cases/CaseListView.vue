@@ -68,6 +68,9 @@
             >
               发起测试轮次
             </el-button>
+            <el-button size="small" type="success" plain :loading="batchKnowledge" @click="batchAddKnowledge(rows)">
+              批量加入知识库
+            </el-button>
             <el-button size="small" type="danger" plain :loading="batchRemoving" @click="batchRemove(rows)">
               批量删除
             </el-button>
@@ -344,7 +347,7 @@ import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
 import ModuleTree, { type ModuleTreeExpose } from '@/components/ModuleTree.vue'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
-import { caseApi, moduleApi, projectVersionApi, requirementApi, testEnvApi, testRunApi } from '@/api'
+import { caseApi, knowledgeApi, moduleApi, projectVersionApi, requirementApi, testEnvApi, testRunApi } from '@/api'
 import type { PagePayload } from '@/api/request'
 import { NODE_CASE_PAGE_SIZE } from '@/composables/useNodeCases'
 import type {
@@ -898,6 +901,29 @@ async function save(): Promise<void> {
     ElMessage.warning('请先选择项目')
     return
   }
+  try {
+    const existing = await caseApi.list({
+      projectId: form.projectId,
+      keyword: form.title.trim(),
+      pageNum: 1,
+      pageSize: 100,
+    })
+    const duplicated = (existing.list ?? []).find(
+      (item) => item.title.trim() === form.title.trim() && item.id !== editing.value?.id,
+    )
+    if (duplicated) {
+      await ElMessageBox.confirm(
+        `已存在同名用例「${duplicated.caseNo} ${duplicated.title}」，还要继续保存吗？`,
+        '疑似重复用例',
+        { type: 'warning', confirmButtonText: '仍然保存', cancelButtonText: '返回修改' },
+      )
+    }
+  } catch (err) {
+    if (err !== 'cancel' && err !== 'close') {
+      ElMessage.error(err instanceof Error ? err.message : '检查重复用例失败')
+    }
+    return
+  }
   saving.value = true
   try {
     const trimTail = (lines: string[]): string[] => {
@@ -955,6 +981,7 @@ function onRowClick(row: TestCase): void {
 }
 
 const batchRemoving = ref(false)
+const batchKnowledge = ref(false)
 
 const runDialogVisible = ref(false)
 const runLaunching = ref(false)
@@ -1057,6 +1084,40 @@ async function launchRun(): Promise<void> {
     ElMessage.error(err instanceof Error ? err.message : '发起轮次失败')
   } finally {
     runLaunching.value = false
+  }
+}
+
+async function batchAddKnowledge(rows: Record<string, any>[]): Promise<void> {
+  if (!rows.length || !appStore.currentProjectId) return
+  batchKnowledge.value = true
+  let done = 0
+  let failed = 0
+  try {
+    for (const row of rows) {
+      const steps = (row.steps ?? []).map((step: any) => `${step.action ?? ''}${step.expected ? ` → ${step.expected}` : ''}`)
+      try {
+        await knowledgeApi.createDraft({
+          projectId: appStore.currentProjectId,
+          title: `${row.caseNo} ${row.title}`,
+          content: [`用例：${row.caseNo} ${row.title}`, `优先级：${row.priority ?? '-'}`, `预期结果：${row.expectedResult || '-'}`, ...steps].join('\n'),
+          summary: row.title,
+          category: '踩坑记录',
+          sourceType: 'case_asset',
+          refType: 'test_case',
+          refId: row.id,
+          refLabel: row.title,
+          producer: 'case_batch',
+        })
+        done += 1
+      } catch {
+        failed += 1
+      }
+    }
+    if (done) ElMessage.success(`已提交 ${done} 条用例到知识待审池`)
+    if (failed) ElMessage.warning(`${failed} 条提交失败，请检查后重试`)
+    tableRef.value?.clearSelection()
+  } finally {
+    batchKnowledge.value = false
   }
 }
 

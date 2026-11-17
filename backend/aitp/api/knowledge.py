@@ -152,9 +152,12 @@ def ask_assistant() -> Response:
         "question": question,
         "context": context or retrieval_error or "（未提供）",
     })
+    # 多轮记忆：历史按原生角色数组插在检索提示词之前，模型按多轮对话语义理解
+    history_messages = knowledge_assistant_service.recent_chat_history(conn, session_id)
+    all_messages = lab_service.build_messages(prompt, history=history_messages)
     outcome = chat_with_fallback(
         lab_service.available_candidates(None),
-        lab_service.build_messages(prompt),
+        all_messages,
         mask_enabled=cloud_mask_enabled(conn),
     )
     # 问答助手不写 biz_ai_record（不进 AI 执行记录与成本口径），历史只落会话；
@@ -230,7 +233,8 @@ def ask_assistant_stream() -> Response:
         "question": question,
         "context": context or retrieval_error or "（未提供）",
     })
-    messages = lab_service.build_messages(prompt)
+    history_messages = knowledge_assistant_service.recent_chat_history(conn, session_id)
+    messages = lab_service.build_messages(prompt, history=history_messages)
     candidates = lab_service.available_candidates(None)
     mask_enabled = cloud_mask_enabled(conn)
     db_path = _Path(str(current_app.config["AITP_DB_PATH"]))

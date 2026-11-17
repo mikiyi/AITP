@@ -72,7 +72,7 @@
                 <span v-if="!item.thinking.done">思考中…</span>
                 <span v-else>已思考 {{ item.thinking.seconds }} 秒 / {{ item.thinking.chars }} 字</span>
                 <el-tag v-if="item.thinking.interrupted" size="small" type="warning" effect="plain">未完成</el-tag>
-                <el-tag v-if="item.thinking.saved" size="small" type="success" effect="plain">已保存</el-tag>
+                <el-tag v-if="item.thinking.saved" size="small" type="success" effect="plain">思考已保存</el-tag>
               </button>
               <pre v-show="!item.thinking.collapsed" class="assistant__thinking-body">{{ thinkingDisplay(item) }}</pre>
               <div v-if="item.thinking.done && !item.thinking.saved && item.thinking.text" class="assistant__thinking-actions">
@@ -120,7 +120,7 @@
               </el-button>
             </div>
             <div v-if="item.refs?.length" class="assistant__refs">
-              <span class="muted">参考来源</span>
+              <span class="muted">参考来源 · {{ item.refs.length }} 条（正文中的 [K#] 对应此处）</span>
               <el-tag
                 v-for="ref in item.refs"
                 :key="ref.marker"
