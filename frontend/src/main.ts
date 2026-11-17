@@ -8,17 +8,19 @@ import 'element-plus/dist/index.css'
 import App from './App.vue'
 import router from './router'
 import { installGlobalErrorGuard } from './composables/useGlobalError'
+import { useAppStore } from './stores/app'
 import { useThemeStore } from './stores/theme'
 import './styles/main.css'
 import './styles/theme.css'
 
 const app = createApp(App)
+const pinia = createPinia()
 
 Object.entries(ElementPlusIconsVue).forEach(([name, component]) => {
   app.component(name, component)
 })
 
-app.use(createPinia())
+app.use(pinia)
 app.use(router)
 app.use(ElementPlus, { locale: zhCn })
 
@@ -28,4 +30,7 @@ useThemeStore().init()
 // 兜底页要在挂载前登记：首屏渲染自己抛出的异常也要能被捕获到
 installGlobalErrorGuard(app)
 
-app.mount('#app')
+// 先拿到当前项目再挂载：详情页的首个请求就会带 projectId，避免项目作用域竞态
+void useAppStore(pinia).loadProjects().finally(() => {
+  app.mount('#app')
+})

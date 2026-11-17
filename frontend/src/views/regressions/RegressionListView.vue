@@ -106,7 +106,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="标题" required>
-          <el-input v-model="form.title" placeholder="例如：支付链路 2.3 版本回归" />
+          <el-input v-model="form.title" placeholder="例如：支付链路 2.4 版本回归" />
         </el-form-item>
         <el-form-item label="变更范围">
           <el-input v-model="form.changeScope" type="textarea" :rows="3" placeholder="本次改了什么" />
@@ -120,7 +120,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="版本备注">
-          <el-input v-model="form.version" placeholder="例如：v2.3.0" />
+          <el-input v-model="form.version" placeholder="例如：v2.4.0" />
         </el-form-item>
         <el-form-item label="风险等级">
           <el-radio-group v-model="form.riskLevel">

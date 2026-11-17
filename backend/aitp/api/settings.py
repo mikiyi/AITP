@@ -109,6 +109,11 @@ CONFIG_HINTS: dict[str, str] = {
     "automation.python.timeout": (
         "整数，单位秒，默认 300。自动化脚本单次执行超过该时长会被强制结束，并记为「超时」。"
     ),
+    "automation.auto_bug": (
+        "可填 true 或 false，默认 false。true：接口场景执行未通过、自动化脚本执行失败/超时/异常时，"
+        "自动按失败步骤或失败用例生成一条 P2 缺陷，描述里带执行编号与错误证据；"
+        "false：只在执行页手动「转缺陷」。"
+    ),
     "performance.jmeter.home": (
         "JMeter 安装根目录，例如 Windows 的 C:\\tools\\apache-jmeter-5.6.3 或 macOS / Linux 的 /opt/apache-jmeter-5.6.3，"
         "其下需要有 bin/jmeter（Windows 为 bin/jmeter.bat）。"

@@ -9,7 +9,7 @@
  *   清空对话 → 当前线程空了，但旧会话在「会话记录」里能查到。
  */
 import { test, expect, type Page } from '@playwright/test'
-import { api, data, attachHealth, assertHealthy } from './helpers'
+import { api, data, getSeed, attachHealth, assertHealthy } from './helpers'
 
 const ASSISTANT = '/knowledge/assistant'
 const QUESTION = '支付回调重复推送怎么排查？（E2E 历史）'
@@ -63,6 +63,7 @@ async function askInKbMode(page: Page, question: string) {
 test('问答助手：换菜单与刷新都不丢历史，清空后旧会话仍在会话记录', async ({ page }) => {
   test.setTimeout(180_000)
   const h = attachHealth(page)
+  const seed = await getSeed()
 
   await page.goto(ASSISTANT)
   await page.locator('.assistant').first().waitFor({ state: 'visible' })
@@ -87,7 +88,7 @@ test('问答助手：换菜单与刷新都不丢历史，清空后旧会话仍�
   // 服务端确实留了会话：不靠页面内存
   const sessions = data(await api('GET', '/lab/sessions?module=knowledge-assistant&pageSize=50'))
   expect(sessions?.list?.length ?? 0, '问答会话未落库').toBeGreaterThan(0)
-  const detail = data(await api('GET', `/lab/sessions/${sessions.list[0].id}`))
+  const detail = data(await api('GET', `/lab/sessions/${sessions.list[0].id}?projectId=${seed.projectId}`))
   expect(JSON.stringify(detail?.messages ?? [])).toContain(QUESTION)
 
   // 清空对话 = 另起一条会话，当前线程空了

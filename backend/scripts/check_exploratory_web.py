@@ -52,12 +52,24 @@ def check(name: str, condition: bool, detail: str = "") -> bool:
 class Api:
     def __init__(self, app: Flask) -> None:
         self.client = app.test_client()
+        self.scope_project_id: int | None = None
+
+    def _scoped(self, path: str) -> str:
+        if self.scope_project_id and "projectId=" not in path:
+            sep = "&" if "?" in path else "?"
+            return f"{path}{sep}projectId={self.scope_project_id}"
+        return path
 
     def call(self, method: str, path: str, payload: JsonDict | None = None) -> tuple[Any, JsonDict]:
+        path = self._scoped(path)
         resp = self.client.open(path, method=method, json=payload)
         body = resp.get_json(silent=True)
         if body is None:
             body = {"code": -1, "message": "非 JSON 响应", "data": None}
+        if method == "POST" and path.split("?")[0].rstrip("/").endswith("/projects"):
+            data = body.get("data")
+            if isinstance(data, dict) and data.get("id"):
+                self.scope_project_id = int(data["id"])
         return resp, cast(JsonDict, body)
 
     def data(self, method: str, path: str, payload: JsonDict | None = None) -> Any:
@@ -139,6 +151,7 @@ def main() -> int:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         check("迁移 056 已应用", 56 in applied_versions(conn))
+        check("迁移 068 已应用", 68 in applied_versions(conn))
         check("探索会话表已建立", conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='biz_exploration_session'"
         ).fetchone() is not None)
@@ -147,6 +160,8 @@ def main() -> int:
         ).fetchone() is not None)
         check("待审池带 bug_id 列", "bug_id" in {
             r[1] for r in conn.execute("PRAGMA table_info(biz_knowledge_draft)").fetchall()})
+        check("探索步带 bug_id 列", "bug_id" in {
+            r[1] for r in conn.execute("PRAGMA table_info(biz_exploration_step)").fetchall()})
         conn.close()
 
         # ---- 配置读写与边界 ----
@@ -224,6 +239,8 @@ def main() -> int:
         api.data("POST", f"{V1}/exploratory/sessions/{s_missing['id']}/run")
         _resp, body = api.call("POST", f"{V1}/exploratory/sessions/{s_missing['id']}/run")
         check("重复运行被拒", body["code"] == ErrorCode.ILLEGAL_OPERATION, str(body))
+        # 等这个早先的会话收口，避免它在本轮注入异常的环境下执行、污染产物断言
+        wait_any(api, s_missing["id"])
 
         # ---- 主流程：异常注入（http_error on step 2 & 4）----
         os.environ["AITP_MCP_ANOMALY_STEPS"] = "2,4"
@@ -249,6 +266,14 @@ def main() -> int:
         check("未降级（有脚本驱动）", not srow["degraded"], str(srow.get("degraded")))
         check("步数收口", srow["stepDone"] == 5 and srow["stepTotal"] == 5, str(srow["stepDone"]))
         check("异常步数为 2", srow["anomalyCount"] == 2, str(srow["anomalyCount"]))
+
+        listed = api.data("GET",
+                          f"{V1}/exploratory/sessions?keyword={sess['sessionNo']}&pageSize=5")
+        check("会话列表支持关键词筛选",
+              any(int(item["id"]) == int(sess["id"]) for item in listed["list"]),
+              str(listed)[:200])
+        empty = api.data("GET", f"{V1}/exploratory/sessions?keyword=NO-SUCH-SESSION&pageSize=5")
+        check("关键词无命中返回空列表", empty["list"] == [], str(empty)[:200])
 
         steps = detail["steps"]
         check("步骤按序留痕", [s["stepNo"] for s in steps] == [1, 2, 3, 4, 5], str([s["stepNo"] for s in steps]))
@@ -295,16 +320,59 @@ def main() -> int:
         check("探索异常未直接写缺陷库", bug_count == 0, str(bug_count))
         drafts = api.data("GET", f"{V1}/knowledge/drafts", )
         draft_list = drafts["list"]
-        exp_drafts = [d for d in draft_list if d["sourceType"] == "exploratory"]
+        main_step_ids = {int(item["id"]) for item in steps}
+        exp_drafts = [
+            d for d in draft_list
+            if d["sourceType"] == "exploratory" and int(d.get("refId") or 0) in main_step_ids
+        ]
         check("异常产物进待审池", len(exp_drafts) >= 1, str(len(exp_drafts)))
         check("产物标记需人工审核", all(d.get("reviewRequired") for d in exp_drafts),
               str([d.get("reviewRequired") for d in exp_drafts]))
         first_draft = exp_drafts[0]
         check("产物引用探索步", first_draft["refType"] == "exploration_step" and first_draft["refId"],
               str((first_draft.get("refType"), first_draft.get("refId"))))
+        draft_step = next(
+            (s for s in anom if int(s["id"]) == int(first_draft["refId"] or 0)), None)
+        direct_step = next(
+            (s for s in anom if int(s["id"]) != int(first_draft["refId"] or 0)), None)
+        check("待审产物能定位到异常步", draft_step is not None, str(first_draft.get("refId")))
+        check("至少一条异常没有待审产物（可测直接登记）", direct_step is not None,
+              str([s["id"] for s in anom]))
+        assert draft_step is not None and direct_step is not None
 
         # ---- 去重：同会话第二个相同异常被跳过 ----
         check("重复异常被去重跳过（只 1 条产物）", len(exp_drafts) == 1, str(len(exp_drafts)))
+
+        # ---- P1-7 异常一键登记缺陷：无产物（被去重跳过）直接建缺陷 ----
+        second = direct_step if direct_step is not None else anom[1]
+        direct = api.data("POST",
+                          f"{V1}/exploratory/sessions/{sess['id']}/steps/{second['id']}/to-bug")
+        check("去重跳过的异常也能一键登记缺陷",
+              bool(direct["bugId"]) and not direct["alreadyLinked"], str(direct))
+        check("直接登记带出缺陷编号", str(direct["bugNo"]).startswith("BUG-"), str(direct["bugNo"]))
+        again = api.data("POST",
+                         f"{V1}/exploratory/sessions/{sess['id']}/steps/{second['id']}/to-bug")
+        check("重复登记幂等返回同一缺陷",
+              again["bugId"] == direct["bugId"] and again["alreadyLinked"], str(again))
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        check("直接登记缺陷已落库", conn.execute(
+            "SELECT COUNT(*) FROM biz_bug WHERE id = ?", (int(direct["bugId"]),)).fetchone()[0] == 1)
+        check("直接登记证据挂到缺陷", conn.execute(
+            "SELECT COUNT(*) FROM biz_execution_evidence WHERE source_type='exploratory'"
+            " AND source_row_id = ? AND bug_id = ?",
+            (int(second["id"]), int(direct["bugId"]))).fetchone()[0] >= 1)
+        step_row = conn.execute("SELECT bug_id FROM biz_exploration_step WHERE id = ?",
+                                (int(second["id"]),)).fetchone()
+        check("异常步回写 bug_id",
+              int(step_row["bug_id"] or 0) == int(direct["bugId"]), str(dict(step_row)))
+        conn.close()
+        api.expect("正常步不能登记缺陷", "POST",
+                   f"{V1}/exploratory/sessions/{sess['id']}/steps/{steps[0]['id']}/to-bug",
+                   ErrorCode.ILLEGAL_OPERATION)
+        api.expect("不存在的步骤按 404 处理", "POST",
+                   f"{V1}/exploratory/sessions/{sess['id']}/steps/999999/to-bug",
+                   ErrorCode.RESOURCE_NOT_FOUND)
 
         # ---- 审核通过 → 转缺陷 + 证据挂载 ----
         review = api.data("POST", f"{V1}/knowledge/drafts/{first_draft['id']}/review",
@@ -323,12 +391,64 @@ def main() -> int:
         check("待审条目标记已通过并登记 bug_id",
               draft_row["review_status"] == "approved" and int(draft_row["bug_id"] or 0) == int(bug_id),
               str(dict(draft_row)))
+        synced = api.data("POST",
+                          f"{V1}/exploratory/sessions/{sess['id']}/steps/{draft_step['id']}/to-bug")
+        check("审核转缺陷后一键入口返回同一缺陷",
+              synced["bugId"] == int(bug_id) and synced["alreadyLinked"], str(synced))
+        rev_step = conn.execute("SELECT bug_id FROM biz_exploration_step WHERE id = ?",
+                                (int(draft_step["id"]),)).fetchone()
+        check("审核转缺陷回写异常步",
+              int(rev_step["bug_id"] or 0) == int(bug_id), str(dict(rev_step)))
         conn.close()
 
         # 重复审核被拒
         api.expect("重复审核被拒", "POST",
                    f"{V1}/knowledge/drafts/{first_draft['id']}/review",
                    ErrorCode.ILLEGAL_OPERATION, {"action": "approve"})
+
+        # ---- 有待审产物时一键登记：人工确认后自动走审核转缺陷 ----
+        os.environ["AITP_MCP_ANOMALY_STEPS"] = "1"
+        os.environ["AITP_MCP_ANOMALY_KIND"] = "http"
+        try:
+            psess = api.data("POST", f"{V1}/exploratory/sessions", {
+                "projectId": project_id, "name": "待审异常一键转缺陷",
+                "targetUrl": "http://stub.local/pending", "driver": "scripted",
+                "plan": [{"action": "navigate", "url": "http://stub.local/pending"}], "maxSteps": 1,
+            })
+            api.data("POST", f"{V1}/exploratory/sessions/{psess['id']}/run")
+            pdetail = wait_session(api, psess["id"])
+            pstep = [s for s in pdetail["steps"] if s["isAnomaly"]][0]
+            if not pstep.get("draftId"):
+                # 去重会跳过重复异常，这里直接补一条待审产物，专测确认路径
+                from aitp.repositories.knowledge_draft_repo import KnowledgeDraftRepository
+
+                pconn = sqlite3.connect(db_path)
+                pconn.row_factory = sqlite3.Row
+                KnowledgeDraftRepository(pconn).create_draft(
+                    "P1-7 待审异常确认", "探索异常待审产物",
+                    summary="待审", category="踩坑记录", project_id=project_id,
+                    source_type="exploratory", ref_type="exploration_step",
+                    ref_id=int(pstep["id"]), ref_label="待审异常一键转缺陷",
+                    producer="exploratory_web", review_required=True,
+                )
+                pconn.commit()
+                pconn.close()
+            once = api.data("POST",
+                            f"{V1}/exploratory/sessions/{psess['id']}/steps/{pstep['id']}/to-bug")
+            check("待审异常确认后一键转缺陷",
+                  bool(once["bugId"]) and bool(once["draftId"]), str(once))
+            pconn = sqlite3.connect(db_path)
+            pconn.row_factory = sqlite3.Row
+            pdraft = pconn.execute(
+                "SELECT review_status, bug_id FROM biz_knowledge_draft WHERE id = ?",
+                (int(once["draftId"]),)).fetchone()
+            check("一键确认同时审核通过待审产物",
+                  pdraft["review_status"] == "approved"
+                  and int(pdraft["bug_id"] or 0) == int(once["bugId"]), str(dict(pdraft)))
+            pconn.close()
+        finally:
+            os.environ.pop("AITP_MCP_ANOMALY_STEPS", None)
+            os.environ.pop("AITP_MCP_ANOMALY_KIND", None)
 
         # ---- 无模型降级（driver=model 但无可用模型）----
         _original = getattr(es, "resolve_candidates")
@@ -359,8 +479,14 @@ def main() -> int:
                            f"{V1}/exploratory/sessions/{sess['id']}?projectId={other}",
                            ErrorCode.RESOURCE_NOT_FOUND)
         check("跨项目隔离返回 404", cross["code"] == ErrorCode.RESOURCE_NOT_FOUND, str(cross))
+        api.expect("跨项目不能登记异常缺陷", "POST",
+                   f"{V1}/exploratory/sessions/{sess['id']}/steps/{second['id']}/to-bug"
+                   f"?projectId={other}",
+                   ErrorCode.RESOURCE_NOT_FOUND)
 
         # ---- 删除与非法删除 ----
+        # 上面造了隔壁项目，作用域切回主项目再删本轮会话
+        api.scope_project_id = project_id
         api.expect("探索进行中/已完成可删除", "DELETE", f"{V1}/exploratory/sessions/{msess['id']}",
                    ErrorCode.SUCCESS)
         # ---- 审计留痕 ----

@@ -411,6 +411,27 @@ def run_matrix(
 
     from . import job_queue
 
+    now = utcnow_iso()
+    # 条件更新抢占调度权：并发两次 run 只有一个能把 draft/done 改成 queued
+    claimed = conn.execute(
+        "UPDATE biz_execution_matrix"
+        " SET status = ?, cell_done = 0, error_message = '',"
+        "     prod_confirmed_by = ?, prod_confirmed_at = ?, updated_at = ?"
+        " WHERE id = ? AND is_deleted = 0 AND status NOT IN (?, ?)",
+        (
+            MATRIX_QUEUED,
+            requested_by if prod_envs else "",
+            now if prod_envs else None,
+            now,
+            matrix_id,
+            MATRIX_QUEUED,
+            MATRIX_RUNNING,
+        ),
+    )
+    if claimed.rowcount == 0:
+        conn.rollback()
+        raise AppError(ErrorCode.ILLEGAL_OPERATION, "矩阵正在执行，请等本轮结束")
+
     cell_repo = ExecutionMatrixCellRepository(conn)
     cell_repo.reset_for_run(matrix_id)
     task = job_queue.submit(
@@ -420,13 +441,6 @@ def run_matrix(
         payload={"matrixId": matrix_id},
         priority=60,
     )
-    ExecutionMatrixRepository(conn).update(matrix_id, {
-        "status": MATRIX_QUEUED,
-        "cell_done": 0,
-        "error_message": "",
-        "prod_confirmed_by": requested_by if prod_envs else "",
-        "prod_confirmed_at": utcnow_iso() if prod_envs else None,
-    })
     conn.execute(
         "UPDATE biz_execution_matrix_cell SET task_id = ? WHERE matrix_id = ? AND is_deleted = 0",
         (int(task["id"]), int(matrix_id)),

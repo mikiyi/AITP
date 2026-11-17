@@ -15,6 +15,7 @@ import io
 import pathlib
 import sqlite3
 import sys
+import traceback
 import tempfile
 import time
 from typing import Any, Callable, cast
@@ -60,14 +61,50 @@ class Api:
 
     def __init__(self, app: Flask) -> None:
         self.client = app.test_client()
+        self.scope_project_id: int | None = None
         self.app = app
+
+    def _scoped(self, path: str) -> str:
+        if not self.scope_project_id or "projectId=" in path:
+            return path
+        bare = path.split("?")[0]
+        if not any(part.isdigit() for part in bare.strip("/").split("/")):
+            return path
+        sep = "&" if "?" in path else "?"
+        return f"{path}{sep}projectId={self.scope_project_id}"
 
     def call(self, method: str, path: str, payload: JsonDict | None = None,
              **kwargs: Any) -> tuple[TestResponse, JsonDict]:
-        resp = self.client.open(path, method=method, json=payload, **kwargs)
+        resp = self.client.open(self._scoped(path), method=method, json=payload, **kwargs)
         body = resp.get_json(silent=True)
         if body is None:
             body = {"code": -1, "message": "非 JSON 响应", "data": None}
+        if (method == "POST" and not self.scope_project_id
+                and path.split("?")[0].rstrip("/").endswith("/projects")):
+            data = body.get("data")
+            if isinstance(data, dict) and data.get("id"):
+                self.scope_project_id = int(data["id"])
+        explicit = None
+        if isinstance(payload, dict) and payload.get("projectId") not in (None, ""):
+            try:
+                explicit = int(payload["projectId"])
+            except (TypeError, ValueError):
+                explicit = None
+        if explicit is None and "?" in path:
+            for part in path.split("?", 1)[1].split("&"):
+                if part.startswith("projectId="):
+                    try:
+                        explicit = int(part.split("=", 1)[1])
+                    except ValueError:
+                        explicit = None
+                    break
+        if explicit is not None:
+            self.scope_project_id = explicit
+        elif (method == "POST" and path.split("?")[0].rstrip("/").endswith("/projects")
+              and body.get("code") == 200000):
+            project = body.get("data")
+            if isinstance(project, dict) and project.get("id"):
+                self.scope_project_id = int(project["id"])
         return resp, cast(JsonDict, body)
 
     def data(self, method: str, path: str, payload: JsonDict | None = None,
@@ -77,7 +114,12 @@ class Api:
             raise AssertionError(
                 f"{method} {path} 期望成功，实际 http={resp.status_code} "
                 f"code={body.get('code')} msg={body.get('message')}")
-        return body.get("data")
+        result = body.get("data")
+        if (method == "POST" and not self.scope_project_id
+                and path.split("?")[0].rstrip("/").endswith("/projects")):
+            if isinstance(result, dict) and result.get("id"):
+                self.scope_project_id = int(result["id"])
+        return result
 
     def expect(self, name: str, method: str, path: str, code: int,
                payload: JsonDict | None = None, **kwargs: Any) -> JsonDict:
@@ -601,16 +643,16 @@ def section_reports(api: Api, ctx: dict[str, int]) -> None:
     stats = api.data("GET", f"{V1}/reports/{report['id']}/stats")
     check("报告统计可读", isinstance(stats, dict), str(stats)[:160])
     for fmt in ("md", "html", "print"):
-        resp = api.client.get(f"{V1}/reports/{report['id']}/export?format={fmt}")
+        resp = api.client.get(f"{V1}/reports/{report['id']}/export?format={fmt}&projectId={ctx['p1']}")
         check(f"报告导出 {fmt} 成功", resp.status_code == 200 and bool(resp.data),
               f"status={resp.status_code}")
-    resp_pdf = api.client.get(f"{V1}/reports/{report['id']}/export?format=pdf")
+    resp_pdf = api.client.get(f"{V1}/reports/{report['id']}/export?format=pdf&projectId={ctx['p1']}")
     check("报告导出 pdf 成功", resp_pdf.status_code == 200 and resp_pdf.data[:4] == b"%PDF",
           f"status={resp_pdf.status_code} head={resp_pdf.data[:8]}")
     api.expect("报告导出格式非法被拒绝", "GET",
-               f"{V1}/reports/{report['id']}/export?format=tar", ErrorCode.PARAM_ERROR)
+               f"{V1}/reports/{report['id']}/export?format=tar&projectId={ctx['p1']}", ErrorCode.PARAM_ERROR)
     api.expect("导出不存在的报告报资源不存在", "GET",
-               f"{V1}/reports/424242/export?format=md", ErrorCode.RESOURCE_NOT_FOUND)
+               f"{V1}/reports/424242/export?format=md&projectId={ctx['p1']}", ErrorCode.RESOURCE_NOT_FOUND)
     gen = api.data("POST", f"{V1}/reports/generate", {"projectId": ctx["p2"],
                                                      "reportType": "summary"})
     check("按项目自动生成报告", bool(gen.get("id")), str(gen)[:160])
@@ -924,15 +966,15 @@ def section_assets(api: Api, ctx: dict[str, int]) -> None:
     files = batch.get("files") or []
     if files:
         first = files[0]
-        dl = api.client.get(f"{td}/files/{first['id']}/download")
+        dl = api.client.get(f"{td}/files/{first['id']}/download?projectId={ctx['p1']}")
         check("单个测试文件可下载", dl.status_code == 200 and bool(dl.data),
               f"status={dl.status_code}")
-        api.expect("下载不存在的文件报资源不存在", "GET", f"{td}/files/424242/download",
+        api.expect("下载不存在的文件报资源不存在", "GET", f"{td}/files/424242/download?projectId={ctx['p1']}",
                    ErrorCode.RESOURCE_NOT_FOUND)
-    arc = api.client.get(f"{td}/batches/{batch['id']}/archive")
+    arc = api.client.get(f"{td}/batches/{batch['id']}/archive?projectId={ctx['p1']}")
     check("批次 zip 可下载", arc.status_code == 200 and arc.data[:2] == b"PK",
           f"status={arc.status_code} head={arc.data[:4]}")
-    api.expect("打包不存在的批次报资源不存在", "GET", f"{td}/batches/424242/archive",
+    api.expect("打包不存在的批次报资源不存在", "GET", f"{td}/batches/424242/archive?projectId={ctx['p1']}",
                ErrorCode.RESOURCE_NOT_FOUND)
     probe_pagination(api, "测试数据批次", f"{td}/batches")
     # 批次只有查/删/打包/下载，没有整批改字段的路由
@@ -1182,6 +1224,7 @@ def main() -> int:
         try:
             runner()
         except Exception as exc:  # noqa: BLE001 - 分区异常要让其它分区继续跑
+            traceback.print_exc()
             check(f"{name} 分区执行不抛异常", False, f"{type(exc).__name__}: {exc}")
         else:
             if _failed == before:

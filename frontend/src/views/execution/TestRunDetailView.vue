@@ -12,6 +12,8 @@
       <div class="toolbar" style="margin: 0">
         <el-button :icon="Refresh" @click="load">刷新</el-button>
         <el-button :icon="Download" @click="exportResult">导出结果</el-button>
+        <el-button :icon="Document" :loading="reporting" @click="generateRunReport">生成报告</el-button>
+        <el-button :icon="DataAnalysis" @click="openEnvDiff">环境差异归因</el-button>
         <el-button type="primary" plain :icon="Cpu" @click="openAutomation">执行自动化</el-button>
         <el-button type="success" :icon="CircleCheck" :disabled="run.status === 'completed'" @click="complete">
           完成轮次
@@ -335,6 +337,66 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="envDiffVisible" title="环境差异归因" width="920px" top="5vh">
+      <div v-loading="envDiffLoading">
+        <template v-if="envDiff">
+          <el-alert
+            v-if="envDiff.message"
+            :title="envDiff.message"
+            type="info"
+            :closable="false"
+            show-icon
+            style="margin-bottom: 12px"
+          />
+          <template v-else>
+            <div class="envdiff-summary">
+              <span class="muted">当前环境：<strong>{{ envDiff.envName || '-' }}</strong></span>
+              <el-tag size="small" type="warning" effect="plain">环境敏感 {{ envDiff.summary.envSensitive }}</el-tag>
+              <el-tag size="small" type="danger">一致失败 {{ envDiff.summary.consistentFailure }}</el-tag>
+              <el-tag size="small" type="success" effect="plain">当前通过 {{ envDiff.summary.currentPassed }}</el-tag>
+              <span class="muted">已执行 {{ envDiff.summary.executed }} / {{ envDiff.summary.total }}</span>
+              <span class="muted">对比环境：{{ envDiff.baselineEnvs.map((e) => e.envName).join('、') || '-' }}</span>
+            </div>
+            <el-table :data="envDiff.rows" border stripe size="small" max-height="480">
+              <el-table-column prop="caseNo" label="用例编号" width="120" />
+              <el-table-column prop="title" label="标题" min-width="160" show-overflow-tooltip />
+              <el-table-column label="本环境" width="90">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="row.currentResult === 'passed' ? 'success' : 'danger'" effect="plain">
+                    {{ row.currentResultLabel }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="归因" width="110">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="envDiffTagType(row.status)">{{ row.statusLabel }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="其他环境最近结论" min-width="260">
+                <template #default="{ row }">
+                  <el-tag
+                    v-for="base in row.baselines"
+                    :key="base.envId"
+                    size="small"
+                    effect="plain"
+                    :type="base.result === 'passed' ? 'success' : 'danger'"
+                    class="envdiff-chip"
+                  >
+                    {{ base.envName }}：{{ base.resultLabel }}
+                  </el-tag>
+                  <span v-if="!row.baselines.length" class="muted">无基线</span>
+                </template>
+              </el-table-column>
+            </el-table>
+            <p class="envdiff-hint">
+              环境敏感 = 本环境失败、其他环境最近一轮同用例通过，优先排查环境 / 数据 / 配置差异；
+              一致失败 = 其他环境也失败，更像产品缺陷。
+            </p>
+          </template>
+        </template>
+      </div>
+    </el-dialog>
+
     <InterfaceResultDialog v-model="interfaceResultVisible" :result="interfaceResult" />
     <ProdConfirmDialog ref="prodDialog" />
   </div>
@@ -345,11 +407,12 @@ import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { TableInstance } from 'element-plus'
-import { ArrowLeft, CircleCheck, Cpu, Download, Refresh, VideoPlay } from '@element-plus/icons-vue'
-import { automationApi, testEnvApi, testRunApi } from '@/api'
+import { ArrowLeft, CircleCheck, Cpu, DataAnalysis, Document, Download, Refresh, VideoPlay } from '@element-plus/icons-vue'
+import { automationApi, reportApi, testEnvApi, testRunApi } from '@/api'
 import type {
   AutomationRun,
   AutomationScript,
+  EnvDiffResult,
   InterfaceExecution,
   TestEnv,
   TestRun,
@@ -358,6 +421,7 @@ import type {
 import InterfaceResultDialog from '@/components/InterfaceResultDialog.vue'
 import ProdConfirmDialog from '@/components/ProdConfirmDialog.vue'
 import { dateTimeText } from '@/utils/format'
+import { fetchAllPages } from '@/utils/fetchAll'
 
 const route = useRoute()
 const router = useRouter()
@@ -372,6 +436,7 @@ const batchResult = ref('')
 const selectedRows = ref<TestRunCase[]>([])
 const dirtyIds = ref<number[]>([])
 const savingAll = ref(false)
+const reporting = ref(false)
 
 const envOptions = ref<TestEnv[]>([])
 const interfaceDialogVisible = ref(false)
@@ -419,6 +484,30 @@ function envKindText(value: string): string {
 }
 
 const runId = computed(() => Number(route.params.id))
+
+const envDiffVisible = ref(false)
+const envDiffLoading = ref(false)
+const envDiff = ref<EnvDiffResult | null>(null)
+
+function envDiffTagType(status: string): 'warning' | 'danger' | 'success' | 'info' {
+  if (status === 'env_sensitive') return 'warning'
+  if (status === 'consistent_failure') return 'danger'
+  if (status === 'current_passed') return 'success'
+  return 'info'
+}
+
+async function openEnvDiff(): Promise<void> {
+  envDiffVisible.value = true
+  envDiffLoading.value = true
+  try {
+    envDiff.value = await testRunApi.envDiff(runId.value)
+  } catch (err) {
+    envDiff.value = null
+    ElMessage.error(err instanceof Error ? err.message : '加载环境差异归因失败')
+  } finally {
+    envDiffLoading.value = false
+  }
+}
 
 const filteredCases = computed(() => {
   const needle = keyword.value.trim().toLowerCase()
@@ -615,12 +704,13 @@ async function openAutomation(): Promise<void> {
   automationLoading.value = true
   automationDialogVisible.value = true
   try {
-    const payload = await automationApi.list({
-      projectId: run.value?.projectId,
-      status: 'ready',
-      pageSize: 200,
-    })
-    automationScripts.value = payload.list ?? []
+    automationScripts.value = await fetchAllPages((pageNum, pageSize) =>
+      automationApi.list({
+        projectId: run.value?.projectId,
+        status: 'ready',
+        pageNum,
+        pageSize,
+      }))
   } catch (err) {
     automationScripts.value = []
     ElMessage.error(err instanceof Error ? err.message : '加载自动化脚本失败')
@@ -744,6 +834,25 @@ function exportResult(): void {
   )
 }
 
+async function generateRunReport(): Promise<void> {
+  if (!run.value) return
+  reporting.value = true
+  try {
+    const report = await reportApi.generate({
+      projectId: run.value.projectId,
+      reportType: 'iteration',
+      sourceType: 'run',
+      sourceId: run.value.id,
+    })
+    ElMessage.success(`已生成轮次报告 ${report.reportNo}`)
+    void router.push(`/reports/${report.id}`)
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '生成报告失败')
+  } finally {
+    reporting.value = false
+  }
+}
+
 function openCase(row: TestRunCase): void {
   void router.push({ name: 'test-case-detail', params: { id: row.caseId } })
 }
@@ -773,6 +882,25 @@ onActivated(() => {
 </script>
 
 <style scoped>
+.envdiff-summary {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.envdiff-chip {
+  margin-right: 6px;
+  margin-bottom: 4px;
+}
+
+.envdiff-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
 .title-wrap {
   display: flex;
   align-items: center;

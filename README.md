@@ -4,6 +4,9 @@
 
 个人版的AI 测试工作台 —— **单用户、本地优先、离线可用**、**提示词工程，大模型调用数据脱敏**的质量管控工具。
 
+当前版本 **v2.4.0**：与后端 `aitp.__version__`、`db/migrator.py::APP_VERSION`、`GET /api/v1/health` 的
+`appVersion` 以及迁移记录的 `app_version` 同源，一处升级四处一致。
+
 把 AI 实验室、测试用例、缺陷、日志分析、SQL 分析、回归、报告、知识库、任务清单、工作台配置利用AI的LLM辅助测试工作，收进同一条闭环：
 **需求 → 测试点 → 用例 → 执行 → 缺陷 → 回归 → 报告 → 知识沉淀**，中间随时把待办推进度挂在清单里。
 
@@ -81,7 +84,7 @@ stop.bat          :: Windows
 
 ## 功能地图
 
-前端 54 条路由 / 57 个页面组件，后端 39 个蓝图 / 410 个接口统一挂在 `/api/v1` 下。
+前端 55 条路由 / 59 个页面组件，后端 42 个蓝图 / 444 个接口统一挂在 `/api/v1` 下。
 
 ### 首启引导与示例项目
 
@@ -99,7 +102,7 @@ stop.bat          :: Windows
 ### 外观与导航
 
 - **10 套主题**：白、黑、蓝、红、粉、橙、科技、海洋、植物、工业。右上调色盘一次点选即全站生效。
-- **导航分组**：侧栏按用途分成 10 组——AI 实验室 / 任务中心 / 测试预案 / 测试资产 / 质量结论 / 自动化脚本 / 执行与探索 / 知识库 / 数据与迁移 / 设置，另有首页与帮助文档两个直达项。
+- **导航分组**：侧栏按用途分成 10 组——AI 实验室 / 任务中心 / 测试预案 / 测试资产 / 质量结论 / 自动化脚本 / 执行与探索 / 知识库 / 数据治理 / 设置，另有首页与帮助文档两个直达项；进入某页时所在分组自动展开，手动展开/收起的组与侧栏折叠态都记在本机。
 - **筛选即查询**：列表页筛选项一改就自动出结果，不再需要点「查询」；筛选与分页仍写进地址栏，链接可分享。
 
 ### 任务清单
@@ -166,6 +169,8 @@ stop.bat          :: Windows
 | 执行与证据 | 接口 / 自动化 / 手工 / 回归 / **探索性**五条执行路径统一留一份证据快照，轮次、缺陷、报告三处可下钻到原始请求响应与日志 |
 | 回归清单 | 清单 CRUD、AI 生成回归条目、自动条目由服务端真跑并留证据、手工条目回写强制附证据 |
 | 执行矩阵（GAP-43） | 一批用例 × 多环境 × 多端（应用服务器）一次调度逐格真跑，逐用例跨环境对比归因（普遍通过 / 普遍失败 / 环境特有 / 端特有 / 混合），普遍失败一键转缺陷并挂证据；生产环境调度需显式确认 |
+| 接口场景 | 多步骤串联场景，每步复用接口断言引擎（不另造 HTTP 与断言轮子）：JSONPath 提取变量后用 `{{var}}` 传给后续步骤的 URL / 头 / 参数 / 体，失败可「即停」或「继续」，支持数据池逐条驱动整个场景，每次执行落历史 |
+| 独立数据池 | 跨用例与场景共享一份测试数据，项目内名称唯一、支持解析预览；用例扩展字段与场景数据源统一按 `pool:<名称>` 引用，解析复用用例测试数据口径，不另造取数逻辑 |
 | Web 探索性测试（GAP-45） | MCP 驱动真实浏览器（`backend/scripts/browser_mcp_server.py`，由「探索性测试设置」里的 `mcpCommand` 一条完整启动命令拉起）按「读快照 → 决策 → 动作 → 观测」循环探索，无脚本发现「用例追不上功能」的漏网问题；正常步按「单步截图数」留证，异常步另强制 3 张截图 + 双锚点 ±N 秒日志切片 + 网络快照 + 控制台错误 + traceId 组成证据包；口令/令牌输入按 PII 规则脱敏；产物先进待审池人工审核，通过才转缺陷 |
 | 知识 / 报告片段跨项目复用（GAP-42） | 片段在来源项目维护一份，目标报告登记引用关系，渲染 / 导出实时读取正文，避免多份副本漂移；被引用的片段禁止删除 |
 | 数据留存与归档（GAP-44） | 按数据类型（轮次 / 自动化执行 / 证据 / 日志 / 待办）配置保留天数与到期动作（归档 / 软删 / 仅留摘要）；引用保护（缺陷引用的证据、矩阵引用的记录到期不清）；到期数据压缩归档到 `data/archive/` 并可检索回看原文；支持干跑预览与启动自动清理 |
@@ -281,7 +286,7 @@ cd frontend && npm run build                                              # 前�
 - `check_ai_live` 被 runner 永久排除：它打真实商汤模型接口、烧额度且非确定性，需要时单独手工跑。
 - 新增门禁脚本只要放进 `backend/scripts` 且命名 `check_*.py`，runner 自动纳入，无需改 runner。
 
-门禁清单（61 个脚本 = 60 个 `check_*.py` + `smoke_api.py`，与 `backend/scripts` 下真实脚本一一对应；其中 `check_ai_live` 不进 runner，实际执行 60 项）：
+门禁清单（70 个脚本 = 69 个 `check_*.py` + `smoke_api.py`，与 `backend/scripts` 下真实脚本一一对应；其中 `check_ai_live` 不进 runner，实际执行 69 项）：
 
 | 脚本 | 含义 | 失败怎么查 |
 | --- | --- | --- |
@@ -290,8 +295,11 @@ cd frontend && npm run build                                              # 前�
 | `check_ai_thinking.py` | 「关闭思考模式」全链路：`extra_json.thinking=off` → resolver 解析 → 两个适配器的请求体字段，未置位时不下发（默认语义不变） | 看 `ai/resolver.py::_disable_thinking` 与 `ai/adapters/*` 的 `_body` |
 | `check_ai_cost.py` | AI 成本核算：档案单价与微元折算、日/月预算与单次 token 软阈值、超预算只提示不拦截（GAP-30） | 看 `backend/aitp/ai/cost.py` 与 `sys_ai_profile` 的单价字段 |
 | `check_ai_local_billing.py` | 本地（自托管）档案不参与计费：写侧归零、单价接口拒绝、成本表与币种不被残留值带偏、实跑成本落 NULL | 看 `cost.is_local_profile` 与 `api/settings.py`、`api/lab.py` 的计费字段处理 |
+| `check_api_scenario.py` | 多接口串联场景：顺序执行 + JSONPath 变量提取 + `{{var}}` 传到后续步骤、每步断言复用接口断言口径、失败即停、数据驱动逐条跑整个场景、执行历史落库（自带 `/login` `/order` 桩服务） | 看 `services/api_scenario_service.py` 与 `api/api_scenarios.py` |
 | `check_egress_guard.py` | 数据外发确认只看实际会用的首选模型：本地首选不打扰，云端首选才弹，候选链照旧完整返回 | 看 `knowledge_assistant_service.egress_plan` 与前端 `stores/aiGuard.ts` |
 | `check_assistant_history.py` | 问答历史按会话落库：一问一答进 `biz_ai_session/biz_ai_message`（能力 `knowledge-assistant`）、回放带模式与引用、留档时间一致所以「加入知识库」不会重复入池、非法/别的模块会话不被放行、超上限只回放最近这些且不落 `biz_ai_record` | 看 `knowledge_assistant_service.history/record_qa` 与 `api/knowledge.py::_persist_qa` |
+| `check_assistant_thinking.py` | 问答助手思考过程：`reasoningTokens` 进计费口径、ask-stream 走 SSE 且无可用 AI 配置时以 error 事件收尾、思考默认不落库、opt-in 才写 reasoning 且回放带 thinkingText | 看 `knowledge_assistant_service.record_qa/history` 与前端「仅当次会话可见」提示 |
+| `check_async_races.py` | 异步调度竞态：矩阵并发双跑只允许一个成功、任务取消不再假成功（queued→running 竞态后按真实状态处理） | 看矩阵调度互斥与 `services/job_queue.py` 的取消分支 |
 | `check_attachments.py` | 附件能力：文档导入 + 图片去水印 | 看附件接口、Pillow 依赖与临时 mock 服务日志 |
 | `check_automation.py` | 自动化脚本资产与执行引擎 | 看自动化执行记录与引擎日志（`data/aitp.log`） |
 | `check_automation_writeback.py` | 自动化结果回写用例/轮次（GAP-07） | 核对回写服务与轮次状态机 |
@@ -323,14 +331,20 @@ cd frontend && npm run build                                              # 前�
 | `check_observability.py` | 可观测性：traceId 贯穿日志与响应头、只记异常/慢请求（GAP-23） | 看 `backend/aitp/observability` 与日志格式 |
 | `check_onboarding.py` | 首启引导状态（GAP-18） | 看迁移 045 与 onboarding API |
 | `check_output_schema.py` | 输出结构校验：四个能力的 JSON Schema、字段缺失与类型错位的拦截、重试口径（GAP-28） | 看 `backend/aitp/ai/output_schema.py` 与能力映射 |
+| `check_p2.py` | P2 收口：定时调度 CRUD / 立即触发 / 到点 `_tick` 派发、执行指标聚合、JMeter 负载模型下发 `-Jthreads`、场景的浏览器步骤（mock MCP） | 看 `api/schedules.py`、`services/test_schedule_service.py::_tick` 与 `services/automation_service.py::_jmeter_command` |
 | `check_pagination.py` | 列表分页与游标续取：接口不再整表吐数、`total` 与列表条数一致、用例树按 `afterId` 翻页（GAP-25） | 看 `common/pagination.py` 与各列表接口 |
 | `check_portability.py` | 跨平台交付：启动自检、PDF 中文字体、密钥库回落、脚本可移植性 | 按打印的平台相关检查项定位（不写正式库） |
 | `check_prompt_regression.py` | 提示词效果回归集：离线 mock 跑批 + 六指标基线（通过率/保留率/完整度/重复率/问题数/提示词体积），改动可对比（GAP-31） | 看 `backend/prompts/regression/` 样例与基线文件 |
 | `check_prompts.py` | 提示词库：模板可解析、变量齐全、渲染无残留、能力对齐 | 看 `backend/prompts` YAML 与能力映射表 |
 | `check_report_evidence.py` | 报告失败样本与证据下钻：样本条数与真实失败一致、三种导出都带上所选样本、无快照给中文降级、证据只在用例级（手工执行）时报告/下钻/缺陷三处口径一致（GAP-35） | 看 `api/reports.py` 的 failure-samples 与 `execution_protocol.latest_evidence_for_run_case` |
+| `check_report_sources.py` | 报告按轮次 / 执行矩阵 / 场景批次三种来源取数：来源解析、章节指标、统计接口、失败样本隔离、非法来源拒绝 | 看 `services/report_source_service.py` 与报告统计接口 |
 | `check_report_trends.py` | 报告趋势与版本对比（GAP-12） | 看报告导出与趋势聚合 |
+| `check_report_xss.py` | 报告 HTML / 打印导出的 Markdown 净化：`attr_list`、`javascript:` 链接与原始 HTML 不进导出文件，常规表格 / 代码块 / 安全链接照旧保留（只跑渲染层，不建库不调模型） | 看 `services/report_exporter.py` 的净化分支 |
+| `check_residual.py` | 独立数据池 CRUD / 同名拦截 / 解析预览且 `pool:<名称>` 被场景数据驱动消费；轮次环境差异归因（环境敏感 / 一致失败 / 无基线 / 未绑定环境）；`automation.auto_bug` 默认关闭、开启后失败自动转缺陷且同一次执行只建一条 | 看 `repositories/data_pool_repo.py`、`services/auto_bug_service.py` 与轮次归因逻辑 |
 | `check_retention.py` | 数据留存与归档：分类型保留期与到期动作、引用保护、软删 + zip 归档、原文回看、启动自动清理（GAP-44） | 看 `retention_service.py` 与 `data/archive/` |
 | `check_routing.py` | 智能路由回归：20 张能力卡片各至少一条代表性输入必须路由正确 | 看路由规则与能力卡片配置 |
+| `check_scope_enforcement.py` | 项目范围硬约束：报告片段、报告导出、场景运行三处跨项目不串数据（补充门禁） | 看各接口的 `projectId` 归属校验与片段引用解析 |
+| `check_script_asset.py` | 脚本版本快照 / 差异 / 评审 + UI 元素库（Page Object，脚本按名称取选择器）+ 探索性测试产物转回放脚本 | 看 `repositories/script_asset_repo.py` 与 `api/automation.py` 的版本、元素库路由 |
 | `check_secret_residue.py` | GAP-22 密钥入库收口：引用式存储、残留检测、迁移/回滚与双读 | 看密钥引用表与残留扫描逻辑（全在临时库，不碰正式库） |
 | `check_stream_polling.py` | 流式短轮询契约两端对齐：发起只给 taskId + 取帧路由、帧序与游标、缓冲过期回落，以及前端确实按 `mode:"poll"` 去取帧、发起时带上当前项目（GAP-26 / GAP-29） | 看 `api/lab.py` 的 stream/frames 与 `frontend/src/api/stream.ts` |
 | `check_security.py` | 安全与合规：密钥、注入、路径安全、同源防护 | 看 `backend/aitp/common` 安全工具与中间件 |
@@ -393,10 +407,10 @@ cd frontend && npx playwright test               # 串行 workers=1
 ```
 backend/
   aitp/
-    api/          39 个蓝图 / 410 个接口
+    api/          42 个蓝图 / 444 个接口
     ai/           resolver、client、masking、adapters、cost、output_schema
     common/       常量、校验、分页、密钥库、安全工具
-    db/           连接与迁移（60 份）
+    db/           连接与迁移（67 份）
     repositories/ 参数化 SQL 仓储层
     services/     知识落盘、报告导出、备份恢复、执行矩阵、留存归档、探索性测试、外部导入等
     prompts/      提示词模板库
@@ -407,7 +421,7 @@ frontend/
   src/
     api/          统一请求层
     components/   通用组件
-    views/        57 个页面组件
+    views/        59 个页面组件
   e2e/            Playwright 端到端测试（隔离工装）
 data/             运行时数据（SQLite、日志、密钥、归档、探索性截图与日志切片）
 knowledge/        知识库 Markdown 落盘目录

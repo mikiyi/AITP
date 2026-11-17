@@ -191,4 +191,7 @@ class OpenAICompatAdapter(BaseAdapter):
         prompt = int(raw.get("prompt_tokens") or 0)
         completion = int(raw.get("completion_tokens") or 0)
         total = int(raw.get("total_tokens") or (prompt + completion))
-        return Usage(prompt_tokens=prompt, completion_tokens=completion, total_tokens=total)
+        details = raw.get("completion_tokens_details") or {}
+        reasoning = int(details.get("reasoning_tokens") or raw.get("reasoning_tokens") or 0)
+        return Usage(prompt_tokens=prompt, completion_tokens=completion,
+                     total_tokens=total, reasoning_tokens=reasoning)

@@ -86,11 +86,19 @@
             <span v-else class="muted">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="证据 / 产物" width="150" fixed="right">
+        <el-table-column label="证据 / 缺陷" width="240" fixed="right">
           <template #default="scope">
             <el-button v-if="scope.row.evidenceId" link type="primary"
                        @click="showEvidence(scope.row)">查看证据</el-button>
-            <el-tag v-if="scope.row.draftId" size="small" type="success" effect="plain">已入待审池</el-tag>
+            <el-button v-if="scope.row.bugId" link type="danger" @click="openBug(scope.row)">
+              {{ scope.row.bugNo || `缺陷 #${scope.row.bugId}` }}
+            </el-button>
+            <el-button v-else-if="scope.row.isAnomaly" link type="danger"
+                       :loading="registeringBugId === scope.row.id"
+                       @click="registerBug(scope.row)">登记缺陷</el-button>
+            <el-tag v-if="scope.row.draftId && !scope.row.bugId" size="small" type="success" effect="plain">
+              待审
+            </el-tag>
           </template>
         </el-table-column>
         <template #empty>
@@ -138,7 +146,7 @@ import { ElMessage } from 'element-plus'
 import { Back } from '@element-plus/icons-vue'
 import { exploratoryApi } from '@/api'
 import { dateTimeText } from '@/utils/format'
-import type { ExplorationSessionDetail, ExploratoryOption, ExecutionEvidence } from '@/api/types'
+import type { ExplorationSessionDetail, ExplorationStep, ExploratoryOption, ExecutionEvidence } from '@/api/types'
 
 const router = useRouter()
 const detail = ref<ExplorationSessionDetail | null>(null)
@@ -148,6 +156,7 @@ let timer: ReturnType<typeof setTimeout> | null = null
 
 const evidenceVisible = ref(false)
 const evidence = ref<ExecutionEvidence | null>(null)
+const registeringBugId = ref<number | null>(null)
 
 const summaryNotes = computed<string[]>(() => {
   const summary = detail.value?.session?.summary
@@ -206,6 +215,28 @@ async function showEvidence(row: { id: number }): Promise<void> {
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载证据失败')
   }
+}
+
+async function registerBug(row: ExplorationStep): Promise<void> {
+  const sessionId = detail.value?.session.id
+  if (!sessionId) return
+  registeringBugId.value = row.id
+  try {
+    const result = await exploratoryApi.stepToBug(sessionId, row.id)
+    row.bugId = result.bugId
+    row.bugNo = result.bugNo
+    ElMessage.success(result.alreadyLinked
+      ? `该异常已登记缺陷 ${result.bugNo}`
+      : `已登记缺陷 ${result.bugNo}，证据已随缺陷挂载`)
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '登记缺陷失败')
+  } finally {
+    registeringBugId.value = null
+  }
+}
+
+function openBug(row: ExplorationStep): void {
+  if (row.bugId) router.push({ name: 'bug-detail', params: { id: row.bugId } })
 }
 
 function openTask(): void {

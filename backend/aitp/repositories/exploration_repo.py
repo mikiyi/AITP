@@ -31,8 +31,9 @@ class ExplorationStepRepository(BaseRepository):
 
     def list_by_session(self, session_id: int) -> list[RowDict]:
         rows = self.conn.execute(
-            "SELECT * FROM biz_exploration_step"
-            " WHERE session_id = ? AND is_deleted = 0 ORDER BY step_no ASC, id ASC",
+            "SELECT s.*, b.bug_no AS bug_no FROM biz_exploration_step s"
+            " LEFT JOIN biz_bug b ON b.id = s.bug_id AND b.is_deleted = 0"
+            " WHERE s.session_id = ? AND s.is_deleted = 0 ORDER BY s.step_no ASC, s.id ASC",
             (int(session_id),),
         ).fetchall()
         return [dict(row) for row in rows]
@@ -115,6 +116,8 @@ def step_public(row: RowDict) -> RowDict:
         "lastOkAt": str(row.get("last_ok_at") or ""),
         "evidenceId": row.get("evidence_id"),
         "draftId": row.get("draft_id"),
+        "bugId": row.get("bug_id"),
+        "bugNo": str(row.get("bug_no") or ""),
         "traceId": str(row.get("trace_id") or ""),
         "durationMs": int(row.get("duration_ms") or 0),
         "detail": detail if isinstance(detail, dict) else {},

@@ -1,6 +1,7 @@
-"""用例测试数据解析：内联内容或本地 txt / Excel / Json / SQL 文件路径。
+"""用例测试数据解析：内联内容、本地 txt / Excel / Json / SQL 文件路径、数据池引用。
 
-扩展字段「测试数据」既可以直接贴数据（默认），也可以填一个本地文件路径；
+扩展字段「测试数据」既可以直接贴数据（默认），也可以填一个本地文件路径，
+或写 ``pool:<名称>`` 引用当前项目的数据池（一对多复用，改池即改所有引用）；
 接口自动化 / Python 自动化 / JMeter 性能执行都从这里取数，格式口径统一：
   - txt / csv / tsv / log：按行读，含分隔符时首行作表头 → 记录集
   - xlsx / xls：首行表头 → 记录集
@@ -23,6 +24,8 @@ MAX_FILE_BYTES = 8 * 1024 * 1024
 MAX_ROWS = 2000
 PREVIEW_ROWS = 5
 PREVIEW_TEXT_CHARS = 400
+#: 数据池引用前缀：pool:<名称>，名称在当前项目内唯一
+POOL_PREFIX = "pool:"
 
 TEXT_EXTS = {".txt", ".csv", ".tsv", ".log"}
 EXCEL_EXTS = {".xlsx", ".xls"}
@@ -193,19 +196,64 @@ def preview(value: str) -> dict[str, Any]:
     }
 
 
+def preview_for(conn: Any, project_id: Any, value: str) -> dict[str, Any]:
+    """预览同解析口径：数据池引用也能预览出池内样本。"""
+    data = resolve_for(conn, project_id, value)
+    return {
+        "kind": data["kind"],
+        "source": data["source"],
+        "path": data["path"],
+        "pool": data.get("pool", ""),
+        "rowCount": data["rowCount"],
+        "columns": data["columns"],
+        "sampleRows": data["rows"][:PREVIEW_ROWS],
+        "textSample": data["text"][:PREVIEW_TEXT_CHARS],
+    }
+
+
+def _pool_content(conn: Any, project_id: Any, name: str) -> str:
+    """按「项目 + 名称」取数据池正文；池不存在按参数错误提示，避免执行期静默空跑。"""
+    row = conn.execute(
+        "SELECT content FROM biz_data_pool WHERE project_id = ? AND name = ? AND is_deleted = 0",
+        (int(project_id or 0), name),
+    ).fetchone()
+    if row is None:
+        raise AppError(
+            ErrorCode.PARAM_ERROR,
+            f"数据池「{name}」不存在（需在当前项目的数据池里先建好）",
+        )
+    return str(row["content"] or "")
+
+
+def resolve_for(conn: Any, project_id: Any, value: str) -> dict[str, Any]:
+    """解析字段值：``pool:<名称>`` 先查出池内容，再走统一解析。"""
+    text = (value or "").strip()
+    if text[: len(POOL_PREFIX)].lower() != POOL_PREFIX:
+        return resolve(text)
+    name = text[len(POOL_PREFIX):].strip()
+    if not name:
+        raise AppError(ErrorCode.PARAM_ERROR, "数据池引用格式为 pool:<名称>")
+    data = resolve(_pool_content(conn, project_id, name))
+    data["source"] = "pool"
+    data["pool"] = name
+    return data
+
+
 def for_case(conn: Any, case_id: int | None) -> dict[str, Any]:
     """按用例 id 取扩展字段「测试数据」并解析；无用例/空值返回 empty。"""
     if not case_id:
         return dict(EMPTY)
     row = conn.execute(
-        "SELECT extra_json FROM biz_test_case WHERE id = ? AND is_deleted = 0", (case_id,)
+        "SELECT extra_json, project_id FROM biz_test_case WHERE id = ? AND is_deleted = 0",
+        (case_id,),
     ).fetchone()
     if row is None:
         return dict(EMPTY)
     from ..repositories.base import loads
 
     extra = loads(row["extra_json"], {}) or {}
-    return resolve(str(extra.get("测试数据") or ""))
+    value = str(extra.get("测试数据") or "")
+    return resolve_for(conn, row["project_id"], value)
 
 
 def for_script(conn: Any, script: dict[str, Any] | None,

@@ -14,10 +14,13 @@ def register_blueprints(app: Flask) -> None:
     from .bugs import bp as bugs_bp
     from .cases import bp as cases_bp
     from .ci import bp as ci_bp
+    from .data_pools import bp as data_pools_bp
     from .doc_templates import bp as doc_templates_bp
     from .execution_matrices import bp as execution_matrices_bp
     from .exploratory import bp as exploratory_bp
     from .external_imports import bp as external_imports_bp
+    from .api_scenarios import bp as api_scenarios_bp
+    from .schedules import bp as schedules_bp
     from .knowledge import bp as knowledge_bp
     from .lab import bp as lab_bp
     from .meta import bp as meta_bp
@@ -60,9 +63,12 @@ def register_blueprints(app: Flask) -> None:
         (requirements_bp, "/api/v1/requirements"),
         (modules_bp, "/api/v1/modules"),
         (cases_bp, "/api/v1/test-cases"),
+        (data_pools_bp, "/api/v1/data-pools"),
         (doc_templates_bp, "/api/v1/doc-templates"),
         (execution_matrices_bp, "/api/v1/execution-matrices"),
         (exploratory_bp, "/api/v1/exploratory"),
+        (api_scenarios_bp, "/api/v1/api-scenarios"),
+        (schedules_bp, "/api/v1/schedules"),
         (external_imports_bp, "/api/v1/external-imports"),
         (bugs_bp, "/api/v1/bugs"),
         (knowledge_bp, "/api/v1/knowledge"),

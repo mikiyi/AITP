@@ -84,13 +84,25 @@ def check(name: str, condition: bool, detail: str = "") -> bool:
 class Api:
     def __init__(self, app: Flask) -> None:
         self.client = app.test_client()
+        self.scope_project_id: int | None = None
+
+    def _scoped(self, path: str) -> str:
+        if self.scope_project_id and "projectId=" not in path:
+            sep = "&" if "?" in path else "?"
+            return f"{path}{sep}projectId={self.scope_project_id}"
+        return path
 
     def call(self, method: str, path: str, payload: JsonDict | None = None,
              **kwargs: Any) -> tuple[TestResponse, JsonDict]:
+        path = self._scoped(path)
         resp = self.client.open(path, method=method, json=payload, **kwargs)
         body = resp.get_json(silent=True)
         if body is None:
             body = {"code": -1, "message": "非 JSON 响应", "data": None}
+        if method == "POST" and path.split("?")[0].rstrip("/").endswith("/projects"):
+            data = body.get("data")
+            if isinstance(data, dict) and data.get("id"):
+                self.scope_project_id = int(data["id"])
         return resp, cast(JsonDict, body)
 
     def data(self, method: str, path: str, payload: JsonDict | None = None,
@@ -410,7 +422,9 @@ def check_api(api: Api, workdir: pathlib.Path) -> None:
           (root / batch["batchNo"]).resolve().is_relative_to(root.resolve()))
 
     first = batch["files"][0]
-    downloaded = api.client.get(f"/api/v1/test-data/files/{first['id']}/download")
+    downloaded = api.client.get(
+        f"/api/v1/test-data/files/{first['id']}/download?projectId={project_id}"
+    )
     check("单文件下载状态与长度",
           downloaded.status_code == 200 and len(downloaded.get_data()) == first["sizeBytes"],
           f"{downloaded.status_code} {len(downloaded.get_data())}")
@@ -433,7 +447,9 @@ def check_api(api: Api, workdir: pathlib.Path) -> None:
     other = api.data("GET", "/api/v1/test-data/batches?projectId=999999")
     check("不存在项目的过滤返回空", other["total"] == 0, str(other)[:200])
 
-    archive = api.client.get(f"/api/v1/test-data/batches/{batch['id']}/archive")
+    archive = api.client.get(
+        f"/api/v1/test-data/batches/{batch['id']}/archive?projectId={project_id}"
+    )
     check("整批打包下载成功", archive.status_code == 200, str(archive.status_code))
     with zipfile.ZipFile(io.BytesIO(archive.get_data())) as zf:
         check("压缩包内含全部文件",

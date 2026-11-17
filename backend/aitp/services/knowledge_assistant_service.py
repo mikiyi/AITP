@@ -306,6 +306,7 @@ def _message_public(item: dict[str, Any], submitted_ids: set[str]) -> dict[str, 
     meta = _meta_of(item.get("message_meta"))
     mode = str(meta.get("mode") or "")
     base: dict[str, Any] = {
+        "id": item.get("id"),
         "role": item.get("role"),
         "content": item.get("content") or "",
         "mode": mode,
@@ -321,6 +322,7 @@ def _message_public(item: dict[str, Any], submitted_ids: set[str]) -> dict[str, 
         "egressWarning": str(meta.get("egressWarning") or ""),
         "mask": meta.get("mask") if isinstance(meta.get("mask"), dict) else {},
         "answeredAt": answered_at,
+        "thinkingText": str(item.get("reasoning") or ""),
         "submitState": "submitted" if digest in submitted_ids else "idle",
         "meta": {
             "mode": mode,

@@ -124,15 +124,69 @@ export interface CaseStep {
   expected: string
 }
 
-/** 扩展字段「测试数据」解析预览：内联内容或本地 txt/Excel/Json/SQL 文件。 */
+/** 扩展字段「测试数据」解析预览：内联内容、本地 txt/Excel/Json/SQL 文件或数据池引用。 */
 export interface TestDataPreview {
   kind: string
   source: string
   path: string
+  /** 命中数据池时的池名称；非池引用为空。 */
+  pool?: string
   rowCount: number
   columns: string[]
   sampleRows: string[][]
   textSample: string
+}
+
+/** 独立数据池：项目内按名称复用一份测试数据，引用写法 pool:<名称>。 */
+export interface DataPool {
+  id: number
+  projectId: number
+  name: string
+  content: string
+  description: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+/** 环境差异归因：其他环境最近一次同用例结论。 */
+export interface EnvDiffBaseline {
+  envId: number
+  envName: string
+  runId: number
+  runName: string
+  result: string
+  resultLabel: string
+}
+
+export interface EnvDiffRow {
+  caseId: number
+  caseNo: string
+  title: string
+  caseType: string
+  currentResult: string
+  currentResultLabel: string
+  currentActual?: string
+  status: string
+  statusLabel: string
+  baselines: EnvDiffBaseline[]
+}
+
+export interface EnvDiffResult {
+  runId: number
+  projectId: number
+  envId: number | null
+  envName: string
+  baselineEnvs: Array<{ envId: number; envName: string }>
+  summary: {
+    total: number
+    executed: number
+    envSensitive: number
+    consistentFailure: number
+    currentPassed: number
+    noBaseline: number
+  }
+  rows: EnvDiffRow[]
+  message: string
 }
 
 /** 覆盖矩阵的用例统计（行内数字含全部下级功能点）。 */
@@ -432,6 +486,11 @@ export interface Report {
   content: string
   creator: string
   aiTaskId: Id | null
+  /** P1-8 报告取数来源：run=轮次 / matrix=矩阵 / scenario=场景批次。 */
+  sourceType?: string
+  sourceId?: Id | null
+  sourceRunId?: Id | null
+  sourceLabel?: string
   /** 报告详情带出的复用片段（只带引用关系，正文来自源片段）。 */
   fragments?: ReportFragment[]
   createdAt?: string
@@ -1808,6 +1867,7 @@ export interface KnowledgeAnswer {
 
 /** 问答助手历史回放里的一条消息（一问一答成对出现）。 */
 export interface AssistantHistoryMessage {
+  id?: number
   role: 'user' | 'assistant'
   content: string
   mode: string
@@ -1816,6 +1876,8 @@ export interface AssistantHistoryMessage {
   refs?: AssistantRef[]
   egressWarning?: string
   mask?: MaskInfo
+  /** opt-in 保存的思考过程；默认空（思考仅浏览器瞬态缓存） */
+  thinkingText?: string
   submitState?: 'idle' | 'submitted'
   meta?: {
     mode: string
@@ -1824,6 +1886,77 @@ export interface AssistantHistoryMessage {
     latencyMs: number
     reviewRequired: boolean
   }
+}
+
+/** 思考过程展示态：流式可见、完成自动折叠、中断标记、opt-in 已保存 */
+export interface AssistantThinking {
+  text: string
+  seconds: number
+  chars: number
+  done: boolean
+  interrupted: boolean
+  collapsed: boolean
+  saved: boolean
+  fromHistory: boolean
+}
+
+/** 多接口串联场景：步骤复用接口用例 extra 口径 + 变量提取/传递 */
+export interface ApiScenarioStep {
+  name: string
+  type?: 'interface' | 'browser'
+  action?: string
+  url?: string
+  selector?: string
+  value?: string
+  extra: Record<string, string>
+  extract: { var: string; path?: string; regex?: string }[]
+  continueOnError?: boolean
+  waitMs?: number
+}
+
+export interface ApiScenario {
+  id: number
+  scenarioNo: string
+  projectId: number
+  name: string
+  description: string
+  envId: number | null
+  dataSource: string
+  steps: ApiScenarioStep[]
+  status: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface ApiScenarioStepResult {
+  stepNo: number
+  name: string
+  passed: boolean
+  statusCode: number | null
+  durationMs: number
+  extracted: Record<string, unknown>
+  assertions: { name: string; passed: boolean; message?: string }[]
+  request: { method: string; url: string; body?: string }
+  response: { status: number | null; body?: string }
+  message?: string
+}
+
+export interface ApiScenarioRun {
+  passed: boolean
+  steps: ApiScenarioStepResult[]
+  variables: Record<string, string>
+  durationMs: number
+}
+
+export interface ApiScenarioRunResult {
+  runId: number
+  runNo: string
+  passed: boolean
+  recordCount: number
+  durationMs: number
+  runs: ApiScenarioRun[]
+  /** 开启 automation.auto_bug 后失败自动生成的缺陷 id。 */
+  autoBugId?: number | null
 }
 
 /** 问答助手的历史：默认最近一条会话，换菜单 / 重启后回到同一条对话线。 */
@@ -2916,6 +3049,8 @@ export interface ExplorationStep {
   lastOkAt: string
   evidenceId: Id | null
   draftId: Id | null
+  bugId: Id | null
+  bugNo: string
   traceId: string
   durationMs: number
   detail: Record<string, unknown>

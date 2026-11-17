@@ -193,6 +193,143 @@ def ask_assistant() -> Response:
     })
 
 
+@bp.post("/assistant/ask-stream")
+def ask_assistant_stream() -> Response:
+    """流式问答：reasoning(思考) / delta(回答) 双通道 SSE，思考默认只到浏览器不落库。
+
+    事件：mask / degrade / reasoning / delta / usage / done / error。
+    done 带 sessionId/answeredAt/refs/model/latencyMs/usage(含 reasoningTokens)/
+    reasoningChars/reasoningSeconds/thinkingSupported，供前端键控瞬态缓存与折叠摘要。
+    """
+    import json as _json
+    import time as _time
+    from collections.abc import Iterator
+    from pathlib import Path as _Path
+
+    from flask import current_app, stream_with_context
+
+    from ..ai.client import stream_with_fallback
+    from ..db.connection import get_standalone_conn
+    from ..services import lab_service
+    from ..prompts.registry import get_registry
+
+    conn = db()
+    data = body()
+    question = require_str(data.get("question"), "question", 2000)
+    mode = check_choice(str(data.get("mode") or "hybrid"), ASSISTANT_MODES, "mode", "hybrid") or "hybrid"
+    session_id = optional_int(data.get("sessionId"), "sessionId")
+    if session_id is not None:
+        knowledge_assistant_service.ensure_session(conn, session_id, question)
+
+    context = ""
+    refs: list[dict[str, Any]] = []
+    retrieval_error = ""
+    if mode != "llm":
+        context, refs, retrieval_error = lab_service.retrieve_knowledge_context(conn, question)
+    prompt = get_registry().render("knowledge-assistant", {
+        "question": question,
+        "context": context or retrieval_error or "（未提供）",
+    })
+    messages = lab_service.build_messages(prompt)
+    candidates = lab_service.available_candidates(None)
+    mask_enabled = cloud_mask_enabled(conn)
+    db_path = _Path(str(current_app.config["AITP_DB_PATH"]))
+    third_party = bool(candidates) and candidates[0].egress == EGRESS_THIRD_PARTY
+    thinking_supported = bool(candidates) and not candidates[0].disable_thinking
+
+    def generate() -> Iterator[str]:
+        def sse(event: str, payload: dict[str, Any]) -> str:
+            return f"event: {event}\ndata: {_json.dumps(payload, ensure_ascii=False)}\n\n"
+
+        sconn = get_standalone_conn(db_path)
+        reasoning_parts: list[str] = []
+        answer_parts: list[str] = []
+        usage: dict[str, Any] = {}
+        mask: dict[str, Any] = {}
+        degrade: dict[str, Any] = {}
+        model = ""
+        t0 = _time.monotonic()
+        reason_start = None
+        reason_end = None
+        try:
+            for ev in stream_with_fallback(candidates, messages, mask_enabled=mask_enabled):
+                if ev.type == "reasoning":
+                    if reason_start is None:
+                        reason_start = _time.monotonic()
+                    reasoning_parts.append(ev.content)
+                    yield sse("reasoning", {"content": ev.content})
+                elif ev.type == "delta":
+                    if reason_start is not None and reason_end is None:
+                        reason_end = _time.monotonic()
+                    answer_parts.append(ev.content)
+                    yield sse("delta", {"content": ev.content})
+                elif ev.type == "usage":
+                    usage = ev.usage.as_dict() if ev.usage else {}
+                elif ev.type == "mask":
+                    mask = ev.extra
+                    yield sse("mask", ev.extra)
+                elif ev.type == "degrade":
+                    degrade = ev.extra
+                    yield sse("degrade", ev.extra)
+                elif ev.type == "done":
+                    model = ev.model or model
+                elif ev.type == "error":
+                    yield sse("error", {"message": ev.error_message or "模型调用失败"})
+                    return
+            if reason_start is not None and reason_end is None:
+                reason_end = _time.monotonic()
+            answer = "".join(answer_parts).strip()
+            reasoning = "".join(reasoning_parts)
+            latency = int((_time.monotonic() - t0) * 1000)
+            reason_seconds = round((reason_end - reason_start), 1) if reason_start and reason_end else 0
+            egress_warning = (
+                "本次回答会把问题和检索到的知识发送到第三方模型，请注意数据脱敏。" if third_party else ""
+            )
+            sid, stamp = _persist_qa(
+                sconn, session_id, question=question, mode=mode, answer=answer, refs=refs,
+                model=model, latency_ms=latency, usage=usage, mask=mask,
+                egress=EGRESS_THIRD_PARTY if third_party else EGRESS_NONE,
+                egress_warning=egress_warning, review_required=needs_human_review(answer),
+            )
+            yield sse("done", {
+                "sessionId": sid, "answeredAt": stamp, "refs": refs, "model": model,
+                "latencyMs": latency, "usage": usage, "mask": mask, "degrade": degrade,
+                "egressWarning": egress_warning, "reviewRequired": needs_human_review(answer),
+                "reasoningChars": len(reasoning), "reasoningSeconds": reason_seconds,
+                "thinkingSupported": bool(reasoning) or thinking_supported,
+            })
+        except Exception as exc:  # noqa: BLE001 - 流式异常以 error 事件收尾
+            yield sse("error", {"message": str(exc)})
+        finally:
+            sconn.close()
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@bp.post("/assistant/save-thinking")
+def save_assistant_thinking() -> Response:
+    """opt-in：把某条回答的思考过程随消息保存（默认不存，仅浏览器瞬态缓存）。"""
+    conn = db()
+    data = body()
+    session_id = require_int(data.get("sessionId"), "sessionId")
+    answered_at = require_str(data.get("answeredAt"), "answeredAt", 40)
+    text = optional_str(data.get("text"), "text", 200000) or ""
+    row = conn.execute(
+        "SELECT id FROM biz_ai_message WHERE session_id = ? AND role = 'assistant'"
+        " AND json_extract(message_meta, '$.answeredAt') = ? AND is_deleted = 0",
+        (session_id, answered_at),
+    ).fetchone()
+    if row is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "未找到对应回答，无法保存思考")
+    conn.execute("UPDATE biz_ai_message SET reasoning = ? WHERE id = ?", (text, row["id"]))
+    commit(conn)
+    return ok({"saved": True, "messageId": row["id"]})
+
+
 @bp.get("/assistant/history")
 def assistant_history() -> Response:
     """问答助手的历史：默认回放最近一条问答会话，带 sessionId 就回放指定那条。"""

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from flask import Blueprint, Response
@@ -96,6 +97,7 @@ def create_env() -> Response:
         "db_password_mask": "",
         "is_default": 1 if data.get("isDefault") else 0,
         "sort_order": optional_int(data.get("sortOrder"), "sortOrder") or 0,
+        "variables_json": json.dumps(data.get("variables") or {}, ensure_ascii=False),
     })
     repo.replace_app_servers(new_id, app_servers)
     if data.get("isDefault"):
@@ -144,6 +146,8 @@ def update_env(pk: str) -> Response:
         payload["is_default"] = 1 if data["isDefault"] else 0
     if "sortOrder" in data:
         payload["sort_order"] = optional_int(data["sortOrder"], "sortOrder") or 0
+    if "variables" in data:
+        payload["variables_json"] = json.dumps(data.get("variables") or {}, ensure_ascii=False)
     if payload:
         repo.update(target, payload)
     if app_servers is not None:

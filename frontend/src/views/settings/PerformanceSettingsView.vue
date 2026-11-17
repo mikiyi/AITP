@@ -31,6 +31,23 @@
             clearable
           />
         </el-form-item>
+        <el-form-item label="场景负载模型">
+          <el-input
+            v-model="loadModel"
+            type="textarea" :rows="2"
+            placeholder='JSON，如 {"threads":10,"rampUp":5,"loops":100,"duration":60}；jmx 用 ${__P(threads,...)} 引用'
+          />
+        </el-form-item>
+        <el-form-item label="执行并发上限">
+          <el-input-number v-model="concurrency" :min="1" :max="8" />
+          <span class="muted form-hint">任务队列同时执行上限（1-8），相互隔离</span>
+        </el-form-item>
+        <el-form-item label="失败自动转缺陷">
+          <el-switch v-model="autoBug" active-value="true" inactive-value="false" />
+          <span class="muted form-hint">
+            开启后接口场景未通过、自动化脚本失败 / 超时 / 异常会自动生成 P2 缺陷（描述带执行编号与错误证据）
+          </span>
+        </el-form-item>
       </el-form>
 
       <el-descriptions v-if="runtime" :column="2" border size="small" class="settings-desc">
@@ -78,6 +95,9 @@ const CONFIG_JMETER_ARGS = 'performance.jmeter.args'
 
 const jmeterHome = ref('')
 const jmeterArgs = ref('')
+const loadModel = ref('')
+const concurrency = ref(2)
+const autoBug = ref('false')
 const saving = ref(false)
 const runtime = ref<AutomationRuntime | null>(null)
 
@@ -88,6 +108,9 @@ async function load(): Promise<void> {
       configs.find((item) => item.key === key)?.value ?? ''
     jmeterHome.value = find(CONFIG_JMETER_HOME)
     jmeterArgs.value = find(CONFIG_JMETER_ARGS)
+    loadModel.value = find('performance.load_model')
+    concurrency.value = Number(find('task.queue.concurrency') || 2) || 2
+    autoBug.value = find('automation.auto_bug') === 'true' ? 'true' : 'false'
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载配置失败')
   }
@@ -104,6 +127,9 @@ async function save(): Promise<void> {
     await settingsApi.updateConfig([
       { key: CONFIG_JMETER_HOME, value: jmeterHome.value.trim(), valueType: 'string' },
       { key: CONFIG_JMETER_ARGS, value: jmeterArgs.value.trim(), valueType: 'string' },
+      { key: 'performance.load_model', value: loadModel.value.trim(), valueType: 'json' },
+      { key: 'task.queue.concurrency', value: String(concurrency.value), valueType: 'number' },
+      { key: 'automation.auto_bug', value: autoBug.value, valueType: 'boolean' },
     ])
     ElMessage.success('已保存')
     await load()

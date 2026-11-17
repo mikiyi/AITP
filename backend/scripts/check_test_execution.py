@@ -48,12 +48,24 @@ def check(name: str, condition: bool, detail: str = "") -> bool:
 class Api:
     def __init__(self, app: Flask) -> None:
         self.client = app.test_client()
+        self.scope_project_id: int | None = None
+
+    def _scoped(self, path: str) -> str:
+        if self.scope_project_id and "projectId=" not in path:
+            sep = "&" if "?" in path else "?"
+            return f"{path}{sep}projectId={self.scope_project_id}"
+        return path
 
     def call(self, method: str, path: str, payload: JsonDict | None = None) -> tuple[TestResponse, JsonDict]:
+        path = self._scoped(path)
         resp = self.client.open(path, method=method, json=payload)
         body = resp.get_json(silent=True)
         if body is None:
             body = {"code": -1, "message": "非 JSON 响应", "data": None}
+        if method == "POST" and path.split("?")[0].rstrip("/").endswith("/projects"):
+            data = body.get("data")
+            if isinstance(data, dict) and data.get("id"):
+                self.scope_project_id = int(data["id"])
         return resp, cast(JsonDict, body)
 
     def data(self, method: str, path: str, payload: JsonDict | None = None) -> Any:
@@ -265,7 +277,9 @@ def main() -> int:
         gate_list = api.data("GET", f"/api/v1/release-gates?projectId={project_id}")
         check("发布准入列表可读", gate_list["total"] == 1)
 
-        export_run = api.client.get(f"/api/v1/test-runs/{run_id}/export?format=csv")
+        export_run = api.client.get(
+            f"/api/v1/test-runs/{run_id}/export?format=csv&projectId={project_id}"
+        )
         check("轮次结果可导出", export_run.status_code == 200
               and "关联缺陷" in export_run.data.decode("utf-8-sig"))
 
@@ -285,7 +299,8 @@ def main() -> int:
         trace2 = api.data("GET", f"/api/v1/traceability?projectId={project_id}")
         check("无轮次时按用例当前状态追溯", trace2["summary"]["caseCount"] == 3)
 
-        # 任务队列：表结构、列表统计、取消与删除。合成任务不启动 worker，状态可控。
+        # 任务队列：表结构、列表统计、取消与删除。合成任务在提交前就取消，
+        # 避免 worker 抢先领取后因类型未注册直接失败（门禁不能依赖线程调度时序）。
         now = "2026-11-06T00:00:00Z"
         cur = conn.execute(
             "INSERT INTO sys_task (kind, title, status, priority, payload_json, result_json,"
@@ -295,20 +310,18 @@ def main() -> int:
             (now, now),
         )
         task_id = int(cur.lastrowid or 0)
-        conn.commit()
+        from aitp.services import job_queue
+
+        cancelled = job_queue.cancel_task(conn, task_id)
+        check("排队任务可取消", cancelled["status"] == "cancelled", str(cancelled)[:160])
         task_page = api.data("GET", "/api/v1/tasks")
-        check("任务队列可读", task_page["total"] >= 1 and task_page["stats"]["queued"] >= 1,
-              str(task_page.get("stats")))
+        check("任务队列可读", task_page["total"] >= 1, str(task_page.get("stats")))
         check("任务类型带中文标签",
               any(item["value"] == "automation.run" and item["label"]
                   for item in task_page["kinds"]), str(task_page.get("kinds")))
         task = api.data("GET", f"/api/v1/tasks/{task_id}")
-        check("任务详情带中文状态", task["status"] == "queued" and task["statusLabel"] == "排队中",
+        check("任务详情带中文状态", task["status"] == "cancelled" and task["statusLabel"] == "已取消",
               str(task)[:160])
-        api.expect("排队任务不能重试", "POST", f"/api/v1/tasks/{task_id}/retry",
-                   ErrorCode.ILLEGAL_OPERATION)
-        cancelled = api.data("POST", f"/api/v1/tasks/{task_id}/cancel")
-        check("排队任务可取消", cancelled["status"] == "cancelled", str(cancelled)[:160])
         api.expect("重复取消被拒绝", "POST", f"/api/v1/tasks/{task_id}/cancel",
                    ErrorCode.ILLEGAL_OPERATION)
         removed = api.data("DELETE", f"/api/v1/tasks/{task_id}")

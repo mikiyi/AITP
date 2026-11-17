@@ -85,6 +85,8 @@ class Usage:
     completion_tokens: int = 0
     total_tokens: int = 0
     estimated: bool = False
+    #: 推理（思考）tokens：外部推理模型单独计费口径，展示/缓存与否都不影响计费
+    reasoning_tokens: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -92,6 +94,7 @@ class Usage:
             "completionTokens": self.completion_tokens,
             "totalTokens": self.total_tokens,
             "estimated": self.estimated,
+            "reasoningTokens": self.reasoning_tokens,
         }
 
 

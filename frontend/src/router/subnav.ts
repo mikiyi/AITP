@@ -6,7 +6,7 @@ export const RECORD_TABS = [
   { path: '/lab/records', label: '执行记录' },
 ]
 
-/** 执行配置 = 环境 + 自动化 + 性能 + 探索 */
+/** 执行环境 = 环境 + 自动化 + 性能 + 探索 */
 export const EXEC_TABS = [
   { path: '/settings/environments', label: '测试环境' },
   { path: '/settings/automation', label: '自动化' },

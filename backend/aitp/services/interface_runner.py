@@ -405,7 +405,7 @@ def _parse_rule(line: str) -> tuple[str, str, str]:
     """
     pattern = re.compile(
         r"^(json:[^\s]+|json\s+[^\s]+|header:[^\s:]+|header\s+[^\s:]+|body|status"
-        r"|schema:[^\s]+|schema\s+[^\s]+)"
+        r"|schema:[^\s]+|schema\s+[^\s]+|len:[^\s]+|len\s+[^\s]+|time)"
         r"\s*(>=|<=|==|!=|~>|>|<|=|not_contains|contains|not_exists|exists|one_of|not_empty"
         r"|is_empty|regex|type|~|等于|不等于|包含|不包含|正则|存在|不存在|大于等于|小于等于"
         r"|大于|小于|不为空|为空|类型|属于)\s*(.*)$",
@@ -549,6 +549,7 @@ def _eval_rule(
     body: str,
     parsed_json: Any,
     json_ok: bool,
+    duration_ms: int = 0,
 ) -> Assertion:
     if line.strip().lower().startswith(("schema:", "schema ")):
         return _eval_schema_rule(line, status, headers, body, parsed_json, json_ok)
@@ -576,6 +577,16 @@ def _eval_rule(
         actual = header_map.get(header_name.lower())
         exists = actual is not None
         name = f"响应头 {header_name}"
+    elif lower == "time":
+        actual = duration_ms
+        name = "响应时间(ms)"
+    elif lower.startswith("len:"):
+        path = target[4:].strip()
+        name = f"长度 {path}"
+        if not json_ok:
+            return _make_assertion(name, False, expected, "非 JSON 响应", "响应体不是合法 JSON")
+        exists, val = _json_path_get(parsed_json, path)
+        actual = len(val) if isinstance(val, (list, str, dict)) else None
     else:
         path = target[5:].strip() if lower.startswith("json:") else target[4:].strip()
         name = f"JSONPath {path}"
@@ -660,6 +671,7 @@ def _evaluate(
     conn: sqlite3.Connection | None = None,
     project_id: int | None = None,
     module_id: int | None = None,
+    duration_ms: int = 0,
 ) -> list[Assertion]:
     parsed_json: Any = None
     json_ok = False
@@ -726,7 +738,7 @@ def _evaluate(
         else:
             lines = [item.strip() for item in re.split(r"[\n;]+", rules) if item.strip()]
         for rule in lines:
-            assertions.append(_eval_rule(rule, status, headers, body, parsed_json, json_ok))
+            assertions.append(_eval_rule(rule, status, headers, body, parsed_json, json_ok, duration_ms))
     return assertions
 
 
@@ -739,6 +751,7 @@ def _base_variables(extra: dict[str, Any], env: dict[str, Any]) -> tuple[dict[st
     base_url = str(env.get("app_base_url") or "")
     auth_headers, token = _auth_header(_text(extra, "token/鉴权方式", "鉴权方式", "token"))
     variables = {"baseUrl": base_url.rstrip("/"), "base_url": base_url.rstrip("/"), "token": token}
+    variables.update({str(k): str(v) for k, v in (env.get("variables") or {}).items()})
     return auth_headers, variables
 
 
@@ -791,6 +804,7 @@ def _execute_once(
         assertions = _evaluate(
             extra, status_code, response["headers"], body_text,
             conn=conn, project_id=project_id, module_id=module_id,
+            duration_ms=int(response["durationMs"] or 0),
         )
     failed = [item for item in assertions if not item["passed"]]
     passed = not response["error"] and bool(assertions) and not failed
@@ -832,6 +846,7 @@ def execute(
     project_id: int | None = None,
     module_id: int | None = None,
     test_data: dict[str, Any] | None = None,
+    extra_variables: dict[str, str] | None = None,
 ) -> Detail:
     """按接口用例扩展字段发真实请求，返回请求、响应与断言明细。
 
@@ -848,6 +863,7 @@ def execute(
         text = str((test_data or {}).get("text") or "")
         if text:
             variables["测试数据"] = text
+        variables.update(extra_variables or {})
         return _execute_once(
             extra, env, variables, auth_headers,
             timeout=timeout, conn=conn, project_id=project_id, module_id=module_id,
@@ -860,6 +876,7 @@ def execute(
             **{str(key): str(value) for key, value in record.items()},
             "测试数据": json.dumps(record, ensure_ascii=False),
         }
+        variables.update(extra_variables or {})
         detail = _execute_once(
             extra, env, variables, auth_headers,
             timeout=timeout, conn=conn, project_id=project_id, module_id=module_id,
@@ -973,7 +990,21 @@ def _load_env(conn: sqlite3.Connection, env_id: int | None) -> dict[str, Any]:
     env = TestEnvRepository(conn).get_by_id(int(env_id))
     if env is None:
         raise AppError(ErrorCode.PARAM_ERROR, "执行环境不存在或已删除")
-    return env
+    # P1：项目全局变量（sys_config）+ 环境级变量，环境级覆盖全局，注入 {{var}}
+    from ..repositories.sys_config_repo import SysConfigRepository
+
+    variables: dict[str, str] = {}
+    raw = SysConfigRepository(conn).get_value(f"api.global_vars.{env.get('project_id')}", "")
+    if raw:
+        try:
+            variables.update({str(k): str(v) for k, v in json.loads(raw).items()})
+        except (TypeError, ValueError, AttributeError):
+            pass
+    try:
+        variables.update({str(k): str(v) for k, v in loads(env.get("variables_json"), {}).items()})
+    except (TypeError, ValueError, AttributeError):
+        pass
+    return {**env, "variables": variables}
 
 
 def load_env(conn: sqlite3.Connection, env_id: int | None) -> dict[str, Any]:

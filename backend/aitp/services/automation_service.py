@@ -48,7 +48,7 @@ from ..repositories.automation_repo import (
     AutomationScriptRepository,
 )
 from ..repositories.sys_config_repo import SysConfigRepository
-from . import automation_writeback, case_test_data, execution_protocol
+from . import auto_bug_service, automation_writeback, case_test_data, execution_protocol
 
 logger = logging.getLogger(__name__)
 
@@ -725,6 +725,16 @@ def _jmeter_command(conn: sqlite3.Connection, script: dict[str, Any],
             if count:
                 target = run_dir / script_path.name
                 target.write_text(new_jmx, encoding="utf-8")
+    # P2 场景化负载模型：配置 performance.load_model → -J 属性，jmx 用 ${__P(threads,...)} 引用
+    load_raw = _config_value(conn, "performance.load_model")
+    if load_raw:
+        try:
+            load = loads(load_raw)
+        except (TypeError, ValueError):
+            load = {}
+        for key in ("threads", "rampUp", "loops", "duration"):
+            if load.get(key) not in (None, ""):
+                props.append(f"-J{key}={load[key]}")
     return [
         command, "-n", "-t", str(target),
         "-l", str(result_file),
@@ -881,6 +891,16 @@ def execute_script(
             data_env["AITP_TEST_DATA"] = str(test_data.get("text") or "")
             data_env["AITP_TEST_DATA_KIND"] = str(test_data.get("kind") or "")
         merged_env = {**(extra_env or {}), **data_env}
+        # P1 #8：Web/App 脚本注入元素库（Page Object），脚本按名称取选择器
+        if category in ("web", "app"):
+            from ..repositories.script_asset_repo import UiElementRepository
+            elems = UiElementRepository(conn).list(
+                {"project_id": script.get("project_id")}, None, page_num=1, page_size=500)
+            merged_env["AITP_ELEMENTS_JSON"] = dumps([
+                {"page": e.get("page"), "name": e.get("name"),
+                 "selector": e.get("selector"), "kind": e.get("kind")}
+                for e in elems.list
+            ], ensure_ascii=False)
 
         if category == CATEGORY_PERFORMANCE or script.get("run_mode") == RUN_MODE_JMETER:
             command = _jmeter_command(conn, script, script_path, run_dir, test_data=test_data)
@@ -929,6 +949,18 @@ def execute_script(
         error_message = f"无法启动执行进程：{exc}"
 
     duration_ms = int((time.monotonic() - start) * 1000)
+    # P2 结构化执行日志：每次执行落一条 JSONL，供指标/排障消费
+    _rd = locals().get("run_dir")
+    if _rd is not None:
+        try:
+            (_rd / "execution.jsonl").write_text(
+                dumps({"event": "finish", "runNo": run_no, "status": status,
+                       "exitCode": exit_code, "durationMs": duration_ms,
+                       "ts": utcnow_iso()}, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
     run_repo.update(run_id, {
         "status": status,
         "exit_code": exit_code,
@@ -962,6 +994,14 @@ def execute_script(
         case_id=_writeback_case_id(conn, script, test_run_id=test_run_id),
     )
     conn.commit()
+    # 残留子项：失败自动转缺陷（配置 automation.auto_bug 开启时）
+    if status in (RUN_STATUS_FAILED, RUN_STATUS_TIMEOUT, RUN_STATUS_ERROR):
+        bug_id = auto_bug_service.from_automation(
+            conn, script, final_row,
+            automation_writeback.case_results(conn, run_id), error_message,
+        )
+        if bug_id:
+            final_row["autoBugId"] = bug_id
     return final_row
 
 

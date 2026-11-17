@@ -383,6 +383,7 @@ import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import ProdConfirmDialog from '@/components/ProdConfirmDialog.vue'
 import PlanOverviewPanel from '@/views/execution/PlanOverviewPanel.vue'
 import { dateTimeText } from '@/utils/format'
+import { fetchAllPages } from '@/utils/fetchAll'
 
 const appStore = useAppStore()
 const router = useRouter()
@@ -658,13 +659,14 @@ async function loadOptions(): Promise<void> {
     return
   }
   try {
-    const [versionResult, requirementPage, envResult] = await Promise.all([
+    const [versionResult, requirementRows, envResult] = await Promise.all([
       projectVersionApi.list(projectId),
-      requirementApi.list({ projectId, pageNum: 1, pageSize: 200 }),
+      fetchAllPages((pageNum, pageSize) =>
+        requirementApi.list({ projectId, pageNum, pageSize })),
       testEnvApi.list(),
     ])
     versions.value = versionResult.list ?? []
-    requirements.value = requirementPage.list ?? []
+    requirements.value = requirementRows
     envs.value = envResult.list ?? []
   } catch {
     versions.value = []
@@ -787,18 +789,18 @@ async function openLaunch(row: TestPlan): Promise<void> {
 }
 
 async function loadCandidates(): Promise<void> {
-  if (!launchPlan.value) return
+  const plan = launchPlan.value
+  if (!plan) return
   caseLoading.value = true
   try {
-    const page = await caseApi.list({
-      projectId: launchPlan.value.projectId,
+    candidates.value = await fetchAllPages((pageNum, pageSize) => caseApi.list({
+      projectId: plan.projectId,
       requirementId: launchFilter.requirementId ?? undefined,
       caseType: launchFilter.caseType || undefined,
       priority: launchFilter.priority || undefined,
-      pageNum: 1,
-      pageSize: 200,
-    })
-    candidates.value = page.list ?? []
+      pageNum,
+      pageSize,
+    }))
     if (!candidates.value.length) {
       ElMessage.info('当前筛选条件下没有用例')
     }

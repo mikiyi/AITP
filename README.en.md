@@ -4,6 +4,9 @@ English | [简体中文](README.md)
 
 A personal AI testing workstation — **single-user, local-first, offline-capable** — a quality-control tool built around **prompt engineering and data masking for LLM calls**.
 
+Current version **v2.4.0**: the same value served by `aitp.__version__`, `db/migrator.py::APP_VERSION`,
+the `appVersion` field of `GET /api/v1/health` and the `app_version` recorded by each migration.
+
 It folds the AI lab, test cases, defects, log analysis, SQL analysis, regression, reports, knowledge base, task list and workspace configuration into one closed loop of LLM-assisted testing:
 **requirement → test point → test case → execution → defect → regression → report → knowledge retention**, with todos moving the progress along at every step.
 
@@ -81,7 +84,7 @@ The launcher checks the port first: if AITP is already running it just opens the
 
 ## Feature map
 
-Frontend: 54 routes / 57 page components. Backend: 39 blueprints / 410 endpoints, all under `/api/v1`.
+Frontend: 55 routes / 59 page components. Backend: 42 blueprints / 444 endpoints, all under `/api/v1`.
 
 ### First-launch tour and demo project
 
@@ -99,7 +102,7 @@ Frontend: 54 routes / 57 page components. Backend: 39 blueprints / 410 endpoints
 ### Appearance and navigation
 
 - **10 themes**: Light, Dark, Blue, Red, Pink, Orange, Tech, Ocean, Botanical, Industrial. One click on the palette in the top-right applies the theme site-wide.
-- **Navigation groups**: the sidebar groups by purpose into 10 groups — AI Lab / Task Center / Test Plans / Test Assets / Quality Conclusions / Automation Scripts / Execution & Exploration / Knowledge Base / Data & Migration / Settings, plus Home and Help as direct entries.
+- **Navigation groups**: the sidebar groups by purpose into 10 groups — AI Lab / Task Center / Test Plans / Test Assets / Quality Conclusions / Automation Scripts / Execution & Exploration / Knowledge Base / Data Governance / Settings, plus Home and Help as direct entries; entering a page auto-expands its group, and both manually opened/closed groups and the collapsed state are remembered locally.
 - **Filters are queries**: changing a filter runs the query immediately — no "Search" button. Filters and pagination are kept in the URL, so links are shareable.
 
 ### Task list
@@ -163,6 +166,8 @@ Page: **Task list** (`/todos`)
 | Test reports | Generation/adoption, ECharts charts, metric trends, export |
 | Execution and evidence | Interface / automation / manual / regression / **exploratory** runs each write one unified evidence snapshot, drillable from runs, defects and reports |
 | Regression checklist | CRUD, AI-generated regression items, auto items really executed by the server with evidence, manual items require evidence to pass |
+| API scenario | Chained multi-step scenarios where every step reuses the interface assertion engine (no second HTTP or assertion wheel): JSONPath extraction feeds `{{var}}` into the URL / headers / query / body of later steps, a failed step can stop or continue the run, the whole scenario can be driven record by record from a data pool, and every run is kept in history |
+| Standalone data pool | One shared test-data set reused by cases and scenarios: unique name per project, parse preview, referenced as `pool:<name>` from case extension fields and scenario data sources, parsed by the same case test-data engine instead of a second fetch path |
 | Execution matrix (GAP-43) | Fan a batch of cases across multiple environments × endpoints (app servers), dispatch once and really run each cell; per-case cross-cell attribution (common pass / common failure / env-specific / endpoint-specific / mixed); one-click defect conversion for common failures with evidence attached; production environments require explicit confirmation to dispatch |
 | Web exploratory testing (GAP-45) | An MCP-driven real browser (started by the `mcpCommand` you configure under "Exploratory testing settings"; `backend/scripts/browser_mcp_server.py`) explores in a read-snapshot → decide → act → observe loop, finding gaps that scripted cases miss; normal steps keep evidence at the configured per-step screenshot count, anomalous steps force 3 screenshots plus a dual-anchor ±N-second log slice, network snapshot, console errors and traceId as an evidence pack; password/token inputs are masked per PII rules; findings go to the pending pool for human review first and only become defects after approval |
 | Knowledge / report fragment reuse (GAP-42) | A fragment is maintained once in its source project; target reports register a reference and rendering / export reads the body live, avoiding drifting copies; referenced fragments cannot be deleted |
@@ -285,8 +290,8 @@ cd frontend && npm run build                                              # fron
 - Any new gate script dropped into `backend/scripts` named `check_*.py` is picked up
   automatically without touching the runner.
 
-Gate inventory (61 entries = 60 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
-scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 60 items actually
+Gate inventory (70 entries = 69 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
+scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 69 items actually
 execute):
 
 | Script | Covers | When it fails, look at |
@@ -296,8 +301,11 @@ execute):
 | `check_ai_thinking.py` | "Disable thinking mode" end to end: `extra_json.thinking=off` -> resolver -> request body of both adapters; nothing is sent when the flag is unset (default semantics unchanged) | `ai/resolver.py::_disable_thinking` and `_body` in `ai/adapters/*` |
 | `check_ai_cost.py` | AI cost accounting: per-profile unit prices and micro-unit conversion, daily/monthly budgets and per-call token soft threshold, over-budget only warns and never blocks (GAP-30) | `backend/aitp/ai/cost.py` and the price fields of `sys_ai_profile` |
 | `check_ai_local_billing.py` | Self-hosted (local) profiles are never billed: write side zeroes out, the unit-price endpoint refuses, cost table and currency are not skewed by leftover values, real runs store NULL cost | `cost.is_local_profile`, plus billing handling in `api/settings.py` and `api/lab.py` |
+| `check_api_scenario.py` | Multi-step API scenarios: sequential runs, JSONPath variable extraction with `{{var}}` handed to later steps, per-step assertions reusing the interface-runner rules, fail-fast, data-driven execution of the whole scenario per record, run history persisted (ships its own `/login` `/order` stub) | `services/api_scenario_service.py` and `api/api_scenarios.py` |
 | `check_egress_guard.py` | The outbound-data confirmation looks only at the primary model actually used: local primary stays silent, cloud primary prompts, the candidate chain is still returned in full | `knowledge_assistant_service.egress_plan` and frontend `stores/aiGuard.ts` |
 | `check_assistant_history.py` | Q&A history stored per session: question and answer land in `biz_ai_session` / `biz_ai_message` (capability `knowledge-assistant`), replay carries mode and references, archived timestamps match so "add to knowledge base" never duplicates, foreign or other-module sessions are refused, over-limit replays only the newest and writes no `biz_ai_record` | `knowledge_assistant_service.history/record_qa` and `api/knowledge.py::_persist_qa` |
+| `check_assistant_thinking.py` | Q&A assistant reasoning chain: `reasoningTokens` in the billing payload, `ask-stream` is SSE and ends with an `error` event when no AI profile is usable, reasoning is not persisted by default, opt-in save writes it and replay carries `thinkingText` / id | `knowledge_assistant_service.record_qa/history` and the frontend "visible in this session only" hint |
+| `check_async_races.py` | Async scheduling races (B3): a matrix dispatched twice concurrently still runs once, cancelling a task no longer reports a false success (real state after the queued->running race) | matrix dispatch lock and the cancel branch in `services/job_queue.py` |
 | `check_attachments.py` | Attachments: document import + image watermark removal | attachment endpoints, Pillow, mock server output |
 | `check_automation.py` | Automation script assets and execution engine | execution records and engine log (`data/aitp.log`) |
 | `check_automation_writeback.py` | Automation result writeback to cases/rounds (GAP-07) | writeback service and round state machine |
@@ -325,13 +333,19 @@ execute):
 | `check_observability.py` | Observability: traceId across logs and response headers, only failures/slow requests logged (GAP-23) | `backend/aitp/observability` and log format |
 | `check_onboarding.py` | First-run onboarding state (GAP-18) | migration 045 and the onboarding API |
 | `check_output_schema.py` | Output structure validation: JSON Schema for four capabilities, blocking missing fields and type mismatches, retry semantics (GAP-28) | `backend/aitp/ai/output_schema.py` and the capability mapping |
+| `check_p2.py` | P2 closure: schedule CRUD / trigger-now / due `_tick` dispatch, execution metrics, JMeter load model emitting `-Jthreads`, browser steps inside API scenarios (mock MCP) | `api/schedules.py`, `services/test_schedule_service.py::_tick`, `services/automation_service.py::_jmeter_command` |
 | `check_pagination.py` | List pagination and cursor continuation: no endpoint dumps whole tables, `total` matches row count, case tree pages by `afterId` (GAP-25) | `common/pagination.py` and the list endpoints |
 | `check_portability.py` | Cross-platform delivery: preflight, PDF CJK fonts, secret-store fallback, script portability | printed platform-specific checks (never writes the real DB) |
 | `check_prompt_regression.py` | Prompt-effect regression set: offline mock batch plus six-metric baseline (pass rate, retention rate, completeness, duplicate rate, issue count, prompt size) so edits are comparable (GAP-31) | `backend/prompts/regression/` samples and baseline file |
 | `check_prompts.py` | Prompt library: parseable, variables complete, no render leftovers, capability alignment | `backend/prompts` YAML and capability mapping |
 | `check_report_evidence.py` | Report failure samples and evidence drill-down: sample count matches real failures, all three export formats carry the chosen samples, Chinese degradation when no snapshot, and case-level-only snapshots resolve identically across report / drill-down / bug views (GAP-35) | the `failure-samples` routes in `api/reports.py` and `execution_protocol.latest_evidence_for_run_case` |
+| `check_report_sources.py` | Reports sourced by round / execution matrix / scenario batch: source resolution, per-section metrics, statistics endpoint, failure-sample isolation, illegal sources refused | `services/report_source_service.py` and the report statistics endpoints |
 | `check_report_trends.py` | Report trends and version diff (GAP-12) | report export and trend aggregation |
+| `check_report_xss.py` | Markdown sanitising for the HTML / print report export: `attr_list`, `javascript:` links and raw HTML never reach the exported file, while normal tables, code blocks and safe links survive (render layer only, no DB, no model) | the sanitizer branch in `services/report_exporter.py` |
+| `check_residual.py` | Standalone data pools (CRUD, duplicate-name guard, parse preview, `pool:<name>` consumed by scenario data driving); per-round environment-diff attribution (env-sensitive / consistent failure / no baseline / environment not bound); `automation.auto_bug` off by default, on it converts a failed run into one bug and never a second time | `repositories/data_pool_repo.py`, `services/auto_bug_service.py` and the round attribution logic |
 | `check_routing.py` | Routing regression: 20 capability cards, each representative input must route correctly | routing rules and card config |
+| `check_scope_enforcement.py` | Hard project-scope boundaries (supplementary gate): report fragments, report export and scenario runs never read across projects | the `projectId` ownership checks and fragment reference resolution |
+| `check_script_asset.py` | Script version snapshots / diffs / review, the UI element library (Page Object, scripts look selectors up by name), and turning exploratory findings into replay scripts | `repositories/script_asset_repo.py` and the version / element-library routes in `api/automation.py` |
 | `check_secret_residue.py` | GAP-22 secret-at-rest closure: reference storage, residue scan, migrate/rollback, dual-read | secret reference table and residue scan (temp DB only) |
 | `check_stream_polling.py` | Streaming short-poll contract on both ends: launch returns only taskId plus the frames route, frame order and cursor, buffer-expiry fallback, and the frontend really consuming `mode:"poll"` and sending the current project (GAP-26 / GAP-29) | `api/lab.py` stream/frames and `frontend/src/api/stream.ts` |
 | `check_security.py` | Security and compliance: secrets, injection, path safety, same-origin guard | `backend/aitp/common` security utilities and middleware |
@@ -402,10 +416,10 @@ cd frontend && npx playwright test               # serial, workers=1
 ```
 backend/
   aitp/
-    api/          39 blueprints / 410 endpoints
+    api/          42 blueprints / 444 endpoints
     ai/           resolver, client, masking, adapters, cost, output_schema
     common/       constants, validation, pagination, keystore, security utilities
-    db/           connections and migrations (60 files)
+    db/           connections and migrations (67 files)
     repositories/ parameterized SQL repository layer
     services/     knowledge persistence, report export, backup/restore, execution matrix, retention/archival, exploratory testing, external import
     prompts/      prompt template library
@@ -416,7 +430,7 @@ frontend/
   src/
     api/          unified request layer
     components/   shared components
-    views/        57 page components
+    views/        59 page components
   e2e/            Playwright end-to-end tests (isolated harness)
 data/             runtime data (SQLite, logs, keystore, archives, exploratory screenshots and log slices)
 knowledge/        Markdown knowledge base storage

@@ -7,6 +7,8 @@
       </div>
       <div class="auto-head__actions">
         <el-button :icon="Refresh" @click="reloadAll">刷新</el-button>
+        <el-button @click="openElements">元素库</el-button>
+        <el-button @click="openSchedules">定时</el-button>
         <el-button type="primary" :icon="Plus" @click="openCreate">新建脚本</el-button>
       </div>
     </div>
@@ -78,6 +80,7 @@
           <el-button link type="primary" @click.stop="executeAsync(row)">后台</el-button>
           <el-button link type="success" @click.stop="openKnowledge(row)">加入知识库</el-button>
           <el-button link type="info" @click.stop="openHistory(row)">历史</el-button>
+          <el-button link type="warning" @click.stop="openVersions(row)">版本</el-button>
           <el-button link type="danger" @click.stop="removeScript(row)">删除</el-button>
         </template>
       </BaseProTable>
@@ -325,6 +328,99 @@
         <el-button @click="historyVisible = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <!-- P1 #7 版本差异/评审 -->
+    <el-dialog v-model="versionVisible" title="脚本版本" width="900px" top="5vh">
+      <el-table :data="versions" size="small" border max-height="220">
+        <el-table-column prop="versionNo" label="版本" width="70" />
+        <el-table-column prop="changeNote" label="变更说明" min-width="160" show-overflow-tooltip />
+        <el-table-column label="评审" width="100">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.reviewStatus === 'approved' ? 'success' : row.reviewStatus === 'rejected' ? 'danger' : 'info'" effect="plain">
+              {{ row.reviewStatus === 'approved' ? '通过' : row.reviewStatus === 'rejected' ? '驳回' : '待审' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="200">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="showDiff(String(row.id))">与当前对比</el-button>
+            <el-button link type="success" @click="review(row, 'approved')">通过</el-button>
+            <el-button link type="danger" @click="review(row, 'rejected')">驳回</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <pre v-if="diffText" class="version-diff">{{ diffText }}</pre>
+      <template #footer>
+        <el-button @click="versionVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- P1 #8 元素库 -->
+    <el-dialog v-model="elementVisible" title="元素库（Page Object）" width="860px" top="5vh">
+      <div class="element-form">
+        <el-input v-model="elementForm.page" placeholder="页面" style="width: 120px" />
+        <el-input v-model="elementForm.name" placeholder="元素名" style="width: 140px" />
+        <el-input v-model="elementForm.selector" placeholder="选择器" style="flex: 1" />
+        <el-select v-model="elementForm.kind" style="width: 90px">
+          <el-option v-for="k in ['css', 'xpath', 'text', 'role']" :key="k" :label="k" :value="k" />
+        </el-select>
+        <el-button type="primary" @click="saveElement">添加</el-button>
+      </div>
+      <el-table :data="elements" size="small" border max-height="320">
+        <el-table-column prop="page" label="页面" width="110" />
+        <el-table-column prop="name" label="元素名" width="140" />
+        <el-table-column prop="selector" label="选择器" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="kind" label="类型" width="80" />
+        <el-table-column label="操作" width="80">
+          <template #default="{ row }">
+            <el-button link type="danger" @click="removeElement(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <p class="muted" style="font-size: 12px; margin-top: 8px">
+        Web/App 脚本执行时自动注入 AITP_ELEMENTS_JSON，脚本可按名称取选择器，避免硬编码。
+      </p>
+      <template #footer>
+        <el-button @click="elementVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- P2 定时调度 -->
+    <el-dialog v-model="scheduleVisible" title="定时调度" width="860px" top="5vh">
+      <div class="element-form">
+        <el-input v-model="scheduleForm.name" placeholder="调度名" style="width: 140px" />
+        <el-select v-model="scheduleForm.targetType" style="width: 100px">
+          <el-option label="场景" value="scenario" />
+          <el-option label="脚本" value="script" />
+        </el-select>
+        <el-input-number v-model="scheduleForm.targetId" :min="1" placeholder="目标ID" style="width: 110px" />
+        <el-input-number v-model="scheduleForm.intervalMinutes" :min="1" style="width: 110px" />
+        <span class="muted">分钟</span>
+        <el-button type="primary" @click="saveSchedule">添加</el-button>
+      </div>
+      <el-table :data="schedules" size="small" border max-height="300">
+        <el-table-column prop="name" label="名称" min-width="120" />
+        <el-table-column label="目标" width="110">
+          <template #default="{ row }">{{ row.targetType === 'scenario' ? '场景' : '脚本' }}#{{ row.targetId }}</template>
+        </el-table-column>
+        <el-table-column prop="intervalMinutes" label="间隔(分)" width="80" />
+        <el-table-column label="启用" width="70">
+          <template #default="{ row }">
+            <el-switch :model-value="row.enabled" @change="(v: boolean) => toggleSchedule(row, v)" />
+          </template>
+        </el-table-column>
+        <el-table-column prop="nextRunAt" label="下次运行" min-width="150" show-overflow-tooltip />
+        <el-table-column label="操作" width="120">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="triggerSchedule(row)">立即</el-button>
+            <el-button link type="danger" @click="removeSchedule(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="scheduleVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 
     <AddToKnowledgeDialog
@@ -347,7 +443,8 @@ import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from
 import MetricCard from '@/components/MetricCard.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
 import ProdConfirmDialog from '@/components/ProdConfirmDialog.vue'
-import { automationApi, testEnvApi } from '@/api'
+import { automationApi, testEnvApi, schedulesApi } from '@/api'
+import { useAppStore } from '@/stores/app'
 import { dateTimeText } from '@/utils/format'
 import type {
   AutomationCategory,
@@ -771,6 +868,118 @@ async function openHistory(row: AutomationScript): Promise<void> {
   }
 }
 
+// ---- P1 #7 版本差异/评审 ----
+const appStore = useAppStore()
+const versionVisible = ref(false)
+const versionScriptId = ref<number | null>(null)
+const versions = ref<{ id: number; versionNo: number; changeNote: string; reviewStatus: string; createdAt: string }[]>([])
+const diffText = ref('')
+
+async function openVersions(row: AutomationScript): Promise<void> {
+  versionScriptId.value = row.id
+  diffText.value = ''
+  try {
+    versions.value = (await automationApi.versions(row.id)).list ?? []
+    versionVisible.value = true
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '加载版本失败')
+  }
+}
+
+async function showDiff(base: string): Promise<void> {
+  if (versionScriptId.value == null) return
+  try {
+    const r = await automationApi.diff(versionScriptId.value, base, 'current')
+    diffText.value = (r.diff ?? []).join('\n') || '（无差异）'
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '加载差异失败')
+  }
+}
+
+async function review(row: { id: number }, status: string): Promise<void> {
+  if (versionScriptId.value == null) return
+  await automationApi.reviewVersion(versionScriptId.value, row.id, status)
+  ElMessage.success(status === 'approved' ? '已通过' : '已驳回')
+  versions.value = (await automationApi.versions(versionScriptId.value)).list ?? []
+}
+
+// ---- P1 #8 元素库 ----
+const elementVisible = ref(false)
+const elements = ref<{ id: number; page: string; name: string; selector: string; kind: string; description: string }[]>([])
+const elementForm = reactive({ page: '', name: '', selector: '', kind: 'css' })
+
+async function loadElements(): Promise<void> {
+  if (!appStore.currentProjectId) return
+  elements.value = (await automationApi.elements(appStore.currentProjectId)).list ?? []
+}
+
+async function openElements(): Promise<void> {
+  try {
+    await loadElements()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '加载元素库失败')
+    return
+  }
+  elementVisible.value = true
+}
+
+async function saveElement(): Promise<void> {
+  if (!elementForm.name.trim() || !elementForm.selector.trim()) {
+    ElMessage.warning('元素名与选择器必填')
+    return
+  }
+  await automationApi.createElement({ projectId: appStore.currentProjectId, ...elementForm })
+  ElMessage.success('已添加')
+  Object.assign(elementForm, { page: '', name: '', selector: '', kind: 'css' })
+  await loadElements()
+}
+
+async function removeElement(row: { id: number }): Promise<void> {
+  await automationApi.removeElement(row.id)
+  await loadElements()
+}
+
+// ---- P2 定时调度 ----
+const scheduleVisible = ref(false)
+const schedules = ref<Record<string, any>[]>([])
+const scheduleForm = reactive({ name: '', targetType: 'scenario', targetId: 1, intervalMinutes: 60 })
+
+async function loadSchedules(): Promise<void> {
+  schedules.value = (await schedulesApi.list({ projectId: appStore.currentProjectId, pageSize: 100 })).list ?? []
+}
+
+async function openSchedules(): Promise<void> {
+  try {
+    await loadSchedules()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '加载调度失败')
+    return
+  }
+  scheduleVisible.value = true
+}
+
+async function saveSchedule(): Promise<void> {
+  if (!scheduleForm.name.trim()) { ElMessage.warning('调度名必填'); return }
+  await schedulesApi.create({ projectId: appStore.currentProjectId, ...scheduleForm })
+  ElMessage.success('已添加')
+  await loadSchedules()
+}
+
+async function toggleSchedule(row: Record<string, any>, v: boolean): Promise<void> {
+  await schedulesApi.update(row.id, { enabled: v })
+  await loadSchedules()
+}
+
+async function triggerSchedule(row: Record<string, any>): Promise<void> {
+  await schedulesApi.trigger(row.id)
+  ElMessage.success('已投递执行')
+}
+
+async function removeSchedule(row: Record<string, any>): Promise<void> {
+  await schedulesApi.remove(row.id)
+  await loadSchedules()
+}
+
 async function openRunDetail(row: AutomationRun): Promise<void> {
   try {
     lastRun.value = await automationApi.runDetail(row.id)
@@ -782,11 +991,11 @@ async function openRunDetail(row: AutomationRun): Promise<void> {
 }
 
 function artifactUrl(runId: number | string, path: string): string {
-  return `/api/v1/automation/runs/${runId}/artifacts/download?path=${encodeURIComponent(path)}`
+  return automationApi.artifactUrl(Number(runId), path)
 }
 
 function reportUrl(runId: number | string): string {
-  return `/api/v1/automation/runs/${runId}/report`
+  return automationApi.runReportUrl(Number(runId))
 }
 
 function formatSize(size: number): string {
@@ -965,6 +1174,26 @@ watch(category, () => {
   gap: 6px;
   flex-wrap: wrap;
   margin: 4px 0;
+}
+
+.version-diff {
+  margin-top: 10px;
+  max-height: 300px;
+  overflow: auto;
+  background: var(--aitp-subtle);
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.element-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
 }
 
 .auto-artifacts {

@@ -139,6 +139,7 @@ import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import ProdConfirmDialog from '@/components/ProdConfirmDialog.vue'
 import { automationApi, executionMatrixApi, testEnvApi, testRunApi } from '@/api'
 import { dateTimeText } from '@/utils/format'
+import { fetchAllPages } from '@/utils/fetchAll'
 import { useAppStore } from '@/stores/app'
 import type { AutomationScript, ExecutionMatrix, TestEnv, TestRun } from '@/api/types'
 
@@ -227,13 +228,15 @@ async function openCreate(): Promise<void> {
   createVisible.value = true
   try {
     const [runs, envs, scripts] = await Promise.all([
-      testRunApi.list({ projectId: appStore.currentProjectId, pageSize: 100 }),
+      fetchAllPages((pageNum, pageSize) =>
+        testRunApi.list({ projectId: appStore.currentProjectId, pageNum, pageSize })),
       testEnvApi.list(),
-      automationApi.list({ projectId: appStore.currentProjectId, pageSize: 100 }),
+      fetchAllPages((pageNum, pageSize) =>
+        automationApi.list({ projectId: appStore.currentProjectId, pageNum, pageSize })),
     ])
-    runOptions.value = runs.list
+    runOptions.value = runs
     envOptions.value = envs.list
-    scriptOptions.value = scripts.list
+    scriptOptions.value = scripts
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载选项失败')
   }

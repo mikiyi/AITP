@@ -55,6 +55,7 @@ KIND_LABELS: dict[str, str] = {
     "notification.webhook": "Webhook 通知",
     "validation.run_all": "案例验证全量跑批",
     "exploratory.run": "Web 探索性测试",
+    "scenario.run": "接口场景执行",
 }
 
 #: 并发上限配置键；默认 2，单用户本机够用又不至于互相拖死
@@ -386,18 +387,33 @@ def cancel_task(conn: sqlite3.Connection, task_id: int) -> dict[str, Any]:
         raise AppError(ErrorCode.ILLEGAL_OPERATION, "任务已经结束，无需取消")
     now = utcnow_iso()
     if status == TASK_QUEUED:
-        conn.execute(
+        cur = conn.execute(
             "UPDATE sys_task SET status = ?, finished_at = ?, error_message = ?, updated_at = ?"
             " WHERE id = ? AND status = ?",
             (TASK_CANCELLED, now, "用户取消", now, task_id, TASK_QUEUED),
         )
-        conn.commit()
-        return get_task(conn, task_id) or {}
-    # 运行中：先打标记并唤醒可取消的执行器，进度由执行方在检查点收口
-    conn.execute(
-        "UPDATE sys_task SET cancel_requested = 1, updated_at = ? WHERE id = ?",
-        (now, task_id),
+        if cur.rowcount:
+            conn.commit()
+            return get_task(conn, task_id) or {}
+        # 读取后被 worker 抢走：回读真实状态，能取消就按运行中处理
+        conn.rollback()
+        task = get_task(conn, task_id) or {}
+        status = str(task.get("status") or "")
+        if status in (TASK_SUCCESS, TASK_FAILED, TASK_CANCELLED):
+            raise AppError(ErrorCode.ILLEGAL_OPERATION, "任务已经结束，无需取消")
+    # 运行中（或排队后刚被领取）：先打标记并唤醒可取消的执行器
+    cur = conn.execute(
+        "UPDATE sys_task SET cancel_requested = 1, updated_at = ?"
+        " WHERE id = ? AND status = ?",
+        (now, task_id, TASK_RUNNING),
     )
+    if cur.rowcount == 0:
+        conn.rollback()
+        task = get_task(conn, task_id) or {}
+        raise AppError(
+            ErrorCode.ILLEGAL_OPERATION,
+            f"任务状态已变为 {task.get('status') or '未知'}，无需取消",
+        )
     conn.commit()
     task_control.cancel(f"task:{task_id}")
     result = get_task(conn, task_id) or {}

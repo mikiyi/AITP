@@ -32,6 +32,7 @@ import {
   Monitor,
   Notebook,
   Odometer,
+  Operation,
   Postcard,
   Promotion,
   QuestionFilled,
@@ -86,12 +87,12 @@ export type MenuNode = MenuItemNode | MenuGroupNode
  *
  * 分组按测试工作流排：首页（入口）→ AI 实验室（智能辅助）→ 任务中心（待办/后台）
  * → 测试预案（开跑前圈范围）→ 测试资产（输入本体）→ 质量结论（报告/追溯/SQL）
- * → 自动化脚本（按目标管脚本）→ 执行与探索（矩阵/探索/执行配置）→ 知识库（沉淀）
- * → 数据与迁移（资产包/外部导入）→ 设置（仅全局偏好）→ 帮助文档。
+ * → 自动化脚本（按目标管脚本）→ 执行与探索（矩阵/探索/执行环境）→ 知识库（沉淀）
+ * → 数据治理（资产包/外部导入/留存归档/操作日志）→ 设置（仅全局偏好）→ 帮助文档。
  *
  * IA 原则：资产只放"输入本体"，结论独立成「质量结论」；脚本资产与执行编排分两组；
  * 域配置（环境/自动化/性能/探索/知识库/模块树/断言）下沉到业务域，设置只留全局项；
- * 合并入口（AI 记录、执行配置）用页内子页签切换，路由保持不变以兼容旧链接。
+ * 合并入口（AI 记录、执行环境）用页内子页签切换，路由保持不变以兼容旧链接。
  *
  * 图标约定（两条硬规则）：
  * 1) 图标与菜单内容契合——看图标大致能猜到点进去做什么；
@@ -177,6 +178,7 @@ export const MENU_NODES: MenuNode[] = [
       { path: '/automation/web', title: 'Web 自动化', icon: Monitor },
       { path: '/automation/app', title: 'App 自动化', icon: Iphone },
       { path: '/automation/api', title: '接口自动化', icon: Link },
+      { path: '/automation/scenario', title: '接口场景', icon: Operation },
       { path: '/automation/performance', title: '性能测试', icon: Stopwatch },
     ],
   },
@@ -188,7 +190,7 @@ export const MENU_NODES: MenuNode[] = [
     children: [
       { path: '/execution-matrices', title: '执行矩阵', icon: Grid },
       { path: '/exploratory', title: '探索性测试', icon: Aim },
-      { path: '/settings/environments', title: '执行配置', icon: Connection },
+      { path: '/settings/environments', title: '执行环境', icon: Connection },
     ],
   },
   {
@@ -205,11 +207,13 @@ export const MENU_NODES: MenuNode[] = [
   {
     type: 'group',
     key: 'data',
-    title: '数据与迁移',
+    title: '数据治理',
     icon: Switch,
     children: [
       { path: '/settings/packages', title: '项目资产包', icon: Suitcase },
       { path: '/settings/external-imports', title: '外部平台导入', icon: Upload },
+      { path: '/settings/retention', title: '数据留存与归档', icon: Box },
+      { path: '/settings', title: '操作日志', icon: Memo },
     ],
   },
   {
@@ -219,12 +223,10 @@ export const MENU_NODES: MenuNode[] = [
     icon: Setting,
     children: [
       { path: '/settings/home-cards', title: '首页卡片定制', icon: Postcard },
-      { path: '/settings', title: '操作日志', icon: Memo },
       { path: '/settings/security', title: '访问口令', icon: Lock },
       { path: '/settings/ai', title: 'AI 设置', icon: Cpu },
       { path: '/settings/templates', title: '测试文档模板', icon: DocumentAdd },
       { path: '/settings/backup', title: '数据备份与还原', icon: FolderOpened },
-      { path: '/settings/retention', title: '数据留存与归档', icon: Box },
       { path: '/settings/ci', title: 'CI 与通知', icon: Bell },
     ],
   },
@@ -267,22 +269,72 @@ function titleOf(path: string): string {
 }
 
 /**
- * 把当前路由映射到导航项：先精确匹配，匹配不到就取最长前缀
+ * 是否为分组 key（不是入口路径）。
+ * el-menu 的 open 事件偶尔会带上一级入口的路径（首页 / 帮助文档），
+ * 把它们当分组记进展开记忆会让 menu.open() 抛错，所以凡是要写记忆的地方先过这道判断。
+ */
+export function isMenuGroupKey(key: string): boolean {
+  return MENU_NODES.some((node): node is MenuGroupNode => node.type === 'group' && node.key === key)
+}
+
+/** 详情页/域设置页到导航入口的别名：高亮归到所属业务组，面包屑保留具体标题。 */
+interface MenuAlias {
+  prefix: string
+  path: string
+  title: string
+}
+
+const MENU_ALIASES: MenuAlias[] = [
+  { prefix: '/test-runs', path: '/test-plans', title: '轮次明细' },
+  { prefix: '/lab/sessions', path: '/lab/records', title: '会话明细' },
+  { prefix: '/settings/automation', path: '/automation/web', title: '自动化设置' },
+  { prefix: '/settings/performance', path: '/automation/performance', title: '性能设置' },
+  { prefix: '/settings/exploratory', path: '/exploratory', title: '探索设置' },
+]
+
+function aliasOf(path: string): MenuAlias | undefined {
+  return MENU_ALIASES.find(
+    (item) => path === item.prefix || path.startsWith(`${item.prefix}/`),
+  )
+}
+
+/**
+ * 把当前路由映射到导航项：详情页先走别名，再精确匹配，最后取最长前缀
  * （详情页如 /test-cases/42 归到 /test-cases）。
  */
 export function matchMenu(path: string): MenuMatch {
-  const exact = MENU_PATHS.find((item) => item === path)
-  const hit = exact ?? MENU_PATHS.find((item) => path.startsWith(`${item}/`))
+  const alias = aliasOf(path)
+  const target = alias?.path ?? path
+  const exact = MENU_PATHS.find((item) => item === target)
+  const hit = exact ?? MENU_PATHS.find((item) => target.startsWith(`${item}/`))
   if (!hit) {
     return { path: '', group: '', title: '', exact: false }
   }
   const group = MENU_NODES.find(
     (node): node is MenuGroupNode => node.type === 'group' && node.children.some((child) => child.path === hit),
   )
-  return { path: hit, group: group ? group.title : '', title: titleOf(hit), exact: Boolean(exact) }
+  return {
+    path: hit,
+    group: group ? group.title : '',
+    title: alias?.title ?? titleOf(hit),
+    exact: !alias && Boolean(exact),
+  }
 }
 
 /** 分组是否包含当前选中的入口，用于给分组标题做同样的高亮。 */
 export function isGroupActive(group: MenuGroupNode, activePath: string): boolean {
   return group.children.some((child) => child.path === activePath)
+}
+
+/** 当前路径所在分组的 key；不在任何分组里（首页 / 帮助）时为空串。 */
+export function groupKeyOf(path: string): string {
+  const hit = MENU_PATHS.find((item) => path === item || path.startsWith(`${item}/`))
+  if (!hit) {
+    return ''
+  }
+  const group = MENU_NODES.find(
+    (node): node is MenuGroupNode =>
+      node.type === 'group' && node.children.some((child) => child.path === hit),
+  )
+  return group ? group.key : ''
 }

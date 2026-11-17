@@ -9,11 +9,15 @@
           </span>
         </div>
         <el-menu
+          ref="menuRef"
           :default-active="activePath"
+          :default-openeds="openedGroups"
           :collapse="appStore.sidebarCollapsed"
           :collapse-transition="false"
           router
           class="aitp-menu"
+          @open="onMenuOpen"
+          @close="onMenuClose"
         >
           <template v-for="node in menuNodes" :key="node.type === 'group' ? node.key : node.path">
             <el-menu-item v-if="node.type === 'item'" :index="node.path">
@@ -153,6 +157,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, RouterLink } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import type { MenuInstance } from 'element-plus'
 import { Check, ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
 import { get } from '@/api/request'
 import { settingsApi } from '@/api'
@@ -165,7 +170,7 @@ import BrandName from '@/components/BrandName.vue'
 import { useAppStore } from '@/stores/app'
 import { useThemeStore, type ThemeKey } from '@/stores/theme'
 import { useBadgeStore } from '@/stores/badges'
-import { MENU_NODES, isGroupActive, matchMenu } from '@/router/menu'
+import { MENU_NODES, isGroupActive, groupKeyOf, isMenuGroupKey, matchMenu } from '@/router/menu'
 
 const route = useRoute()
 const appStore = useAppStore()
@@ -258,6 +263,93 @@ watch(
 /** 当前路由命中的导航项，用来驱动侧栏高亮。 */
 const menuMatch = computed(() => matchMenu(route.path))
 const activePath = computed(() => menuMatch.value.path)
+
+const OPENED_GROUPS_KEY = 'aitp.menuOpenedGroups'
+
+/** 当前路由所在分组 key，驱动「进某页自动展开该组」。 */
+const activeGroupKey = computed(() => groupKeyOf(activePath.value))
+
+function loadOpenedGroups(): string[] {
+  try {
+    const raw = window.localStorage.getItem(OPENED_GROUPS_KEY)
+    const list = raw ? (JSON.parse(raw) as unknown) : []
+    return Array.isArray(list)
+      ? list.filter((k): k is string => typeof k === 'string' && isMenuGroupKey(k))
+      : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 展开过的分组 key 集合。初始值 = 本机记忆 ∪ 当前路由所在分组（冷加载也自动展开），
+ * 之后由 el-sub-menu 的 open/close 事件与路由切换共同维护。
+ */
+const openedGroups = ref<string[]>(
+  [...loadOpenedGroups(), ...(activeGroupKey.value ? [activeGroupKey.value] : [])].filter(
+    (key, index, all) => all.indexOf(key) === index,
+  ),
+)
+
+function persistOpenedGroups(): void {
+  try {
+    window.localStorage.setItem(OPENED_GROUPS_KEY, JSON.stringify(openedGroups.value))
+  } catch {
+    // 隐私模式禁用存储时只影响记忆展开态，不影响本次会话
+  }
+}
+
+/** el-menu 实例：Element Plus 2.x 的 default-openeds 只在挂载时读取，后续靠 open()/close()。 */
+const menuRef = ref<MenuInstance | null>(null)
+
+/** 进入某页时自动展开该入口所在分组（只加不删，保留用户手动收起的组）。 */
+watch(
+  activePath,
+  (path) => {
+    const key = groupKeyOf(path)
+    if (!key || openedGroups.value.includes(key)) {
+      return
+    }
+    openedGroups.value = [...openedGroups.value, key]
+    persistOpenedGroups()
+    if (!appStore.sidebarCollapsed) {
+      nextTick(() => menuRef.value?.open(key))
+    }
+  },
+  { immediate: true },
+)
+
+/** 收起侧栏会清空 el-menu 的展开集合，重新展开时按本机记忆恢复。 */
+watch(
+  () => appStore.sidebarCollapsed,
+  (collapsed) => {
+    if (collapsed) {
+      return
+    }
+    nextTick(() => {
+      for (const key of openedGroups.value) {
+        menuRef.value?.open(key)
+      }
+    })
+  },
+)
+
+/** el-sub-menu 展开 / 收起事件：同步到集合并持久化。 */
+function onMenuOpen(index: string): void {
+  if (!isMenuGroupKey(index) || openedGroups.value.includes(index)) {
+    return
+  }
+  openedGroups.value = [...openedGroups.value, index]
+  persistOpenedGroups()
+}
+
+function onMenuClose(index: string): void {
+  const next = openedGroups.value.filter((key) => key !== index)
+  if (next.length !== openedGroups.value.length) {
+    openedGroups.value = next
+    persistOpenedGroups()
+  }
+}
 
 /**
  * 页面标题优先取导航项上的名字，
@@ -637,7 +729,7 @@ function setupPopperObserver(): void {
 }
 
 onMounted(async () => {
-  void appStore.loadProjects()
+  void appStore.ensureProjects()
   void badgeStore.load()
   void ping()
   void loadAiStatus()

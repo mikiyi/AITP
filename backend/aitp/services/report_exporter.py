@@ -17,6 +17,7 @@ import html as html_lib
 import os
 import platform
 import re
+from html.parser import HTMLParser
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -630,15 +631,134 @@ def _escape_html_tags(text: str) -> str:
     return _HTML_TAG_RE.sub(lambda match: html_lib.escape(match.group(0)), text)
 
 
+#: 报告正文允许的标签：只保留 Markdown 常见排版元素，脚本/表单/iframe 一律丢弃
+_ALLOWED_TAGS = {
+    "a", "abbr", "blockquote", "br", "caption", "code", "dd", "del", "div", "dl",
+    "dt", "em", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "img", "ins", "li",
+    "ol", "p", "pre", "s", "span", "strong", "sub", "sup", "table", "tbody",
+    "td", "tfoot", "th", "thead", "tr", "ul",
+}
+_VOID_TAGS = {"br", "hr", "img"}
+#: 每个标签允许的属性；不在白名单里的属性（尤其 on* / style / srcdoc）直接丢弃
+_ALLOWED_ATTRS = {
+    "a": {"href", "title"},
+    "img": {"src", "alt", "title"},
+    "td": {"colspan", "rowspan", "align"},
+    "th": {"colspan", "rowspan", "align"},
+    "ol": {"start"},
+    "code": {"class"},
+    "pre": {"class"},
+}
+_SAFE_SCHEMES = {"http", "https", "mailto", "tel"}
+_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.\-]*):")
+_LANGUAGE_CLASS_RE = re.compile(r"^language-[A-Za-z0-9_+.\-]+$")
+
+
+def _safe_url(value: str, *, allow_relative: bool = True) -> str | None:
+    """只放行 http(s)/mailto/tel 与相对地址；javascript/data/vbscript 等一律拒绝。"""
+    text = value.strip()
+    if not text:
+        return None
+    # 浏览器会忽略 scheme 里的空白/控制字符，检测前先压紧，挡住 java\nscript:
+    compact = re.sub(r"[\x00-\x20\x7f]+", "", text)
+    scheme = _SCHEME_RE.match(compact)
+    if scheme:
+        return text if scheme.group(1).lower() in _SAFE_SCHEMES else None
+    return text if allow_relative else None
+
+
+class _ReportHtmlSanitizer(HTMLParser):
+    """Markdown 渲染后的白名单净化：防住 attr_list 注入与 javascript 链接。"""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.stack: list[str] = []
+
+    def _attrs(self, tag: str, attrs: list[tuple[str, str | None]]) -> list[tuple[str, str]]:
+        allowed = _ALLOWED_ATTRS.get(tag, set())
+        result: list[tuple[str, str]] = []
+        for raw_name, raw_value in attrs:
+            name = raw_name.lower()
+            value = "" if raw_value is None else str(raw_value)
+            if name not in allowed or name.startswith("on"):
+                continue
+            if name in {"href", "src"}:
+                safe = _safe_url(value, allow_relative=(name == "href"))
+                if safe is None:
+                    continue
+                value = safe
+            if name == "class" and tag in {"code", "pre"} and not _LANGUAGE_CLASS_RE.match(value):
+                continue
+            result.append((name, value))
+        return result
+
+    def _start(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        safe_attrs = self._attrs(tag, attrs)
+        suffix = "".join(
+            f' {name}="{html_lib.escape(value, quote=True)}"' for name, value in safe_attrs
+        )
+        self.parts.append(f"<{tag}{suffix}>")
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if tag not in _ALLOWED_TAGS:
+            return
+        self._start(tag, attrs)
+        if tag not in _VOID_TAGS:
+            self.stack.append(tag)
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if tag in _ALLOWED_TAGS:
+            self._start(tag, attrs)
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag not in self.stack:
+            return
+        while self.stack:
+            current = self.stack.pop()
+            self.parts.append(f"</{current}>")
+            if current == tag:
+                break
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(html_lib.escape(data, quote=False))
+
+    def handle_comment(self, data: str) -> None:
+        return
+
+    def handle_decl(self, decl: str) -> None:
+        return
+
+    def handle_pi(self, data: str) -> None:
+        return
+
+    def result(self) -> str:
+        while self.stack:
+            self.parts.append(f"</{self.stack.pop()}>")
+        return "".join(self.parts)
+
+
+def _sanitize_html(rendered: str) -> str:
+    parser = _ReportHtmlSanitizer()
+    parser.feed(rendered)
+    parser.close()
+    return parser.result()
+
+
 def _markdown_to_html(markdown_text: str) -> str:
     import markdown as markdown_lib
 
-    return str(
+    rendered = str(
         markdown_lib.markdown(
             markdown_text,
-            extensions=["extra", "sane_lists", "nl2br"],
+            # 不用 extra：它包含 attr_list，会把 {: onclick="..."} 直接写进 HTML
+            extensions=["fenced_code", "tables", "footnotes", "def_list", "sane_lists", "nl2br"],
         )
     )
+    return _sanitize_html(rendered)
 
 
 def _meta_html(report: dict[str, Any]) -> str:

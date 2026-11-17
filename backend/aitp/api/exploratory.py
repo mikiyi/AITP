@@ -11,7 +11,8 @@ from flask import Blueprint, Response, request
 
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
-from ..repositories.exploration_repo import ExplorationSessionRepository
+from ..repositories.exploration_repo import ExplorationSessionRepository, ExplorationStepRepository
+from ..repositories.automation_repo import AutomationScriptRepository
 from ..services import audit_service, exploratory_service
 from .helpers import (
     audit, body, commit, db, guard_project_scope, keyword_of,
@@ -120,11 +121,82 @@ def run_session_api(pk: str) -> Response:
     return ok(session)
 
 
+@bp.post("/sessions/<pk>/to-script")
+def session_to_script(pk: str) -> Response:
+    """P1 #8 录制回放：把探索会话步骤转成 Playwright 回放脚本（复用探索记录器，不另造）。"""
+    conn = db()
+    target = path_int(pk)
+    session = ExplorationSessionRepository(conn).get(target)
+    if session is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "探索会话不存在")
+    guard_project_scope(session, scope_arg(), "探索会话")
+    steps = ExplorationStepRepository(conn).list_by_session(target)
+    lines = [
+        "import os, json",
+        "from playwright.sync_api import sync_playwright",
+        "",
+        "ELEMENTS = {e['name']: e['selector'] for e in json.loads(os.environ.get('AITP_ELEMENTS_JSON', '[]'))}",
+        "",
+        "with sync_playwright() as p:",
+        "    browser = p.chromium.launch(headless=False)",
+        "    page = browser.new_page()",
+    ]
+    for s in steps:
+        action = str(s.get("action") or "")
+        selector = str(s.get("selector") or "")
+        if action == "navigate":
+            url = str(s.get("page_url") or session.get("target_url") or "")
+            lines.append(f"    page.goto({url!r})")
+        elif action == "click" and selector:
+            lines.append(f"    page.click({selector!r})")
+        elif action == "type" and selector:
+            lines.append(f"    page.fill({selector!r}, {str(s.get('input_masked') or '')!r})")
+        else:
+            lines.append("    page.wait_for_timeout(500)")
+    lines.append("    browser.close()")
+    content = "\n".join(lines) + "\n"
+    repo = AutomationScriptRepository(conn)
+    script_no = repo.next_script_no("web")
+    name = f"{session.get('name') or '探索'} 回放"
+    new_id = repo.insert({
+        "script_no": script_no, "project_id": session.get("project_id"),
+        "name": name, "category": "web", "content": content,
+        "source": "exploratory", "file_name": f"{script_no}.py",
+        "run_mode": "script", "framework": "playwright", "status": "ready",
+    })
+    commit(conn)
+    return ok({"scriptId": new_id, "scriptNo": script_no, "name": name})
+
+
 @bp.get("/steps/<pk>/evidence")
 def step_evidence_api(pk: str) -> Response:
     conn = db()
     target = path_int(pk)
+    project_id = scope_arg()
+    if project_id is None:
+        raise AppError(ErrorCode.PARAM_ERROR, "缺少 projectId，无法校验证据归属")
     evidence = exploratory_service.step_evidence(conn, target)
     if evidence is None:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "该步骤没有证据快照")
+    if int(evidence.get("projectId") or -1) != int(project_id):
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "证据不属于该项目")
     return ok(evidence)
+
+
+@bp.post("/sessions/<pk>/steps/<step_id>/to-bug")
+def step_to_bug_api(pk: str, step_id: str) -> Response:
+    """异常步一键登记缺陷：有未审产物走审核转缺陷，否则直接建缺陷，证据随行挂载。"""
+    conn = db()
+    target = path_int(pk)
+    row = ExplorationSessionRepository(conn).get(target)
+    if not row:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "探索会话不存在")
+    guard_project_scope(row, scope_arg(), "探索会话")
+    result = exploratory_service.register_step_bug(conn, target, path_int(step_id), body())
+    action = (audit_service.AUDIT_ACTION_UPDATE if result["alreadyLinked"]
+              else audit_service.AUDIT_ACTION_CREATE)
+    audit(conn, action, audit_service.RESOURCE_BUG,
+          int(result["bugId"]), str(result["bugNo"]),
+          {"source": "exploratory", "sessionId": target, "stepId": int(result["stepId"]),
+           "alreadyLinked": result["alreadyLinked"]})
+    return ok(result)

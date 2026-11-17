@@ -28,6 +28,12 @@
         <template #period="{ row }">
           {{ row.periodStart || '-' }} ~ {{ row.periodEnd || '-' }}
         </template>
+        <template #source="{ row }">
+          <el-tooltip v-if="row.sourceLabel" :content="row.sourceLabel" placement="top">
+            <el-tag size="small" type="warning" effect="plain">{{ sourceTypeLabel(row.sourceType) }}</el-tag>
+          </el-tooltip>
+          <span v-else class="muted">项目全量</span>
+        </template>
         <template #actions="{ row }">
           <el-button link type="primary" @click.stop="onRowClick(row)">查看</el-button>
           <el-button link type="success" @click.stop="openKnowledge(row)">加入知识库</el-button>
@@ -102,6 +108,13 @@
         show-icon
         title="章节与指标取自项目当前用例、缺陷的实时统计，生成后为草稿，发布前请人工复核"
       />
+      <el-alert
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-top: 8px"
+        title="这里按项目全量取数；轮次 / 执行矩阵 / 接口场景的范围报告，在对应详情页点「生成报告」更准确"
+      />
       <template #footer>
         <el-button @click="generateVisible = false">取消</el-button>
         <el-button type="primary" :loading="generating" @click="confirmGenerate">生成</el-button>
@@ -159,6 +172,10 @@ const typeOptions = [
   { label: '验收报告', value: 'acceptance' },
 ]
 
+function sourceTypeLabel(sourceType?: string): string {
+  return { run: '轮次', matrix: '矩阵', scenario: '场景' }[sourceType || ''] || '范围'
+}
+
 const columns: ColumnDef[] = [
   { prop: 'reportNo', label: '编号', width: 120 },
   { prop: 'title', label: '标题', minWidth: 200 },
@@ -166,6 +183,7 @@ const columns: ColumnDef[] = [
   { prop: 'versionCode', label: '版本号', width: 100 },
   { prop: 'versionName', label: '版本名称', width: 120 },
   { prop: 'period', label: '统计周期', width: 200, slot: 'period' },
+  { prop: 'source', label: '取数范围', width: 100, slot: 'source' },
   { prop: 'status', label: '状态', width: 90, slot: 'status' },
   { prop: 'id', label: '操作', width: 210, slot: 'actions' },
 ]

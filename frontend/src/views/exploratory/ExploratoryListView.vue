@@ -59,6 +59,8 @@
             <el-button link type="primary" @click="openDetail(scope.row)">明细</el-button>
             <el-button link type="success" :disabled="scope.row.status === 'queued' || scope.row.status === 'running'"
                        @click="run(scope.row)">运行</el-button>
+            <el-button link type="warning" :disabled="scope.row.status !== 'done'"
+                       @click="toScript(scope.row)">生成脚本</el-button>
             <el-button link type="danger" @click="remove(scope.row)">删除</el-button>
           </template>
         </el-table-column>
@@ -277,6 +279,15 @@ async function run(row: ExplorationSession): Promise<void> {
 
 function openDetail(row: ExplorationSession): void {
   router.push({ name: 'exploratory-detail', params: { id: row.id } })
+}
+
+async function toScript(row: ExplorationSession): Promise<void> {
+  try {
+    const r = await exploratoryApi.toScript(row.id as number)
+    ElMessage.success(`已生成回放脚本 ${r.scriptNo}（Web 自动化）`)
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '生成脚本失败')
+  }
 }
 
 async function remove(row: ExplorationSession): Promise<void> {

@@ -20,6 +20,7 @@ from ..common.validators import require_int
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.project_repo import ProjectRepository
+from ..repositories.test_data_repo import TestDataBatchRepository, TestDataFileRepository
 from ..services import audit_service, test_data_sample_service
 from ..services.test_data_formats import formats_payload
 from ..services.test_data_service import (
@@ -37,6 +38,7 @@ from .helpers import (
     commit,
     db,
     download_response,
+    guard_project_scope,
     keyword_of,
     page_args,
     path_int,
@@ -60,10 +62,10 @@ def _version_scope(filters: dict[str, Any]) -> int | None:
 
 
 def _guard_batch_scope(batch: dict[str, Any]) -> None:
-    """批次详情/归档是整包文件，带 projectId 时必须同项目。"""
-    project_id = scope_arg()
-    if project_id is not None and int(batch.get("projectId") or -1) != project_id:
-        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "批次不属于该项目")
+    """批次详情/下载/归档/删除都必须同项目。"""
+    guard_project_scope(
+        {"project_id": batch.get("projectId")}, scope_arg(), "测试数据批次",
+    )
 
 
 @bp.get("/formats")
@@ -139,7 +141,15 @@ def get_batch_detail(pk: str) -> Response:
 @bp.get("/files/<pk>/download")
 def download_file(pk: str) -> Response:
     conn = db()
-    content, name, media_type = read_file(conn, path_int(pk))
+    file_id = path_int(pk)
+    file_row = TestDataFileRepository(conn).get(file_id)
+    if not file_row:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "文件不存在或已删除")
+    batch = TestDataBatchRepository(conn).get(int(file_row["batch_id"]))
+    if not batch:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "批次不存在或已删除")
+    guard_project_scope(batch, scope_arg(), "测试数据批次")
+    content, name, media_type = read_file(conn, file_id)
     return download_response(content, name, media_type)
 
 

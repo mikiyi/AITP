@@ -60,14 +60,50 @@ class Api:
 
     def __init__(self, app: Flask) -> None:
         self.client = app.test_client()
+        self.scope_project_id: int | None = None
         self.app = app
+
+    def _scoped(self, path: str) -> str:
+        if not self.scope_project_id or "projectId=" in path:
+            return path
+        bare = path.split("?")[0]
+        if not any(part.isdigit() for part in bare.strip("/").split("/")):
+            return path
+        sep = "&" if "?" in path else "?"
+        return f"{path}{sep}projectId={self.scope_project_id}"
 
     def call(self, method: str, path: str, payload: JsonDict | None = None,
              **kwargs: Any) -> tuple[TestResponse, JsonDict]:
-        resp = self.client.open(path, method=method, json=payload, **kwargs)
+        resp = self.client.open(self._scoped(path), method=method, json=payload, **kwargs)
         body = resp.get_json(silent=True)
         if body is None:
             body = {"code": -1, "message": "非 JSON 响应", "data": None}
+        if (method == "POST" and not self.scope_project_id
+                and path.split("?")[0].rstrip("/").endswith("/projects")):
+            data = body.get("data")
+            if isinstance(data, dict) and data.get("id"):
+                self.scope_project_id = int(data["id"])
+        explicit = None
+        if isinstance(payload, dict) and payload.get("projectId") not in (None, ""):
+            try:
+                explicit = int(payload["projectId"])
+            except (TypeError, ValueError):
+                explicit = None
+        if explicit is None and "?" in path:
+            for part in path.split("?", 1)[1].split("&"):
+                if part.startswith("projectId="):
+                    try:
+                        explicit = int(part.split("=", 1)[1])
+                    except ValueError:
+                        explicit = None
+                    break
+        if explicit is not None:
+            self.scope_project_id = explicit
+        elif (method == "POST" and path.split("?")[0].rstrip("/").endswith("/projects")
+              and body.get("code") == 200000):
+            project = body.get("data")
+            if isinstance(project, dict) and project.get("id"):
+                self.scope_project_id = int(project["id"])
         return resp, cast(JsonDict, body)
 
     def data(self, method: str, path: str, payload: JsonDict | None = None,
@@ -75,7 +111,12 @@ class Api:
         resp, body = self.call(method, path, payload, **kwargs)
         if body.get("code") != ErrorCode.SUCCESS:
             raise AssertionError(f"{method} {path} 期望成功，实际 code={body.get('code')} msg={body.get('message')}")
-        return body.get("data")
+        result = body.get("data")
+        if (method == "POST" and not self.scope_project_id
+                and path.split("?")[0].rstrip("/").endswith("/projects")):
+            if isinstance(result, dict) and result.get("id"):
+                self.scope_project_id = int(result["id"])
+        return result
 
     def expect(self, name: str, method: str, path: str, code: int,
                payload: JsonDict | None = None, **kwargs: Any) -> JsonDict:

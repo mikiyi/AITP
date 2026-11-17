@@ -46,13 +46,28 @@ def check(name: str, condition: bool, detail: str = "") -> bool:
 class Api:
     def __init__(self, app: Flask) -> None:
         self.client = app.test_client()
+        self.scope_project_id: int | None = None
+
+    def _scoped(self, path: str) -> str:
+        if not self.scope_project_id or "projectId=" in path:
+            return path
+        bare = path.split("?")[0]
+        if not any(part.isdigit() for part in bare.strip("/").split("/")):
+            return path
+        sep = "&" if "?" in path else "?"
+        return f"{path}{sep}projectId={self.scope_project_id}"
 
     def call(self, method: str, path: str,
              payload: JsonDict | None = None) -> tuple[TestResponse, JsonDict]:
-        resp = self.client.open(path, method=method, json=payload)
+        resp = self.client.open(self._scoped(path), method=method, json=payload)
         body = resp.get_json(silent=True)
         if body is None:
             body = {"code": -1, "message": "非 JSON 响应", "data": None}
+        if (method == "POST" and not self.scope_project_id
+                and path.split("?")[0].rstrip("/").endswith("/projects")):
+            data = body.get("data")
+            if isinstance(data, dict) and data.get("id"):
+                self.scope_project_id = int(data["id"])
         return resp, cast(JsonDict, body)
 
     def data(self, method: str, path: str, payload: JsonDict | None = None) -> Any:
@@ -61,7 +76,12 @@ class Api:
             raise AssertionError(
                 f"{method} {path} 期望成功，实际 code={body.get('code')} msg={body.get('message')}"
             )
-        return body.get("data")
+        result = body.get("data")
+        if (method == "POST" and not self.scope_project_id
+                and path.split("?")[0].rstrip("/").endswith("/projects")):
+            if isinstance(result, dict) and result.get("id"):
+                self.scope_project_id = int(result["id"])
+        return result
 
     def code(self, method: str, path: str, payload: JsonDict | None = None) -> Any:
         _, body = self.call(method, path, payload)

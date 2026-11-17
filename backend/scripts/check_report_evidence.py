@@ -76,14 +76,26 @@ def check(name: str, condition: bool, detail: str = "") -> bool:
 class Api:
     def __init__(self, app: Any) -> None:
         self.client = app.test_client()
+        self.scope_project_id: int | None = None
+
+    def _scoped(self, path: str) -> str:
+        if self.scope_project_id and "projectId=" not in path:
+            sep = "&" if "?" in path else "?"
+            return f"{path}{sep}projectId={self.scope_project_id}"
+        return path
 
     def call(
         self, method: str, path: str, payload: dict[str, Any] | None = None
     ) -> tuple[Any, dict[str, Any]]:
+        path = self._scoped(path)
         resp = self.client.open(path, method=method, json=payload)
         body = resp.get_json(silent=True)
         if body is None:
             body = {"code": -1, "message": "非 JSON 响应", "data": None}
+        if method == "POST" and path.split("?")[0].rstrip("/").endswith("/projects"):
+            data = body.get("data")
+            if isinstance(data, dict) and data.get("id"):
+                self.scope_project_id = int(data["id"])
         return resp, cast(dict[str, Any], body)
 
     def data(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
@@ -100,7 +112,7 @@ class Api:
         return body
 
     def blob(self, path: str) -> tuple[Any, bytes]:
-        resp = self.client.get(path)
+        resp = self.client.get(self._scoped(path))
         return resp, bytes(resp.get_data())
 
 
@@ -711,6 +723,8 @@ def section_contract(api: Api, conn: sqlite3.Connection, project_id: int, report
     check("跨项目不串失败样本（正向对照）", foreign["total"] == 0, str(foreign)[:200])
     check("隔壁项目报告的取样范围指向自己",
           int(foreign["scope"]["projectId"]) == int(other["id"]), str(foreign["scope"])[:200])
+    # 造完隔壁项目后切回原项目，后面的计数对照仍按原报告取数
+    api.scope_project_id = project_id
     check("原项目条数不受隔壁项目报告影响",
           samples_of(api, report_id)["total"] == real_failed_total(conn, project_id),
           str(samples_of(api, report_id))[:200])
@@ -818,6 +832,7 @@ def main() -> int:
         # 项目 A：真实失败 + 真实执行证据
         project = api.data("POST", f"{V1}/projects", {"code": "REPA", "name": "报告证据项目"})
         project_id = int(project["id"])
+        api.scope_project_id = project_id
         case_bad1 = make_interface_case(api, project_id, "报告门禁失败用例一", "/bad")
         case_bad2 = make_interface_case(api, project_id, "报告门禁失败用例二", "/bad")
         case_ok = make_interface_case(api, project_id, "报告门禁通过用例", "/ok")
@@ -841,6 +856,7 @@ def main() -> int:
                                version_report_id, version_id)
         section_summaries(api, report_id)
         section_period_scope(api, conn, project_id, total)
+        api.scope_project_id = project_id
         section_contract(api, conn, project_id, report_id)
         section_exports(api, report_id)
 

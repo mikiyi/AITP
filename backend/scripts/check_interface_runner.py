@@ -48,12 +48,23 @@ def check(name: str, condition: bool, detail: str = "") -> bool:
 class Api:
     def __init__(self, app: Flask) -> None:
         self.client = app.test_client()
+        self.scope_project_id: int | None = None
+
+    def _scoped(self, path: str) -> str:
+        if self.scope_project_id and "projectId=" not in path:
+            sep = "&" if "?" in path else "?"
+            return f"{path}{sep}projectId={self.scope_project_id}"
+        return path
 
     def call(self, method: str, path: str, payload: JsonDict | None = None) -> tuple[TestResponse, JsonDict]:
-        resp = self.client.open(path, method=method, json=payload)
+        resp = self.client.open(self._scoped(path), method=method, json=payload)
         body = resp.get_json(silent=True)
         if body is None:
             body = {"code": -1, "message": "非 JSON 响应", "data": None}
+        if method == "POST" and path.split("?")[0].rstrip("/").endswith("/projects"):
+            data = body.get("data")
+            if isinstance(data, dict) and data.get("id"):
+                self.scope_project_id = int(data["id"])
         return resp, cast(JsonDict, body)
 
     def data(self, method: str, path: str, payload: JsonDict | None = None) -> Any:

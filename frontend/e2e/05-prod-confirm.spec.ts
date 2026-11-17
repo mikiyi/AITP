@@ -20,12 +20,12 @@ test('BUG-3 生产环境调度必须显式确认（API 守卫）', async () => {
   const mid = matrix.matrix.id
 
   // 未确认 → 拒绝
-  const denied = await api('POST', `/execution-matrices/${mid}/run`, { confirmProd: false })
+  const denied = await api('POST', `/execution-matrices/${mid}/run?projectId=${seed.projectId}`, { confirmProd: false })
   expect(denied.code).not.toBe(200000)
   expect(String(denied.message)).toContain('生产环境')
 
   // 显式确认 → 投递任务队列
-  const okRun = await api('POST', `/execution-matrices/${mid}/run`, { confirmProd: true })
+  const okRun = await api('POST', `/execution-matrices/${mid}/run?projectId=${seed.projectId}`, { confirmProd: true })
   expect(okRun.code).toBe(200000)
   expect(okRun.data.task.id).toBeGreaterThan(0)
 })

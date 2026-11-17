@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { knowledgeApi } from '@/api'
-import type { AssistantHistoryMessage, AssistantRef, MaskInfo } from '@/api/types'
+import type { AssistantHistoryMessage, AssistantRef, AssistantThinking, MaskInfo } from '@/api/types'
 
 export type AssistantMode = 'kb' | 'llm' | 'hybrid'
 
@@ -23,6 +23,8 @@ export interface AssistantChatItem {
   answeredAt?: string
   /** 本次回答的外发脱敏结果 */
   mask?: MaskInfo
+  /** 思考过程展示态（瞬态缓存 / opt-in 已保存 / 历史回放） */
+  thinking?: AssistantThinking
   submitState?: 'idle' | 'submitting' | 'submitted'
   meta?: {
     mode: AssistantMode
@@ -44,6 +46,7 @@ function toChatItem(item: AssistantHistoryMessage): AssistantChatItem {
     return { role: 'user', content: item.content, mode: itemMode }
   }
   const mask = item.mask && Object.keys(item.mask).length ? item.mask : undefined
+  const savedThinking = String(item.thinkingText ?? '')
   return {
     role: 'assistant',
     content: item.content,
@@ -52,6 +55,12 @@ function toChatItem(item: AssistantHistoryMessage): AssistantChatItem {
     egressWarning: item.egressWarning ?? '',
     answeredAt: item.answeredAt,
     mask,
+    thinking: savedThinking
+      ? {
+          text: savedThinking, seconds: 0, chars: savedThinking.length,
+          done: true, interrupted: false, collapsed: true, saved: true, fromHistory: true,
+        }
+      : undefined,
     submitState: item.submitState === 'submitted' ? 'submitted' : 'idle',
     meta: {
       mode: normalize(item.meta?.mode ?? item.mode),

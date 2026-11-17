@@ -2,6 +2,7 @@ import {
   del,
   get,
   getBlob,
+  getRequestProjectId,
   post,
   postBlob,
   postLong,
@@ -103,6 +104,10 @@ import type {
   TestEnvProbe,
   TestCase,
   TestDataPreview,
+  DataPool,
+  EnvDiffResult,
+  ApiScenario,
+  ApiScenarioRunResult,
   InterfaceBatchResult,
   InterfaceExecution,
   TestDataBatch,
@@ -150,16 +155,28 @@ import type {
   ExplorationSessionDetail,
 } from './types'
 
-/** 拼接下载类接口的查询串，跳过空值。 */
+/** 拼接下载类接口的查询串，跳过空值；缺 projectId 时补当前项目。 */
 function exportUrl(path: string, query: Record<string, unknown>): string {
+  const merged: Record<string, unknown> = { ...query }
+  const projectId = getRequestProjectId()
+  if (projectId && (merged.projectId === undefined || merged.projectId === null)) {
+    merged.projectId = projectId
+  }
   const params = new URLSearchParams()
-  Object.entries(query).forEach(([key, value]) => {
+  Object.entries(merged).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') {
       params.append(key, String(value))
     }
   })
   const qs = params.toString()
   return qs ? `/api/v1/${path}?${qs}` : `/api/v1/${path}`
+}
+
+/** 直接在新窗口打开的下载地址：同样补当前项目，避免绕过归属校验。 */
+function scopedUrl(path: string): string {
+  const projectId = getRequestProjectId()
+  if (!projectId) return path
+  return `${path}${path.includes('?') ? '&' : '?'}projectId=${projectId}`
 }
 
 /** 同步执行接口/自动化脚本时，按脚本自身超时再留 1 分钟余量。 */
@@ -263,6 +280,7 @@ export const testRunApi = {
   list: (query: Record<string, unknown> = {}) =>
     get<PagePayload<TestRun>>('/test-runs', query as never),
   get: (id: number) => get<TestRun>(`/test-runs/${id}`),
+  envDiff: (id: number) => get<EnvDiffResult>(`/test-runs/${id}/env-diff`),
   create: (body: Record<string, unknown>) => post<TestRun>('/test-runs', body),
   update: (id: number, body: Record<string, unknown>) => put<TestRun>(`/test-runs/${id}`, body),
   refreshScope: (id: number) =>
@@ -407,6 +425,32 @@ export const requirementApi = {
 }
 
 /** 四级模块树。 */
+export const apiScenarioApi = {
+  list: (query: Record<string, unknown> = {}) =>
+    get<PagePayload<ApiScenario>>('/api-scenarios', query as never),
+  get: (id: number) => get<ApiScenario>(`/api-scenarios/${id}`),
+  create: (body: Record<string, unknown>) => post<ApiScenario>('/api-scenarios', body),
+  update: (id: number, body: Record<string, unknown>) => put<ApiScenario>(`/api-scenarios/${id}`, body),
+  remove: (id: number) => del(`/api-scenarios/${id}`),
+  run: (id: number, body: Record<string, unknown> = {}) =>
+    post<ApiScenarioRunResult>(`/api-scenarios/${id}/run`, body),
+  runs: (id: number, query: Record<string, unknown> = {}) =>
+    get<PagePayload<ApiScenarioRunResult>>(`/api-scenarios/${id}/runs`, query as never),
+  trend: (id: number) => get<{ points: { runNo: string; passed: boolean; durationMs: number; createdAt: string }[]; total: number; passRate: number | null }>(`/api-scenarios/${id}/trend`),
+  toBug: (id: number, runId: number) => post<{ bugId: number; bugNo: string }>(`/api-scenarios/${id}/runs/${runId}/to-bug`, {}),
+  reportUrl: (id: number, runId: number) =>
+    scopedUrl(`/api/v1/api-scenarios/${id}/runs/${runId}/report`),
+  metrics: () => get<{ list: { category: string; categoryLabel: string; total: number; success: number; passRate: number | null; avgDurationMs: number; p95DurationMs: number }[] }>('/automation/metrics'),
+}
+
+export const schedulesApi = {
+  list: (query: Record<string, unknown> = {}) => get<PagePayload<Record<string, unknown>>>('/schedules', query as never),
+  create: (body: Record<string, unknown>) => post<Record<string, unknown>>('/schedules', body),
+  update: (id: number, body: Record<string, unknown>) => put<Record<string, unknown>>(`/schedules/${id}`, body),
+  remove: (id: number) => del(`/schedules/${id}`),
+  trigger: (id: number) => post<{ taskId: number }>(`/schedules/${id}/trigger`, {}),
+}
+
 export const moduleApi = {
   tree: (projectId: number) =>
     get<{ projectId: number; tree: ModuleNode[] }>('/modules/tree', { projectId }),
@@ -430,8 +474,8 @@ export const caseApi = {
   create: (body: Record<string, unknown>) => post<TestCase>('/test-cases', body),
   update: (id: number, body: Record<string, unknown>) => put<TestCase>(`/test-cases/${id}`, body),
   remove: (id: number) => del(`/test-cases/${id}`),
-  previewTestData: (value: string) =>
-    post<TestDataPreview>('/test-cases/preview-test-data', { value }),
+  previewTestData: (value: string, projectId?: number | null) =>
+    post<TestDataPreview>('/test-cases/preview-test-data', { value, projectId }),
   batchRemove: (ids: number[]) => post<BatchDeleteResult>('/test-cases/batch-delete', { ids }),
   execute: (id: number, body: Record<string, unknown>) => post(`/test-cases/${id}/execute`, body),
   runInterface: (id: number, body: Record<string, unknown> = {}) =>
@@ -478,6 +522,17 @@ export const caseApi = {
   exportUrl: (query: Record<string, unknown>) => exportUrl('test-cases/export', query),
 }
 
+/** 独立数据池：项目内共享测试数据，用例 / 场景用 pool:<名称> 引用。 */
+export const dataPoolApi = {
+  list: (query: Record<string, unknown> = {}) =>
+    get<PagePayload<DataPool>>('/data-pools', query as never),
+  get: (id: number) => get<DataPool>(`/data-pools/${id}`),
+  create: (body: Record<string, unknown>) => post<DataPool>('/data-pools', body),
+  update: (id: number, body: Record<string, unknown>) => put<DataPool>(`/data-pools/${id}`, body),
+  remove: (id: number) => del(`/data-pools/${id}`),
+  preview: (id: number) => post<TestDataPreview>(`/data-pools/${id}/preview`),
+}
+
 /** 缺陷。 */
 export const bugApi = {
   list: (query: Record<string, unknown> = {}) =>
@@ -508,6 +563,8 @@ export const knowledgeApi = {
   /** 问答助手历史：默认最近一条会话，页面挂载时回放，换菜单/重启后不丢问答。 */
   assistantHistory: (sessionId?: number | null) =>
     get<AssistantHistory>('/knowledge/assistant/history', sessionId ? { sessionId } : {}),
+  assistantSaveThinking: (body: { sessionId: number; answeredAt: string; text: string }) =>
+    post<{ saved: boolean; messageId: number }>('/knowledge/assistant/save-thinking', body),
   /** 把模型回答连同溯源信息加入待审池；同一问同答同时间只入池一次。 */
   addAssistantAnswer: (body: Record<string, unknown>) =>
     post<KnowledgeDraft>('/knowledge/assistant/add', body),
@@ -629,7 +686,7 @@ export const reportApi = {
   removeReportFragment: (id: number, fragmentId: number) =>
     del<{ reportId: number; fragments: ReportFragment[] }>(`/reports/${id}/fragments/${fragmentId}`),
   exportUrl: (id: number, format: 'md' | 'html' | 'pdf' | 'print') =>
-    `/api/v1/reports/${id}/export?format=${format}`,
+    exportUrl(`reports/${id}/export`, { format }),
   /** PDF 走 fetch 而非直接打开：只有这样才能读到中文字体降级的响应头。 */
   exportBlob: (id: number, format: 'md' | 'html' | 'pdf' | 'print') =>
     getBlob(`/reports/${id}/export`, { format }) as Promise<BlobResult>,
@@ -806,6 +863,15 @@ export const automationApi = {
   update: (id: number, body: Record<string, unknown>) =>
     put<AutomationScript>(`/automation/scripts/${id}`, body),
   remove: (id: number) => del(`/automation/scripts/${id}`),
+  /** P1 #7 版本/差异/评审 */
+  versions: (id: number) => get<{ list: { id: number; versionNo: number; changeNote: string; reviewStatus: string; createdAt: string }[] }>(`/automation/scripts/${id}/versions`),
+  diff: (id: number, base: string, target: string) => get<{ diff: string[] }>(`/automation/scripts/${id}/diff`, { base, target }),
+  reviewVersion: (id: number, vid: number, status: string) => post<{ reviewStatus: string }>(`/automation/scripts/${id}/versions/${vid}/review`, { status }),
+  /** P1 #8 元素库 */
+  elements: (projectId: number) => get<{ list: { id: number; page: string; name: string; selector: string; kind: string; description: string }[] }>('/automation/ui-elements', { projectId }),
+  createElement: (body: Record<string, unknown>) => post<Record<string, unknown>>('/automation/ui-elements', body),
+  updateElement: (id: number, body: Record<string, unknown>) => put<Record<string, unknown>>(`/automation/ui-elements/${id}`, body),
+  removeElement: (id: number) => del(`/automation/ui-elements/${id}`),
   /** 执行脚本；失败也返回记录（status=failed）。 */
   run: (id: number, body: Record<string, unknown> = {}) =>
     postLong<AutomationRun>(`/automation/scripts/${id}/run`, body, runTimeout(body)),
@@ -822,6 +888,9 @@ export const automationApi = {
   runs: (query: Record<string, unknown> = {}) =>
     get<AutomationRunPage>('/automation/runs', query as never),
   runDetail: (id: number) => get<AutomationRun>(`/automation/runs/${id}`),
+  runReportUrl: (id: number) => scopedUrl(`/api/v1/automation/runs/${id}/report`),
+  artifactUrl: (id: number, path: string) =>
+    scopedUrl(`/api/v1/automation/runs/${id}/artifacts/download?path=${encodeURIComponent(path)}`),
 }
 
 /** SQL 分析资产：AI 产出的 SQL 分析结论统一归档在这里。 */
@@ -843,8 +912,8 @@ export const testDataApi = {
     get<TestDataBatchPage>('/test-data/batches', query as never),
   batch: (id: number) => get<TestDataBatch>(`/test-data/batches/${id}`),
   removeBatch: (id: number) => del(`/test-data/batches/${id}`),
-  fileUrl: (id: number) => `/api/v1/test-data/files/${id}/download`,
-  archiveUrl: (id: number) => `/api/v1/test-data/batches/${id}/archive`,
+  fileUrl: (id: number) => scopedUrl(`/api/v1/test-data/files/${id}/download`),
+  archiveUrl: (id: number) => scopedUrl(`/api/v1/test-data/batches/${id}/archive`),
   maskSchemes: (projectId: number) =>
     get<{ list: TestDataMaskScheme[] }>('/test-data/mask-schemes', { projectId }),
   createMaskScheme: (body: Record<string, unknown>) =>
@@ -948,8 +1017,15 @@ export const exploratoryApi = {
     post<ExplorationSession>('/exploratory/sessions', body),
   removeSession: (id: number) => del(`/exploratory/sessions/${id}`),
   runSession: (id: number) => post<ExplorationSession>(`/exploratory/sessions/${id}/run`),
+  toScript: (id: number) => post<{ scriptId: number; scriptNo: string; name: string }>(`/exploratory/sessions/${id}/to-script`, {}),
   stepEvidence: (stepId: number) =>
     get<ExecutionEvidence>(`/exploratory/steps/${stepId}/evidence`),
+  stepToBug: (sessionId: number, stepId: number) =>
+    post<{
+      bugId: number; bugNo: string; bugTitle: string; bugStatus: string
+      stepId: number; sessionId: number; evidenceId: number | null
+      draftId: number | null; alreadyLinked: boolean
+    }>(`/exploratory/sessions/${sessionId}/steps/${stepId}/to-bug`, {}),
 }
 
 /** 设置：AI 档案、系统配置、枚举。 */export const settingsApi = {

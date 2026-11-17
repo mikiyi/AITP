@@ -8,6 +8,9 @@
       </h2>
       <div class="toolbar" style="margin: 0">
         <el-button :icon="Refresh" @click="refreshAll">刷新</el-button>
+        <el-button :icon="Document" :disabled="!detail" :loading="reporting" @click="generateReport">
+          生成报告
+        </el-button>
         <el-button
           type="primary"
           :disabled="!detail || ['queued', 'running'].includes(detail.matrix.status)"
@@ -155,8 +158,8 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Back, Refresh } from '@element-plus/icons-vue'
-import { executionMatrixApi } from '@/api'
+import { Back, Document, Refresh } from '@element-plus/icons-vue'
+import { executionMatrixApi, reportApi } from '@/api'
 import ProdConfirmDialog from '@/components/ProdConfirmDialog.vue'
 import { dateTimeText } from '@/utils/format'
 import type { MatrixCompare, MatrixDetail } from '@/api/types'
@@ -170,6 +173,7 @@ const compareLoading = ref(false)
 const detail = ref<MatrixDetail | null>(null)
 const compare = ref<MatrixCompare | null>(null)
 const creatingBugs = ref(false)
+const reporting = ref(false)
 let poller: ReturnType<typeof setInterval> | null = null
 
 function statusTagType(status: string): 'info' | 'warning' | 'success' | 'danger' | 'primary' {
@@ -315,6 +319,25 @@ async function createBugs(): Promise<void> {
     ElMessage.error(err instanceof Error ? err.message : '转缺陷失败')
   } finally {
     creatingBugs.value = false
+  }
+}
+
+async function generateReport(): Promise<void> {
+  if (!detail.value) return
+  reporting.value = true
+  try {
+    const report = await reportApi.generate({
+      projectId: detail.value.matrix.projectId,
+      reportType: 'iteration',
+      sourceType: 'matrix',
+      sourceId: detail.value.matrix.id,
+    })
+    ElMessage.success(`已生成矩阵报告 ${report.reportNo}`)
+    void router.push(`/reports/${report.id}`)
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '生成报告失败')
+  } finally {
+    reporting.value = false
   }
 }
 

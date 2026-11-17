@@ -12,7 +12,7 @@
     </div>
 
     <p v-if="spec" class="cap-sub">
-      <span class="cap-sub__prompt">{{ dataMode === 'files' ? '本地构造' : dataMode === 'samples' ? '本地脱敏' : spec.promptCode }}</span>
+      <span class="cap-sub__prompt">{{ dataMode === 'files' ? '本地构造' : dataMode === 'samples' ? '本地脱敏' : dataMode === 'pool' ? '共享复用' : spec.promptCode }}</span>
       <span class="cap-sub__desc">{{ capSubDesc }}</span>
     </p>
 
@@ -26,10 +26,12 @@
       <el-radio-button value="sql">SQL 造数</el-radio-button>
       <el-radio-button value="files">测试文件生成</el-radio-button>
       <el-radio-button value="samples">脱敏样本</el-radio-button>
+      <el-radio-button value="pool">数据池</el-radio-button>
     </el-radio-group>
 
     <TestDataFilesPanel v-if="dataMode === 'files'" :module-id="moduleId" />
     <TestDataSamplesPanel v-else-if="dataMode === 'samples'" />
+    <TestDataPoolPanel v-else-if="dataMode === 'pool'" />
 
     <div v-else class="cap-layout">
       <div class="panel panel-pad cap-input">
@@ -818,6 +820,7 @@ import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import PromptOptimizer from '@/components/PromptOptimizer.vue'
 import TestDataFilesPanel from './TestDataFilesPanel.vue'
 import TestDataSamplesPanel from './TestDataSamplesPanel.vue'
+import TestDataPoolPanel from './TestDataPoolPanel.vue'
 import { aiApi, automationApi, caseApi, knowledgeApi, labApi, moduleApi, projectVersionApi, recordApi, reportApi, requirementApi, templateApi } from '@/api'
 import { streamPost, type DegradeInfo } from '@/api/stream'
 import type {
@@ -868,7 +871,9 @@ const capSubDesc = computed(() =>
     ? '按格式、大小与命名规则在本机批量生成测试文件，不联网、不经过大模型'
     : dataMode.value === 'samples'
       ? '导入生产样本后按字段规则在本机脱敏，只落脱敏副本；样本与方案都归当前项目'
-      : (spec.value?.promptDescription || spec.value?.goal || ''),
+      : dataMode.value === 'pool'
+        ? '按项目维护可被多条用例 / 场景共享的数据集，引用写法 pool:名称，改池即改全部引用'
+        : (spec.value?.promptDescription || spec.value?.goal || ''),
 )
 
 const values = reactive<Record<string, string>>({})
@@ -881,7 +886,7 @@ const moduleId = ref<number | null>(null)
 const versionId = ref<number | null>(null)
 const versionOptions = ref<Array<{ label: string; value: number }>>([])
 /** 测试数据生成的三条路径：SQL 造数走大模型，文件走本机构造，样本走本地脱敏。 */
-const dataMode = ref<'sql' | 'files' | 'samples'>('sql')
+const dataMode = ref<'sql' | 'files' | 'samples' | 'pool'>('sql')
 
 const running = ref(false)
 /** 本次执行是否由用户主动停止：停止后再收到错误帧不该当成失败弹红条。 */
@@ -1545,7 +1550,8 @@ function resetValues(): void {
   const moduleQuery = Number(route.query.moduleId ?? 0)
   moduleId.value = moduleQuery > 0 ? moduleQuery : null
   const mode = route.query.mode
-  dataMode.value = mode === 'files' ? 'files' : mode === 'samples' ? 'samples' : 'sql'
+  dataMode.value = mode === 'files' ? 'files' : mode === 'samples' ? 'samples'
+    : mode === 'pool' ? 'pool' : 'sql'
   if (moduleId.value) {
     labStore.currentModuleId = moduleId.value
   }

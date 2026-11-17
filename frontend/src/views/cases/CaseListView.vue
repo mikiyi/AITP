@@ -58,6 +58,16 @@
           @filters-reset="clearModuleNav"
         >
           <template #batch="{ rows }">
+            <el-button
+              size="small"
+              type="primary"
+              plain
+              :disabled="!rows.length"
+              :loading="runLaunching"
+              @click="openRunDialog(rows)"
+            >
+              发起测试轮次
+            </el-button>
             <el-button size="small" type="danger" plain :loading="batchRemoving" @click="batchRemove(rows)">
               批量删除
             </el-button>
@@ -175,7 +185,7 @@
                   v-model="form.extra[field.key]"
                   type="textarea"
                   :rows="3"
-                  placeholder="直接填写测试数据，或填本地文件路径：.txt / .csv / .xlsx / .xls / .json / .sql"
+                  placeholder="直接填写测试数据、填本地文件路径（.txt / .csv / .xlsx / .xls / .json / .sql），或写 pool:<数据池名称> 复用共享数据"
                 />
                 <div class="test-data-editor__bar">
                   <el-button size="small" :loading="previewLoading" @click="previewTestData">解析预览</el-button>
@@ -222,6 +232,60 @@
       <template #footer>
         <el-button @click="importVisible = false">取消</el-button>
         <el-button type="primary" :loading="importing" @click="doImport">开始导入</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="runDialogVisible" title="发起测试轮次" width="620px">
+      <el-alert
+        type="info"
+        show-icon
+        :closable="false"
+        :title="`已选 ${runCaseIds.length} 条用例，将生成这一轮的执行快照`"
+        style="margin-bottom: 12px"
+      />
+      <el-form label-width="90px">
+        <el-form-item label="轮次名称" required>
+          <el-input v-model="runForm.name" placeholder="例如：登录模块批量验证" />
+        </el-form-item>
+        <el-form-item label="轮次类型">
+          <el-select v-model="runForm.roundType" placeholder="不指定" clearable style="width: 100%" @change="onRunRoundTypeChange">
+            <el-option v-for="t in roundMeta.types" :key="t.value" :label="t.label" :value="t.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="核心目标">
+          <el-input v-model="runForm.goal" placeholder="本轮要回答的问题，选类型后自动带出" />
+        </el-form-item>
+        <el-form-item label="版本">
+          <el-select v-model="runForm.versionId" placeholder="不指定版本" clearable filterable style="width: 100%">
+            <el-option v-for="item in versionOptions" :key="item.value" :label="item.label" :value="item.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="环境">
+          <el-select v-model="runForm.envId" placeholder="不指定环境" clearable style="width: 100%">
+            <el-option
+              v-for="item in runEnvs"
+              :key="item.id"
+              :label="`${item.name}${item.kindLabel ? `（${item.kindLabel}）` : ''}`"
+              :value="item.id"
+            />
+          </el-select>
+          <div v-if="runEnvIsProd" class="muted" style="margin-top: 4px">这是生产环境，发起时会再次确认。</div>
+        </el-form-item>
+        <el-form-item label="计划时间窗">
+          <el-date-picker
+            v-model="runForm.plannedRange"
+            type="daterange"
+            value-format="YYYY-MM-DD"
+            range-separator="~"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+            style="width: 100%"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="runDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="runLaunching" @click="launchRun">发起轮次</el-button>
       </template>
     </el-dialog>
 
@@ -280,7 +344,7 @@ import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
 import ModuleTree, { type ModuleTreeExpose } from '@/components/ModuleTree.vue'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
-import { caseApi, moduleApi, projectVersionApi, requirementApi } from '@/api'
+import { caseApi, moduleApi, projectVersionApi, requirementApi, testEnvApi, testRunApi } from '@/api'
 import type { PagePayload } from '@/api/request'
 import { NODE_CASE_PAGE_SIZE } from '@/composables/useNodeCases'
 import type {
@@ -291,8 +355,10 @@ import type {
   ModuleNode,
   ModuleOption,
   Requirement,
+  RoundMeta,
   TestCase,
   TestDataPreview,
+  TestEnv,
 } from '@/api/types'
 import { caseTypeText } from '@/utils/format'
 import { useProjectScope } from '@/composables/useProjectScope'
@@ -694,7 +760,10 @@ const testDataPreviewLabel = computed(() => {
 async function previewTestData(): Promise<void> {
   previewLoading.value = true
   try {
-    testDataPreview.value = await caseApi.previewTestData(form.extra['测试数据'] ?? '')
+    testDataPreview.value = await caseApi.previewTestData(
+      form.extra['测试数据'] ?? '',
+      form.projectId ?? appStore.currentProjectId,
+    )
   } catch (err) {
     testDataPreview.value = null
     ElMessage.error(err instanceof Error ? err.message : '测试数据解析失败')
@@ -886,6 +955,110 @@ function onRowClick(row: TestCase): void {
 }
 
 const batchRemoving = ref(false)
+
+const runDialogVisible = ref(false)
+const runLaunching = ref(false)
+const runCaseIds = ref<number[]>([])
+const roundMeta = ref<RoundMeta>({ types: [], presets: [], templates: [] })
+const runEnvs = ref<TestEnv[]>([])
+const runForm = reactive({
+  name: '',
+  roundType: '',
+  goal: '',
+  versionId: null as number | null,
+  envId: null as number | null,
+  plannedRange: null as [string, string] | null,
+})
+
+const runEnvIsProd = computed(
+  () => runEnvs.value.find((item) => item.id === runForm.envId)?.kind === 'prod',
+)
+
+function defaultRunName(): string {
+  const now = new Date()
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `用例批量验证 · ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`
+}
+
+async function openRunDialog(rows: Record<string, any>[]): Promise<void> {
+  const ids = rows.map((row) => Number(row.id)).filter((id) => Number.isInteger(id) && id > 0)
+  if (!ids.length) {
+    ElMessage.warning('请先勾选要执行的用例')
+    return
+  }
+  runCaseIds.value = ids
+  runForm.name = defaultRunName()
+  runForm.roundType = ''
+  runForm.goal = ''
+  runForm.versionId = null
+  runForm.envId = null
+  runForm.plannedRange = null
+  runDialogVisible.value = true
+  if (!roundMeta.value.types.length) {
+    try {
+      roundMeta.value = await testRunApi.roundMeta()
+    } catch {
+      // 元数据不可用时仍允许发起，只是不带轮次类型
+    }
+  }
+  if (!runEnvs.value.length) {
+    try {
+      runEnvs.value = (await testEnvApi.list()).list
+    } catch {
+      runEnvs.value = []
+    }
+  }
+}
+
+function onRunRoundTypeChange(value: string): void {
+  const hit = roundMeta.value.types.find((item) => item.value === value)
+  runForm.goal = hit?.goal ?? ''
+}
+
+async function launchRun(): Promise<void> {
+  if (!runForm.name.trim()) {
+    ElMessage.warning('轮次名称不能为空')
+    return
+  }
+  if (!runCaseIds.value.length) {
+    ElMessage.warning('请先勾选要执行的用例')
+    return
+  }
+  const prodEnv = runEnvs.value.find((item) => item.id === runForm.envId)
+  if (prodEnv?.kind === 'prod') {
+    try {
+      await ElMessageBox.confirm(
+        `即将在「${prodEnv.name}」生产环境发起轮次，确认继续？`,
+        '生产环境确认',
+        { type: 'warning' },
+      )
+    } catch {
+      return
+    }
+  }
+  runLaunching.value = true
+  try {
+    const run = await testRunApi.create({
+      projectId: appStore.currentProjectId,
+      name: runForm.name.trim(),
+      caseIds: runCaseIds.value,
+      roundType: runForm.roundType || undefined,
+      goal: runForm.goal || undefined,
+      versionId: runForm.versionId ?? undefined,
+      envId: runForm.envId ?? undefined,
+      plannedStart: runForm.plannedRange?.[0] || undefined,
+      plannedEnd: runForm.plannedRange?.[1] || undefined,
+    })
+    ElMessage.success(`已发起轮次「${run.name}」，共 ${run.total} 条用例`)
+    runDialogVisible.value = false
+    tableRef.value?.clearSelection()
+    void router.push({ name: 'test-run-detail', params: { id: run.id } })
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '发起轮次失败')
+  } finally {
+    runLaunching.value = false
+  }
+}
 
 async function batchRemove(rows: Record<string, any>[]): Promise<void> {
   const ids = rows.map((row) => Number(row.id)).filter((id) => Number.isInteger(id) && id > 0)

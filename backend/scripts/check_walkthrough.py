@@ -234,11 +234,52 @@ def build_app(workdir: pathlib.Path) -> Flask:
     return create_app(cfg)
 
 
+def _scope_path(client: Any, path: str) -> str:
+    project_id = getattr(client, "scope_project_id", None)
+    if not project_id or "projectId=" in path:
+        return path
+    bare = path.split("?")[0]
+    if not any(part.isdigit() for part in bare.strip("/").split("/")):
+        return path
+    sep = "&" if "?" in path else "?"
+    return f"{path}{sep}projectId={project_id}"
+
+
 def call(client: Any, method: str, path: str, payload: Any = None) -> dict[str, Any]:
+    path = _scope_path(client, path)
     resp = client.open(path, method=method, json=payload)
     body = resp.get_json(silent=True)
     if not isinstance(body, dict):
         return {"code": -1, "message": "非 JSON 响应", "data": None}
+    if isinstance(payload, dict) and payload.get("projectId"):
+        client.scope_project_id = int(payload["projectId"])
+    if (method == "POST" and path.split("?")[0].rstrip("/").endswith("/projects")
+            and body.get("code") == ErrorCode.SUCCESS
+            and not getattr(client, "scope_project_id", None)):
+        project = body.get("data")
+        if isinstance(project, dict) and project.get("id"):
+            client.scope_project_id = int(project["id"])
+    explicit = None
+    if isinstance(payload, dict) and payload.get("projectId") not in (None, ""):
+        try:
+            explicit = int(payload["projectId"])
+        except (TypeError, ValueError):
+            explicit = None
+    if explicit is None and "?" in path:
+        for part in path.split("?", 1)[1].split("&"):
+            if part.startswith("projectId="):
+                try:
+                    explicit = int(part.split("=", 1)[1])
+                except ValueError:
+                    explicit = None
+                break
+    if explicit is not None:
+        client.scope_project_id = explicit
+    elif (method == "POST" and path.split("?")[0].rstrip("/").endswith("/projects")
+          and body.get("code") == 200000):
+        project = body.get("data")
+        if isinstance(project, dict) and project.get("id"):
+            client.scope_project_id = int(project["id"])
     return cast("dict[str, Any]", body)
 
 

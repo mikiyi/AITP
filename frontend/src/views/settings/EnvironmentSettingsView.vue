@@ -110,6 +110,14 @@
         <el-form-item label="说明">
           <el-input v-model="form.description" placeholder="选填，用途备注" maxlength="500" />
         </el-form-item>
+        <el-form-item label="环境变量">
+          <el-input v-model="form.variablesText" type="textarea" :rows="3"
+                    placeholder='JSON，如 {"tenant":"acme"}；注入接口/场景的 {{var}} 占位符' />
+        </el-form-item>
+        <el-form-item label="全局变量">
+          <el-input v-model="globalVarsText" type="textarea" :rows="3"
+                    placeholder='项目级 JSON 变量，所有环境共享；环境变量优先覆盖' />
+        </el-form-item>
         <el-form-item label="设为默认">
           <el-switch v-model="form.isDefault" />
           <span class="muted form-hint">首页健康监测默认监测这套环境</span>
@@ -191,8 +199,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Back, Lock, Plus } from '@element-plus/icons-vue'
 import RouteSubNav from '@/components/RouteSubNav.vue'
 import { EXEC_TABS } from '@/router/subnav'
-import { testEnvApi } from '@/api'
+import { testEnvApi, settingsApi } from '@/api'
 import type { TestEnv, TestEnvListResult, TestEnvProbe } from '@/api/types'
+import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
 
@@ -232,6 +241,7 @@ const emptyForm = () => ({
   id: null as number | null,
   name: '',
   description: '',
+  variablesText: '',
   kind: 'test',
   isDefault: false,
   app: { servers: [emptyAppServer()] },
@@ -239,6 +249,31 @@ const emptyForm = () => ({
 })
 
 const form = reactive(emptyForm())
+const appStore = useAppStore()
+const globalVarsText = ref('')
+
+function globalVarsKey(): string {
+  return `api.global_vars.${appStore.currentProjectId ?? 0}`
+}
+
+async function loadGlobalVars(): Promise<void> {
+  try {
+    const configs = await settingsApi.config()
+    globalVarsText.value = configs.find((c) => c.key === globalVarsKey())?.value || ''
+  } catch {
+    globalVarsText.value = ''
+  }
+}
+
+function parseVars(text: string): Record<string, string> {
+  if (!text.trim()) return {}
+  try {
+    const obj = JSON.parse(text)
+    return typeof obj === 'object' && obj !== null ? obj as Record<string, string> : {}
+  } catch {
+    return {}
+  }
+}
 
 async function load(): Promise<void> {
   try {
@@ -259,6 +294,7 @@ function resetForm(): void {
 function openCreate(): void {
   resetForm()
   probeResult.value = null
+  void loadGlobalVars()
   dialogVisible.value = true
 }
 
@@ -267,6 +303,8 @@ function openEdit(row: TestEnv): void {
   form.id = row.id
   form.name = row.name
   form.description = row.description
+  form.variablesText = JSON.stringify((row as TestEnv & { variables?: Record<string, string> }).variables ?? {}, null, 2)
+  void loadGlobalVars()
   form.kind = row.kind || 'test'
   form.isDefault = row.isDefault
   form.app.servers = (row.app.servers?.length ? row.app.servers : [row.app]).map((server) => ({
@@ -304,6 +342,7 @@ function payload(): Record<string, unknown> {
   return {
     name: form.name,
     description: form.description,
+    variables: parseVars(form.variablesText),
     kind: form.kind,
     isDefault: form.isDefault,
     app: {
@@ -334,9 +373,15 @@ async function save(): Promise<void> {
   try {
     if (form.id) {
       await testEnvApi.update(form.id, payload())
+      await settingsApi.updateConfig([
+        { key: globalVarsKey(), value: globalVarsText.value || '{}', valueType: 'json' },
+      ])
       ElMessage.success('环境已更新')
     } else {
       await testEnvApi.create(payload())
+      await settingsApi.updateConfig([
+        { key: globalVarsKey(), value: globalVarsText.value || '{}', valueType: 'json' },
+      ])
       ElMessage.success('环境已创建')
     }
     dialogVisible.value = false

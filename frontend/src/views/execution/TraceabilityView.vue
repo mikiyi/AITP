@@ -224,6 +224,7 @@ import type {
 import { useAppStore } from '@/stores/app'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import { dateTimeText } from '@/utils/format'
+import { fetchAllPages } from '@/utils/fetchAll'
 
 const appStore = useAppStore()
 const router = useRouter()
@@ -303,12 +304,13 @@ async function loadOptions(): Promise<void> {
     return
   }
   try {
-    const [versionResult, runPage] = await Promise.all([
+    const [versionResult, runRows] = await Promise.all([
       projectVersionApi.list(projectId),
-      testRunApi.list({ projectId, pageNum: 1, pageSize: 100 }),
+      fetchAllPages((pageNum, pageSize) =>
+        testRunApi.list({ projectId, pageNum, pageSize })),
     ])
     versions.value = versionResult.list ?? []
-    runs.value = runPage.list ?? []
+    runs.value = runRows
   } catch {
     versions.value = []
     runs.value = []

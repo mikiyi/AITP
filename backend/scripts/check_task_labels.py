@@ -88,11 +88,14 @@ def labels_are_chinese(kinds: list[str]) -> tuple[list[str], list[str]]:
 
 
 def cn_count(raw: str) -> int:
-    """「五」/「10」都能变成数字，认不出来就返回 -1 让门禁红。"""
+    """「五」/「十一」/「10」都能变成数字，认不出来就返回 -1 让门禁红。"""
     if raw.isdigit():
         return int(raw)
     if raw in CN_NUM:
         return CN_NUM[raw]
+    tens, sep, ones = raw.partition("十")
+    if sep and (not tens or tens in CN_NUM) and (not ones or ones in CN_NUM):
+        return (CN_NUM[tens] if tens else 1) * 10 + (CN_NUM[ones] if ones else 0)
     return -1
 
 

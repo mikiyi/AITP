@@ -251,6 +251,8 @@ def _start_task_queue(app: Flask, cfg: AppConfig) -> None:
     finally:
         conn.close()
     backup_schedule.start_scheduler(cfg.db_path)
+    from .services import test_schedule_service
+    test_schedule_service.start_scheduler(cfg.db_path)
 
 
 def _start_env_health_sampler(cfg: AppConfig) -> None:

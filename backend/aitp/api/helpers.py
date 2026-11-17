@@ -124,10 +124,17 @@ def guard_project_scope(
     project_id: int | None,
     label: str = "资源",
 ) -> dict[str, Any]:
-    """带 projectId 读详情时必须校验归属：跨项目一律按「不存在」处理，不回显任何字段。"""
+    """详情/写操作必须带 projectId：缺参直接拒绝，跨项目一律按「不存在」处理。"""
     if project_id is None:
+        raise AppError(
+            ErrorCode.PARAM_ERROR,
+            f"缺少 projectId，无法校验{label}归属",
+        )
+    owner = row.get("project_id")
+    if owner in (None, ""):
+        # 无项目归属的全局资产（例如未绑定项目的自动化脚本）对所有项目可见
         return row
-    if int(row.get("project_id") or -1) != int(project_id):
+    if int(owner) != int(project_id):
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, f"{label}不属于该项目")
     return row
 

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import difflib
 import re
 import sqlite3
 from pathlib import Path
@@ -15,7 +16,7 @@ from typing import Any
 from flask import Blueprint, Response, current_app, request, send_file
 
 from ..common.automation_frameworks import default_for, framework_codes, normalize_platforms
-from ..common.validators import check_choice, optional_str, require_str
+from ..common.validators import check_choice, optional_str, require_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.automation_repo import (
@@ -37,6 +38,7 @@ from ..repositories.automation_repo import (
     run_summary,
     script_summary,
 )
+from ..repositories.script_asset_repo import AutomationScriptVersionRepository, UiElementRepository
 from ..services import nav_badge_service
 from ..services import (
     audit_service,
@@ -205,12 +207,13 @@ def _optional_int(value: Any) -> int | None:
 
 
 def _guard_run_scope(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
-    """执行记录按脚本归属判项目：带 projectId 读别人的轮次一律按不存在处理。"""
+    """执行记录按脚本归属判项目；缺 projectId 直接拒绝，跨项目按不存在处理。"""
     project_id = scope_arg()
     if project_id is None:
-        return
+        raise AppError(ErrorCode.PARAM_ERROR, "缺少 projectId，无法校验执行记录归属")
     script = AutomationScriptRepository(conn).get(int(row.get("script_id") or 0))
-    if script is None or int(script.get("project_id") or -1) != int(project_id):
+    owner = script.get("project_id") if script else None
+    if script is None or (owner not in (None, "") and int(owner) != int(project_id)):
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "执行记录不属于该项目")
 
 
@@ -390,6 +393,16 @@ def update_script(pk: str) -> Response:
     _check_env(conn, payload)
     if "name" in payload:
         payload["file_name"] = _file_name_of(category, payload["name"])
+    # P1 #7：内容变更自动快照旧版，供差异对比/评审
+    if "content" in payload and str(payload.get("content") or "") != str(row.get("content") or ""):
+        vrepo = AutomationScriptVersionRepository(conn)
+        vrepo.insert({
+            "script_id": target,
+            "version_no": vrepo.next_version_no(target),
+            "content": str(row.get("content") or ""),
+            "change_note": str(data.get("changeNote") or ""),
+            "review_status": "pending",
+        })
     repo.update(target, payload)
     commit(conn)
     updated = repo.get(target) or {}
@@ -411,6 +424,128 @@ def delete_script(pk: str) -> Response:
     audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_AUTOMATION_SCRIPT,
           target, str(row.get("name") or ""), {"scriptNo": row.get("script_no")})
     return ok({"id": target, "deleted": True})
+
+
+# ---------------- P1 #7 脚本版本 / 差异 / 评审 ----------------
+
+@bp.get("/scripts/<pk>/versions")
+def list_script_versions(pk: str) -> Response:
+    conn = db()
+    target = path_int(pk)
+    page = AutomationScriptVersionRepository(conn).list(
+        {"script_id": target}, None, page_num=1, page_size=100)
+    return ok({"list": [
+        {"id": r.get("id"), "versionNo": r.get("version_no"),
+         "changeNote": r.get("change_note"), "reviewStatus": r.get("review_status"),
+         "createdAt": r.get("created_at")}
+        for r in page.list
+    ]})
+
+
+@bp.get("/scripts/<pk>/diff")
+def script_diff(pk: str) -> Response:
+    conn = db()
+    target = path_int(pk)
+    repo = AutomationScriptRepository(conn)
+    row = repo.get(target)
+    if row is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "脚本不存在")
+    vrepo = AutomationScriptVersionRepository(conn)
+    base_id = optional_str(request.args.get("base"), "base", 20)
+    target_id = optional_str(request.args.get("target"), "target", 20) or "current"
+    base_content = str(row.get("content") or "")
+    if base_id:
+        base_row = vrepo.get(int(base_id))
+        base_content = str((base_row or {}).get("content") or "")
+    if target_id == "current":
+        target_content = str(row.get("content") or "")
+    else:
+        target_row = vrepo.get(int(target_id))
+        target_content = str((target_row or {}).get("content") or "")
+    diff = list(difflib.unified_diff(
+        base_content.splitlines(), target_content.splitlines(),
+        fromfile=f"v{base_id or 'current'}", tofile=target_id, lineterm="",
+    ))
+    return ok({"diff": diff, "base": base_id or "current", "target": target_id})
+
+
+@bp.post("/scripts/<pk>/versions/<vid>/review")
+def review_script_version(pk: str, vid: str) -> Response:
+    conn = db()
+    vrepo = AutomationScriptVersionRepository(conn)
+    row = vrepo.get(path_int(vid))
+    if row is None or int(row.get("script_id") or 0) != path_int(pk):
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "版本不存在")
+    status = check_choice(str(body().get("status") or ""), ("approved", "rejected"), "status")
+    vrepo.update(int(row["id"]), {"review_status": status})
+    commit(conn)
+    return ok({"id": row["id"], "reviewStatus": status})
+
+
+# ---------------- P1 #8 元素库（Page Object） ----------------
+
+def _element_public(r: dict[str, Any]) -> dict[str, Any]:
+    return {"id": r.get("id"), "projectId": r.get("project_id"), "page": r.get("page"),
+            "name": r.get("name"), "selector": r.get("selector"), "kind": r.get("kind"),
+            "description": r.get("description"), "createdAt": r.get("created_at")}
+
+
+@bp.get("/ui-elements")
+def list_elements() -> Response:
+    conn = db()
+    filters = query_filters({"projectId": "project_id"})
+    page = UiElementRepository(conn).list(filters, keyword_of() or None,
+                                          page_num=1, page_size=500)
+    return ok({"list": [_element_public(r) for r in page.list]})
+
+
+@bp.post("/ui-elements")
+def create_element() -> Response:
+    conn = db()
+    data = body()
+    project_id = require_project(conn, require_int(data.get("projectId"), "projectId"))
+    name = require_str(data.get("name"), "name", 100)
+    selector = require_str(data.get("selector"), "selector", 500)
+    repo = UiElementRepository(conn)
+    new_id = repo.insert({
+        "project_id": project_id, "page": optional_str(data.get("page"), "page", 100) or "",
+        "name": name, "selector": selector,
+        "kind": check_choice(str(data.get("kind") or "css"), ("css", "xpath", "text", "role"), "kind", "css") or "css",
+        "description": optional_str(data.get("description"), "description", 500) or "",
+    })
+    commit(conn)
+    return ok(_element_public(repo.get(new_id) or {}))
+
+
+@bp.put("/ui-elements/<pk>")
+def update_element(pk: str) -> Response:
+    conn = db()
+    target = path_int(pk)
+    repo = UiElementRepository(conn)
+    if repo.get(target) is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "元素不存在")
+    data = body()
+    payload: dict[str, Any] = {}
+    for key, col in (("name", "name"), ("selector", "selector"), ("page", "page"), ("description", "description")):
+        if key in data:
+            payload[col] = optional_str(data[key], key, 500) or ""
+    if "kind" in data:
+        payload["kind"] = check_choice(str(data["kind"]), ("css", "xpath", "text", "role"), "kind", "css") or "css"
+    repo.update(target, payload)
+    commit(conn)
+    return ok(_element_public(repo.get(target) or {}))
+
+
+@bp.delete("/ui-elements/<pk>")
+def delete_element(pk: str) -> Response:
+    conn = db()
+    target = path_int(pk)
+    repo = UiElementRepository(conn)
+    if repo.get(target) is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "元素不存在")
+    repo.soft_delete(target)
+    commit(conn)
+    return ok({"deleted": True})
 
 
 @bp.post("/scripts/<pk>/run")
@@ -524,6 +659,30 @@ def batch_run_scripts() -> Response:
 
 # ---------------- 执行历史 ----------------
 
+@bp.get("/metrics")
+def automation_metrics() -> Response:
+    """P2 结构化指标：按类别聚合执行次数/通过率/平均与 P95 耗时（复用执行历史）。"""
+    conn = db()
+    rows = AutomationRunRepository(conn).list_all()
+    by: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        by.setdefault(str(r.get("category") or "web"), []).append(r)
+    out = []
+    for cat, items in sorted(by.items()):
+        durations = sorted(int(r.get("duration_ms") or 0) for r in items)
+        success = sum(1 for r in items if r.get("status") == "success")
+        total = len(items)
+        p95 = durations[min(len(durations) - 1, int(len(durations) * 0.95))] if durations else 0
+        out.append({
+            "category": cat, "categoryLabel": CATEGORY_LABEL.get(cat, cat),
+            "total": total, "success": success,
+            "passRate": round(success * 100 / total, 1) if total else None,
+            "avgDurationMs": round(sum(durations) / total) if total else 0,
+            "p95DurationMs": p95,
+        })
+    return ok({"list": out})
+
+
 @bp.get("/runs")
 def list_runs() -> Response:
     conn = db()
@@ -568,6 +727,7 @@ def download_run_artifact(pk: str) -> Response:
     row = AutomationRunRepository(conn).get(target)
     if row is None:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "执行记录不存在")
+    _guard_run_scope(conn, row)
     relative = str(request.args.get("path") or "").strip()
     if not relative:
         raise AppError(ErrorCode.PARAM_ERROR, "缺少产物路径")

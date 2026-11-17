@@ -20,7 +20,7 @@ from ..repositories.report_repo import ReportRepository
 from ..repositories.test_run_repo import RESULT_LABELS, RUN_FAILED
 from ..services import nav_badge_service
 from ..services import (audit_service, execution_protocol, report_exporter,
-                        report_fragment_service, report_trends)
+                        report_fragment_service, report_source_service, report_trends)
 from .helpers import (attach_version_codes, audit, body, check_ref_project, commit, db,
                      guard_project_scope, keyword_of, page_args, page_payload, path_int, query_filters,
                      reject_project_move, require_project, scope_arg)
@@ -54,6 +54,10 @@ def _to_public(row: dict[str, Any]) -> dict[str, Any]:
         "status": row.get("status"),
         "aiTaskId": row.get("ai_task_id"),
         "creator": row.get("creator"),
+        "sourceType": row.get("source_type"),
+        "sourceId": row.get("source_id"),
+        "sourceRunId": row.get("source_run_id"),
+        "sourceLabel": row.get("source_label"),
         "createdAt": row.get("created_at"),
         "updatedAt": row.get("updated_at"),
     }
@@ -163,11 +167,17 @@ def _project_stats(conn: Any, project_id: int) -> dict[str, Any]:
     }
 
 
-def _build_generated_items(stats: dict[str, Any], project_name: str) -> list[dict[str, Any]]:
-    """用实时数据拼出报告章节骨架。"""
+def _build_generated_items(stats: dict[str, Any], project_name: str,
+                           scope: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """用实时数据拼出报告章节骨架；传入来源时按该范围收敛文案。"""
     metric = stats["metrics"]
     case_status = stats["caseStatus"]
     bug_status = stats["bugStatus"]
+    source_label = str((scope or {}).get("sourceLabel") or "")
+    unit = str((scope or {}).get("unit") or "用例")
+    detail = str((scope or {}).get("detail") or "")
+    heading = f"{project_name} · {source_label}" if source_label else project_name
+    case_title = "用例执行情况" if unit == "用例" else f"{unit}情况"
 
     overview_metric = {
         "totalCases": metric["caseTotal"],
@@ -188,19 +198,27 @@ def _build_generated_items(stats: dict[str, Any], project_name: str) -> list[dic
         "openBugs": metric["openBugs"],
         "closed": bug_status.get("closed", 0),
     }
+    overview_text = (
+        f"{heading} 范围内共 {metric['caseTotal']} 条{unit}，"
+        f"发现 {metric['bugTotal']} 个缺陷，其中 {metric['openBugs']} 个未闭环。"
+    )
+    if detail:
+        overview_text += f" {detail}"
+    conclusion = "以上结论由 AITP 依据当前项目实时数据自动汇总，请人工复核后再发布；AI 不代替人工批准上线。"
+    if source_label:
+        conclusion = f"本报告按「{source_label}」范围取数。" + conclusion
 
     return [
         {
             "section": "overview",
             "title": "测试概览",
-            "content": f"{project_name} 本轮共执行 {metric['caseTotal']} 条用例，"
-                       f"发现 {metric['bugTotal']} 个缺陷，其中 {metric['openBugs']} 个未闭环。",
+            "content": overview_text,
             "metric": overview_metric,
             "sortOrder": 0,
         },
         {
             "section": "case",
-            "title": "用例执行情况",
+            "title": case_title,
             "content": f"通过 {metric['passed']} 条，失败 {metric['failed']} 条，"
                        f"阻塞 {metric['blocked']} 条，未执行 {metric['notExecuted']} 条，"
                        f"通过率 {metric['passRate'] * 100:.2f}%。",
@@ -218,8 +236,7 @@ def _build_generated_items(stats: dict[str, Any], project_name: str) -> list[dic
         {
             "section": "conclusion",
             "title": "结论与建议",
-            "content": "以上结论由 AITP 依据当前项目实时数据自动汇总，"
-                       "请人工复核后再发布；AI 不代替人工批准上线。",
+            "content": conclusion,
             "metric": {},
             "sortOrder": 3,
         },
@@ -240,7 +257,13 @@ def _report_scope(row: dict[str, Any]) -> dict[str, Any]:
         "versionId": int(row["version_id"]) if row.get("version_id") not in (None, "") else None,
         "periodStart": str(row.get("period_start") or "").strip(),
         "periodEnd": str(row.get("period_end") or "").strip(),
+        "sourceType": str(row.get("source_type") or ""),
+        "sourceId": int(row["source_id"]) if row.get("source_id") not in (None, "") else None,
+        "sourceRunId": (int(row["source_run_id"])
+                        if row.get("source_run_id") not in (None, "") else None),
     }
+    if scope["sourceType"] == report_source_service.SOURCE_RUN and scope["sourceId"]:
+        scope["runId"] = scope["sourceId"]
     for key in ("periodStart", "periodEnd"):
         if not _DATE_TEXT_RE.match(scope[key]):
             scope[key] = ""
@@ -290,11 +313,18 @@ def _failed_run_case_rows(
     总数走同一条 WHERE 单独 COUNT，报告里的失败样本条数因此永远等于真实失败执行记录，
     不受分页上限影响，也不是前端硬填的数。
     """
+    if scope.get("sourceType") in (report_source_service.SOURCE_MATRIX,
+                                   report_source_service.SOURCE_SCENARIO):
+        # 矩阵/场景的失败明细在各自结果表里，轮次用例口径不适用，不能拿项目全量失败充数
+        return [], 0
     where = [
         "rc.is_deleted = 0", "r.is_deleted = 0", "rc.result = ?",
         "r.project_id = ?",
     ]
     params: list[Any] = [RUN_FAILED, scope["projectId"]]
+    if scope.get("runId"):
+        where.append("r.id = ?")
+        params.append(int(scope["runId"]))
     if scope["versionId"]:
         where.append("r.version_id = ?")
         params.append(scope["versionId"])
@@ -780,6 +810,8 @@ def create_fragment() -> Response:
 @bp.put("/fragments/<int:fragment_id>")
 def update_fragment(fragment_id: int) -> Response:
     conn = db()
+    guard_project_scope(report_fragment_service.get_fragment(conn, fragment_id),
+                        scope_arg(), "报告片段")
     data = body()
     section = None
     if "section" in data:
@@ -802,6 +834,8 @@ def update_fragment(fragment_id: int) -> Response:
 @bp.delete("/fragments/<int:fragment_id>")
 def delete_fragment(fragment_id: int) -> Response:
     conn = db()
+    guard_project_scope(report_fragment_service.get_fragment(conn, fragment_id),
+                        scope_arg(), "报告片段")
     report_fragment_service.delete_fragment(conn, fragment_id)
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_REPORT, fragment_id,
@@ -812,6 +846,8 @@ def delete_fragment(fragment_id: int) -> Response:
 @bp.post("/fragments/<int:fragment_id>/promote")
 def promote_fragment(fragment_id: int) -> Response:
     conn = db()
+    guard_project_scope(report_fragment_service.get_fragment(conn, fragment_id),
+                        scope_arg(), "报告片段")
     row = report_fragment_service.promote_fragment(conn, fragment_id)
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_REPORT, fragment_id,
@@ -823,8 +859,10 @@ def promote_fragment(fragment_id: int) -> Response:
 def list_report_fragments(pk: str) -> Response:
     conn = db()
     target = path_int(pk)
-    if not ReportRepository(conn).get(target):
+    row = ReportRepository(conn).get(target)
+    if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "报告不存在")
+    guard_project_scope(row, scope_arg(), "报告")
     return ok(report_fragment_service.used_by_report(conn, target))
 
 
@@ -862,6 +900,7 @@ def export_report(pk: str) -> Response:
     row = ReportRepository(conn).get_detail(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "报告不存在")
+    guard_project_scope(row, scope_arg(), "报告")
     fmt = str(request.args.get("format") or "md").strip().lower()
     if fmt not in report_exporter.EXPORT_FORMATS:
         raise AppError(ErrorCode.PARAM_ERROR, "format 只能是 md / html / pdf / print")
@@ -948,6 +987,7 @@ def insert_trend_item(pk: str) -> Response:
     row = repo.get(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "报告不存在")
+    guard_project_scope(row, scope_arg(), "报告")
     data = body()
     granularity = check_choice(
         data.get("granularity"), report_trends.GRANULARITIES, "granularity", "day"
@@ -992,8 +1032,27 @@ def report_stats(pk: str) -> Response:
     row = ReportRepository(conn).get(target)
     if not row:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "报告不存在")
+    guard_project_scope(row, scope_arg(), "报告")
     project_id = int(row.get("project_id") or 0)
-    stats = _project_stats(conn, project_id)
+    source_type = str(row.get("source_type") or "")
+    source_id = row.get("source_id")
+    stats: dict[str, Any] | None = None
+    if source_type and source_id not in (None, ""):
+        try:
+            source = report_source_service.resolve(
+                conn, project_id, source_type, int(source_id),
+                int(row["source_run_id"]) if row.get("source_run_id") not in (None, "") else None,
+            )
+        except AppError:
+            source = None
+        if source:
+            stats = source["stats"]
+            stats["sourceType"] = source["sourceType"]
+            stats["sourceId"] = source["sourceId"]
+            stats["sourceLabel"] = source["sourceLabel"]
+            stats["scopeUnit"] = source["unit"]
+    if stats is None:
+        stats = _project_stats(conn, project_id)
     stats["projectId"] = project_id
     stats["reportId"] = target
     stats["periodStart"] = str(row.get("period_start") or "")
@@ -1010,27 +1069,49 @@ def generate_report() -> Response:
     report_type = check_choice(data.get("reportType"), REPORT_TYPE, "reportType", "summary") or "summary"
     project_row = ProjectRepository(conn).get(project_id)
     project_name = str((project_row or {}).get("name") or f"项目 {project_id}")
-    title = optional_str(data.get("title"), "title", 500) or f"{project_name} 测试报告"
-
-    stats = _project_stats(conn, project_id)
-    items = _build_generated_items(stats, project_name)
+    source_type = report_source_service.normalize(data.get("sourceType"))
+    source_id = optional_int(data.get("sourceId"), "sourceId")
+    source_run_id = optional_int(data.get("sourceRunId"), "sourceRunId")
+    source: dict[str, Any] | None = None
+    if source_type or source_id:
+        if not source_type or not source_id:
+            raise AppError(ErrorCode.PARAM_ERROR, "sourceType 与 sourceId 需同时提供")
+        if source_run_id and source_type != report_source_service.SOURCE_SCENARIO:
+            raise AppError(ErrorCode.PARAM_ERROR, "sourceRunId 只用于接口场景批次")
+        source = report_source_service.resolve(
+            conn, project_id, source_type, int(source_id), source_run_id,
+        )
+        stats = source["stats"]
+    else:
+        stats = _project_stats(conn, project_id)
+    items = _build_generated_items(stats, project_name, source)
+    default_title = (f"{project_name} {source['sourceLabel']} 测试报告" if source
+                     else f"{project_name} 测试报告")
+    title = (optional_str(data.get("title"), "title", 500) or default_title)[:500]
     repo = ReportRepository(conn)
     new_id = repo.insert({
         "project_id": project_id,
         "report_no": repo.next_report_no(project_id),
         "title": title,
         "report_type": report_type,
-        "period_start": optional_str(data.get("periodStart"), "periodStart", 40),
-        "period_end": optional_str(data.get("periodEnd"), "periodEnd", 40),
+        "period_start": optional_str(data.get("periodStart"), "periodStart", 40)
+                        or (source["periodStart"] if source else ""),
+        "period_end": optional_str(data.get("periodEnd"), "periodEnd", 40)
+                      or (source["periodEnd"] if source else ""),
         "summary": "",
         "content": "",
         "status": "draft",
         "creator": optional_str(data.get("creator"), "creator", 64),
+        "source_type": source_type,
+        "source_id": int(source_id) if source_id else None,
+        "source_run_id": int(source_run_id) if source_run_id else None,
+        "source_label": str(source["sourceLabel"])[:500] if source else "",
     })
     repo.replace_items(new_id, items)
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_CREATE, audit_service.RESOURCE_REPORT, new_id, title,
-          {"source": "generate", "sections": len(items)})
+          {"source": "generate", "sections": len(items),
+           "sourceType": source_type, "sourceId": source_id})
     result = _to_public(repo.get_detail(new_id) or {})
     result["items"] = repo.list_items(new_id)
     result["knowledgeRefs"] = _knowledge_refs(conn, new_id)

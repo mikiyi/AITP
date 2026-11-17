@@ -25,7 +25,7 @@ from ..repositories.test_run_repo import (
     run_case_summary,
     run_summary,
 )
-from ..services import audit_service, tabular_export, test_run_service
+from ..services import audit_service, env_diff_service, tabular_export, test_run_service
 from ..services import automation_service, execution_protocol, interface_runner, job_queue
 from ..services import test_round_service
 from .helpers import (
@@ -145,6 +145,18 @@ def get_run(pk: str) -> Response:
         run_case_summary(item) for item in TestRunCaseRepository(conn).list_by_run(target)
     ]
     return ok(payload)
+
+
+@bp.get("/<pk>/env-diff")
+def run_env_diff(pk: str) -> Response:
+    """轮次环境差异归因：同一用例跨环境最近结论并排，标出环境敏感失败。"""
+    conn = db()
+    target = path_int(pk)
+    row = TestRunRepository(conn).get(target)
+    if not row:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "测试轮次不存在")
+    guard_project_scope(row, scope_arg(), "测试轮次")
+    return ok(env_diff_service.compare_run_envs(conn, target))
 
 
 @bp.post("")
@@ -271,6 +283,22 @@ def delete_run(pk: str) -> Response:
     return ok({"id": target, "deleted": True})
 
 
+def _guard_evidence_scope(payload: Any) -> None:
+    """证据读取必须带 projectId；快照缺项目归属时也按不可见处理。"""
+    project_id = scope_arg()
+    if project_id is None:
+        raise AppError(ErrorCode.PARAM_ERROR, "缺少 projectId，无法校验证据归属")
+    items = payload if isinstance(payload, list) else ([payload] if payload else [])
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        owner = item.get("projectId")
+        if owner in (None, ""):
+            raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "证据缺少项目归属，无法校验")
+        if int(owner) != int(project_id):
+            raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "证据不属于该项目")
+
+
 @bp.get("/evidence")
 def query_execution_evidence() -> Response:
     """统一证据读口（GAP-32 功能点 4）：轮次 / 缺陷 / 回归 / 报告四处下钻同一份证据。
@@ -282,19 +310,29 @@ def query_execution_evidence() -> Response:
     args = request.args
     evidence_id = optional_int(args.get("evidenceId"), "evidenceId")
     if evidence_id:
-        return ok(execution_protocol.get_evidence(conn, evidence_id))
+        payload = execution_protocol.get_evidence(conn, evidence_id)
+        _guard_evidence_scope(payload)
+        return ok(payload)
     run_case_id = optional_int(args.get("runCaseId"), "runCaseId")
     if run_case_id:
-        return ok(execution_protocol.latest_evidence_for_run_case(conn, run_case_id))
+        payload = execution_protocol.latest_evidence_for_run_case(conn, run_case_id)
+        _guard_evidence_scope(payload)
+        return ok(payload)
     bug_id = optional_int(args.get("bugId"), "bugId")
     if bug_id:
-        return ok({"list": execution_protocol.evidence_for_bug(conn, bug_id)})
+        payload = {"list": execution_protocol.evidence_for_bug(conn, bug_id)}
+        _guard_evidence_scope(payload["list"])
+        return ok(payload)
     item_id = optional_int(args.get("regressionItemId"), "regressionItemId")
     if item_id:
-        return ok(execution_protocol.latest_evidence_for_item(conn, item_id))
+        payload = execution_protocol.latest_evidence_for_item(conn, item_id)
+        _guard_evidence_scope(payload)
+        return ok(payload)
     case_id = optional_int(args.get("caseId"), "caseId")
     if case_id:
-        return ok(execution_protocol.latest_evidence_for_case(conn, case_id))
+        payload = execution_protocol.latest_evidence_for_case(conn, case_id)
+        _guard_evidence_scope(payload)
+        return ok(payload)
     raise AppError(
         ErrorCode.PARAM_ERROR,
         "查证据要带定位参数：evidenceId / runCaseId / bugId / regressionItemId / caseId 之一；"
@@ -309,6 +347,7 @@ def get_execution_evidence_by_source(source_type: str, source_row_id: str) -> Re
     payload = execution_protocol.by_source(
         conn, str(source_type), path_int(source_row_id, "sourceRowId")
     )
+    _guard_evidence_scope(payload)
     if payload is None:
         raise AppError(
             ErrorCode.RESOURCE_NOT_FOUND,

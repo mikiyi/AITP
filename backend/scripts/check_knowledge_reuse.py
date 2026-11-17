@@ -73,9 +73,50 @@ def seed_article(db_path: pathlib.Path, project_id: int, title: str, content: st
         conn.close()
 
 
+def _scope_path(client: Any, path: str) -> str:
+    project_id = getattr(client, "scope_project_id", None)
+    if not project_id or "projectId=" in path:
+        return path
+    bare = path.split("?")[0]
+    if not any(part.isdigit() for part in bare.strip("/").split("/")):
+        return path
+    sep = "&" if "?" in path else "?"
+    return f"{path}{sep}projectId={project_id}"
+
+
 def call(client: Any, method: str, url: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    url = _scope_path(client, url)
     response = client.open(url, method=method, json=payload)
-    return response.get_json() or {}
+    body = response.get_json() or {}
+    if isinstance(payload, dict) and payload.get("projectId"):
+        client.scope_project_id = int(payload["projectId"])
+    if (method == "POST" and url.split("?")[0].rstrip("/").endswith("/projects")
+            and body.get("code") == 200000 and not getattr(client, "scope_project_id", None)):
+        project = body.get("data")
+        if isinstance(project, dict) and project.get("id"):
+            client.scope_project_id = int(project["id"])
+    explicit = None
+    if isinstance(payload, dict) and payload.get("projectId") not in (None, ""):
+        try:
+            explicit = int(payload["projectId"])
+        except (TypeError, ValueError):
+            explicit = None
+    if explicit is None and "?" in url:
+        for part in url.split("?", 1)[1].split("&"):
+            if part.startswith("projectId="):
+                try:
+                    explicit = int(part.split("=", 1)[1])
+                except ValueError:
+                    explicit = None
+                break
+    if explicit is not None:
+        client.scope_project_id = explicit
+    elif (method == "POST" and url.split("?")[0].rstrip("/").endswith("/projects")
+          and body.get("code") == 200000):
+        project = body.get("data")
+        if isinstance(project, dict) and project.get("id"):
+            client.scope_project_id = int(project["id"])
+    return body
 
 
 def main() -> int:
@@ -207,10 +248,12 @@ def main() -> int:
                               {"fragmentId": fragment_id})
         check("重复插入幂等", len(inserted_again["data"]["fragments"]) == 1)
 
+        client.scope_project_id = a_id
         blocked = call(client, "DELETE", f"{V1}/reports/fragments/{fragment_id}")
         check("被报告使用的片段禁止删除", blocked.get("code") == ErrorCode.RESOURCE_REFERENCED,
               str(blocked.get("message")))
 
+        client.scope_project_id = b_id
         detail = call(client, "GET", f"{V1}/reports/{report_b_id}")
         check("报告详情带片段清单", len(detail["data"].get("fragments") or []) == 1)
 
@@ -219,22 +262,24 @@ def main() -> int:
         check("预览标注来源项目", "来源项目A" in preview["data"]["content"])
 
         # 改源片段 → 引用报告实时跟着变（不复制本体）
+        client.scope_project_id = a_id
         updated = call(client, "PUT", f"{V1}/reports/fragments/{fragment_id}",
                        {"content": "回调重复入账（已修复），证据快照见 EV-002。"})
         check("片段更新成功", updated.get("code") == SUCCESS, str(updated.get("message")))
+        client.scope_project_id = b_id
         preview = call(client, "GET", f"{V1}/reports/{report_b_id}/preview?format=md")
         check("改源后预览内容同步", "EV-002" in preview["data"]["content"]
               and "EV-001" not in preview["data"]["content"])
         html = call(client, "GET", f"{V1}/reports/{report_b_id}/preview?format=html")
         check("HTML 预览包含片段正文", "EV-002" in html["data"]["content"])
 
-        exported = client.get(f"{V1}/reports/{report_b_id}/export?format=md")
+        exported = client.get(f"{V1}/reports/{report_b_id}/export?format=md&projectId={b_id}")
         text = exported.data.decode("utf-8")
         check("Markdown 导出包含片段正文", "EV-002" in text and "复用片段" in text)
-        exported = client.get(f"{V1}/reports/{report_b_id}/export?format=html")
+        exported = client.get(f"{V1}/reports/{report_b_id}/export?format=html&projectId={b_id}")
         text = exported.data.decode("utf-8")
         check("HTML 导出包含片段正文", "EV-002" in text and "复用片段" in text)
-        exported = client.get(f"{V1}/reports/{report_b_id}/export?format=pdf").data
+        exported = client.get(f"{V1}/reports/{report_b_id}/export?format=pdf&projectId={b_id}").data
         check("PDF 导出正常产出", exported[:4] == b"%PDF" and len(exported) > 2000,
               f"{len(exported)} bytes")
 

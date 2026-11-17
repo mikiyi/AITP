@@ -174,7 +174,13 @@ class Api:
         return data
 
     def remove(self, kind: str, pk: int) -> tuple[int, dict[str, str], dict[str, Any]]:
-        return self.call("DELETE", DELETE_PATH[kind] + str(pk))
+        last: tuple[int, dict[str, str], dict[str, Any]] = (0, {}, {"code": -1})
+        for project_id in SCOPE_PROJECTS or [0]:
+            suffix = f"?projectId={project_id}" if project_id else ""
+            last = self.call("DELETE", DELETE_PATH[kind] + str(pk) + suffix)
+            if int(last[2].get("code") or -1) != ErrorCode.RESOURCE_NOT_FOUND:
+                return last
+        return last
 
     # ---- 查询便捷层 ----
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
@@ -680,10 +686,10 @@ def s_detail_idor(ctx: dict[str, Any]) -> None:
               f"请求=GET {V1}/{path}/{pk}?projectId={pa}｜期望非成功码（140100/140105）"
               f"｜实际 code={code}，返回体={brief(body.get('data'), 160)}", S2)
     plain_code, plain_body = API.code("GET", f"{V1}/test-cases/{ctx['cB1']}")
-    note("test-cases/<B id>（不带 projectId）仍可读到 B 的用例正文：这是刻意保留的行为。"
-         f"详情页（CaseDetailView）与全局搜索深链只带 id、没有项目上下文，强制 projectId 会把它们打断；"
-         f"本机单人工具按 id 直读不构成跨用户越权。带 projectId 时一律校验归属（见上面的 IDOR 断言）。"
-         f"实际 code={plain_code} 标题={brief((plain_body.get('data') or {}).get('title'))}")
+    check("详情接口缺 projectId 必须拒绝而不是回显正文",
+          plain_code == ErrorCode.PARAM_ERROR and not (plain_body.get("data") or {}).get("title"),
+          f"请求=GET {V1}/test-cases/{ctx['cB1']}（无 projectId）｜期望 100100 且 data 无正文"
+          f"｜实际 code={plain_code} 标题={brief((plain_body.get('data') or {}).get('title'))}", S2)
 
 
 # ---------------- 场景 4：跨项目引用写入 ----------------
@@ -786,13 +792,13 @@ def s_cross_refs(ctx: dict[str, Any]) -> None:
     rejected(S2, "requirements PUT：A 需求不得改挂 B 的 versionId", "PUT",
              f"{V1}/requirements/{ctx['rA1']}", {"versionId": ctx["vb1"]})
     API.data("PUT", f"{V1}/requirements/{ctx['rA1']}", {"versionId": ctx["va1"]})
-    vrow = API.get(f"{V1}/project-versions/{ctx['va1']}", {}) or {}
+    vrow = API.get(f"{V1}/project-versions/{ctx['va1']}", {"projectId": pa}) or {}
     check("project-versions PUT：不接受 projectId 改挂（版本不能跨项目搬）",
           int(vrow.get("projectId") or -1) == pa,
           f"GET {V1}/project-versions/{ctx['va1']} projectId={vrow.get('projectId')} 期望 {pa}", S4)
 
     # 采纳（adopt）落库：目标项目对，但版本落点未校验
-    vb_before = (API.get(f"{V1}/project-versions/{ctx['vb1']}", {}) or {}).get("assetCount")
+    vb_before = (API.get(f"{V1}/project-versions/{ctx['vb1']}", {"projectId": pb}) or {}).get("assetCount")
     _status, _headers, adopt_body = API.call("POST", f"{V1}/test-cases/adopt", {
         "projectId": pa, "versionId": ctx["vb1"],
         "cases": [{"title": f"ISOA-采纳-版本越权{ctx['tag']}"}],
@@ -810,7 +816,7 @@ def s_cross_refs(ctx: dict[str, Any]) -> None:
                    f"{V1}/test-cases", {"projectId": pa, "versionId": ctx["vb1"]}, set())
         expect_ids(S1, "组合取证 B：versionId=vB1 单独查询不得把 A 项目的用例带出来",
                    f"{V1}/test-cases", {"versionId": ctx["vb1"]}, ctx["exp"]["test-cases"]["B@v1"])
-        vb_after = (API.get(f"{V1}/project-versions/{ctx['vb1']}", {}) or {}).get("assetCount")
+        vb_after = (API.get(f"{V1}/project-versions/{ctx['vb1']}", {"projectId": pb}) or {}).get("assetCount")
         check("组合取证 C：B 版本的 assetCount 不得因 A 项目的资产而增加",
               vb_after == vb_before,
               f"GET {V1}/project-versions/{ctx['vb1']} assetCount：采纳前={vb_before} → 采纳后={vb_after}"
@@ -1270,6 +1276,7 @@ def preflight() -> None:
 
 
 API = Api(BASE_URL, TOKEN)
+SCOPE_PROJECTS: list[int] = []
 
 
 SECTIONS = (
@@ -1291,6 +1298,10 @@ def main() -> int:
     ctx: dict[str, Any] = {"tag": uuid.uuid4().hex[:5].upper()}
     preflight()
     for title, func in SECTIONS:
+        if ctx.get("pa"):
+            SCOPE_PROJECTS[:] = [int(ctx["pa"])]
+            if ctx.get("pb"):
+                SCOPE_PROJECTS.append(int(ctx["pb"]))
         print(f"\n=== {title} ===")
         try:
             func(ctx)

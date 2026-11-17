@@ -61,6 +61,49 @@ export class ApiError extends Error {
 
 export const API_BASE = '/api/v1'
 
+/**
+ * 当前项目作用域：由 app store 在项目切换时写入。
+ * 所有请求默认带 projectId，详情/导出/下载也能被后端校验归属；
+ * 全局搜索跨项目检索，单独豁免。
+ */
+let scopeProjectId: number | null = null
+const SCOPE_EXEMPT_PREFIXES = ['/search', '/lab/sessions']
+
+export function setRequestProjectId(projectId: number | null): void {
+  const value = Number(projectId)
+  scopeProjectId = Number.isInteger(value) && value > 0 ? value : null
+}
+
+export function getRequestProjectId(): number | null {
+  return scopeProjectId
+}
+
+function scopedQuery(
+  path: string,
+  query?: RequestOptions['query'],
+): Record<string, string | number | boolean | undefined | null> | undefined {
+  if (scopeProjectId === null) return query
+  if (SCOPE_EXEMPT_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) {
+    return query
+  }
+  const merged = { ...(query ?? {}) }
+  if (merged.projectId === undefined || merged.projectId === null) {
+    merged.projectId = scopeProjectId
+  }
+  return merged
+}
+
+function queryString(query?: RequestOptions['query']): string {
+  if (!query) return ''
+  const params = new URLSearchParams()
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      params.append(key, String(value))
+    }
+  })
+  return params.toString()
+}
+
 /** 普通接口默认超时；后端卡死或无响应时页面不再无限等待。 */
 export const DEFAULT_TIMEOUT_MS = 60_000
 /** AI 生成、批量执行等长耗时接口的放宽超时。 */
@@ -178,17 +221,9 @@ function isAbortError(err: unknown): boolean {
 export async function request<T = unknown>(path: string, options: RequestOptions = {}): Promise<T> {
   const method = options.method ?? 'GET'
   let url = `${API_BASE}${path}`
-  if (options.query) {
-    const params = new URLSearchParams()
-    Object.entries(options.query).forEach(([key, value]) => {
-      if (value !== undefined && value !== null && value !== '') {
-        params.append(key, String(value))
-      }
-    })
-    const qs = params.toString()
-    if (qs) {
-      url += (url.includes('?') ? '&' : '?') + qs
-    }
+  const qs = queryString(scopedQuery(path, options.query))
+  if (qs) {
+    url += (url.includes('?') ? '&' : '?') + qs
   }
 
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -321,8 +356,10 @@ export async function postBlob(
   let response: Response
   let envelope: ApiEnvelope | null = null
   let trace = ''
+  const uploadQuery = queryString(scopedQuery(path))
+  const uploadUrl = `${API_BASE}${path}${uploadQuery ? `?${uploadQuery}` : ''}`
   try {
-    response = await fetch(`${API_BASE}${path}`, {
+    response = await fetch(uploadUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body ?? {}),
@@ -379,13 +416,7 @@ export async function getBlob(
   query?: RequestOptions['query'],
   timeoutMs = DOWNLOAD_TIMEOUT_MS,
 ): Promise<BlobResult> {
-  const params = new URLSearchParams()
-  Object.entries(query ?? {}).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== '') {
-      params.append(key, String(value))
-    }
-  })
-  const qs = params.toString()
+  const qs = queryString(scopedQuery(path, query))
   const guard = withTimeout(undefined, timeoutMs)
   let response: Response
   let envelope: ApiEnvelope | null = null

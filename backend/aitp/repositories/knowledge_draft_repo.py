@@ -295,6 +295,12 @@ class KnowledgeDraftRepository(BaseRepository):
                 " AND (bug_id IS NULL OR bug_id = ?)",
                 (int(bug_id), now, execution_protocol.SOURCE_EXPLORATORY, step_id, int(bug_id)),
             )
+            # 异常步同步登记缺陷 id，明细页据此显示已登记并支持幂等重试
+            self.conn.execute(
+                "UPDATE biz_exploration_step SET bug_id = ?, updated_at = ?"
+                " WHERE id = ? AND is_deleted = 0 AND (bug_id IS NULL OR bug_id = ?)",
+                (int(bug_id), now, step_id, int(bug_id)),
+            )
         self.update(draft["id"], {
             "review_status": DRAFT_STATUS_APPROVED,
             "reviewer": reviewer,

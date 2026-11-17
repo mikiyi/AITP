@@ -396,7 +396,11 @@ def get_session(conn: sqlite3.Connection, session_id: int) -> dict[str, Any]:
 
 def list_sessions(conn: sqlite3.Connection, filters: dict[str, Any],
                   page_num: int, page_size: int) -> dict[str, Any]:
-    page = ExplorationSessionRepository(conn).list(filters, None, page_num=page_num, page_size=page_size)
+    merged = dict(filters)
+    keyword = str(merged.pop("keyword", "") or "").strip()
+    page = ExplorationSessionRepository(conn).list(
+        merged, keyword or None, page_num=page_num, page_size=page_size,
+    )
     payload = page.as_dict()
     payload["list"] = [session_public(row) for row in payload["list"]]
     return payload
@@ -982,6 +986,176 @@ def _is_duplicate(conn: sqlite3.Connection, project_id: int,
         if dedup_service.similarity(comparable, other) >= dedup_service.SUSPECT_THRESHOLD:
             return True
     return False
+
+
+# --------------------------------------------------------------------- 一键登记缺陷
+
+
+def register_step_bug(
+    conn: sqlite3.Connection, session_id: int, step_id: int,
+    data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """把一条异常步登记为缺陷（P1-7），证据随缺陷挂载。
+
+    已有待审产物且未审核时按「人工确认」走审核转缺陷，保留待审池的治理轨迹；
+    产物被去重跳过或已驳回时，按当前异常步直接建缺陷。重复调用幂等返回同一缺陷。
+    """
+    payload = data or {}
+    session = ExplorationSessionRepository(conn).get(session_id)
+    if not session:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "探索会话不存在")
+    row = conn.execute(
+        "SELECT * FROM biz_exploration_step"
+        " WHERE id = ? AND session_id = ? AND is_deleted = 0",
+        (int(step_id), int(session_id)),
+    ).fetchone()
+    if row is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "探索步骤不存在")
+    step = dict(row)
+    if not int(step.get("is_anomaly") or 0):
+        raise AppError(ErrorCode.ILLEGAL_OPERATION, "只有异常步骤才能登记缺陷")
+
+    reviewer = str(payload.get("reviewer") or "探索性测试")[:64]
+    draft = _linked_draft(conn, step)
+    draft_id = int(draft["id"]) if draft else None
+
+    existing = _linked_bug(conn, step)
+    if existing:
+        _bind_step_bug(conn, step_id, int(existing["id"]))
+        conn.commit()
+        return _bug_result(existing, step, draft_id, already_linked=True)
+
+    bug_id = 0
+    if draft and str(draft.get("review_status") or "") == "pending":
+        result = KnowledgeDraftRepository(conn).review(
+            int(draft["id"]), "approve", reviewer=reviewer,
+            review_comment=str(payload.get("comment") or "从探索异常一键登记缺陷")[:500],
+        )
+        bug_id = int(result.get("bugId") or 0)
+    elif draft and str(draft.get("review_status") or "") == "approved":
+        bug_id = int(draft.get("bug_id") or 0)
+
+    if not bug_id:
+        bug_id = _create_bug_from_step(conn, session, step, reviewer)
+    _bind_step_bug(conn, step_id, bug_id)
+    conn.commit()
+
+    bug = conn.execute(
+        "SELECT id, bug_no, title, status FROM biz_bug WHERE id = ? AND is_deleted = 0",
+        (int(bug_id),),
+    ).fetchone()
+    if bug is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "缺陷登记失败，未找到落库记录")
+    return _bug_result(dict(bug), step, draft_id, already_linked=False)
+
+
+def _linked_bug(conn: sqlite3.Connection, step: dict[str, Any]) -> dict[str, Any] | None:
+    bug_id = int(step.get("bug_id") or 0)
+    if bug_id:
+        row = conn.execute(
+            "SELECT id, bug_no, title, status FROM biz_bug WHERE id = ? AND is_deleted = 0",
+            (bug_id,),
+        ).fetchone()
+        if row is not None:
+            return dict(row)
+    row = conn.execute(
+        "SELECT b.id, b.bug_no, b.title, b.status FROM biz_execution_evidence e"
+        " JOIN biz_bug b ON b.id = e.bug_id AND b.is_deleted = 0"
+        " WHERE e.source_type = ? AND e.source_row_id = ? AND e.is_deleted = 0"
+        " AND e.bug_id IS NOT NULL ORDER BY e.id DESC LIMIT 1",
+        (execution_protocol.SOURCE_EXPLORATORY, int(step["id"])),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def _linked_draft(conn: sqlite3.Connection, step: dict[str, Any]) -> dict[str, Any] | None:
+    draft_id = int(step.get("draft_id") or 0)
+    if draft_id:
+        row = conn.execute(
+            "SELECT * FROM biz_knowledge_draft WHERE id = ? AND is_deleted = 0",
+            (draft_id,),
+        ).fetchone()
+        if row is not None:
+            return dict(row)
+    row = conn.execute(
+        "SELECT * FROM biz_knowledge_draft"
+        " WHERE source_type = 'exploratory' AND ref_type = 'exploration_step'"
+        " AND ref_id = ? AND is_deleted = 0 ORDER BY id DESC LIMIT 1",
+        (int(step["id"]),),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def _bind_step_bug(conn: sqlite3.Connection, step_id: int, bug_id: int) -> None:
+    now = utcnow_iso()
+    conn.execute(
+        "UPDATE biz_exploration_step SET bug_id = ?, updated_at = ?"
+        " WHERE id = ? AND is_deleted = 0 AND (bug_id IS NULL OR bug_id = ?)",
+        (int(bug_id), now, int(step_id), int(bug_id)),
+    )
+    conn.execute(
+        "UPDATE biz_execution_evidence SET bug_id = ?, updated_at = ?"
+        " WHERE source_type = ? AND source_row_id = ? AND is_deleted = 0 AND bug_id IS NULL",
+        (int(bug_id), now, execution_protocol.SOURCE_EXPLORATORY, int(step_id)),
+    )
+
+
+def _create_bug_from_step(
+    conn: sqlite3.Connection, session: dict[str, Any], step: dict[str, Any], reviewer: str,
+) -> int:
+    from ..repositories.bug_repo import BugRepository
+
+    anomaly_type = str(step.get("anomaly_type") or "")
+    observation = str(step.get("observation") or "")
+    title = f"[探索性] {ANOMALY_LABELS.get(anomaly_type, anomaly_type)}：{observation[:80]}"
+    try:
+        detail = json.loads(str(step.get("detail_json") or "{}"))
+    except (TypeError, ValueError):
+        detail = {}
+    shots = detail.get("screenshots") if isinstance(detail, dict) else None
+    lines = [
+        f"探索会话：{session['session_no']} {session['name']}",
+        f"目标地址：{session['target_url']}",
+        f"异常步骤：第 {step['step_no']} 步（{step['action']}）",
+        f"选择器：{step.get('selector') or '（未记录）'}",
+        f"异常类型：{ANOMALY_LABELS.get(anomaly_type, anomaly_type)}",
+        f"观测：{observation}",
+        f"证据编号：EV-{step.get('evidence_id')}",
+        f"检测锚点：{step.get('detected_at') or '-'}，最近正常锚点：{step.get('last_ok_at') or '-'}",
+        f"traceId：{step.get('trace_id') or '-'}",
+        f"截图：{len(shots) if isinstance(shots, list) else 0} 张",
+    ]
+    repo = BugRepository(conn)
+    project_id = int(session["project_id"])
+    return int(repo.insert({
+        "project_id": project_id,
+        "bug_no": repo.next_bug_no(project_id),
+        "title": title[:500],
+        "severity": "P2",
+        "status": "open",
+        "priority": "P2",
+        "bug_type": "functional",
+        "description": "\n".join(lines)[:100000],
+        "reporter": reviewer[:64],
+        "module": str(session.get("name") or "")[:200],
+    }))
+
+
+def _bug_result(
+    bug: dict[str, Any], step: dict[str, Any],
+    draft_id: int | None, *, already_linked: bool,
+) -> dict[str, Any]:
+    return {
+        "bugId": int(bug["id"]),
+        "bugNo": str(bug.get("bug_no") or ""),
+        "bugTitle": str(bug.get("title") or ""),
+        "bugStatus": str(bug.get("status") or ""),
+        "stepId": int(step["id"]),
+        "sessionId": int(step["session_id"]),
+        "evidenceId": step.get("evidence_id"),
+        "draftId": draft_id,
+        "alreadyLinked": already_linked,
+    }
 
 
 def _as_list(value: Any) -> list[dict[str, Any]]:

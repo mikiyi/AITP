@@ -180,6 +180,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '报告详情', hidden: true },
   },
   {
+    path: '/automation/scenario',
+    name: 'api-scenario',
+    component: () => import('@/views/automation/ApiScenarioView.vue'),
+    meta: { title: '接口场景', icon: 'Operation' },
+  },
+  {
     path: '/automation/:category(web|app|api|performance)',
     name: 'automation-scripts',
     component: () => import('@/views/automation/AutomationScriptView.vue'),

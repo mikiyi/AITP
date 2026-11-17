@@ -207,10 +207,11 @@ def list_cases() -> Response:
 
 @bp.post("/preview-test-data")
 def preview_test_data() -> Response:
-    """扩展字段「测试数据」解析预览：内联内容或本地 txt/Excel/Json/SQL 路径。"""
+    """扩展字段「测试数据」解析预览：内联内容、本地文件路径或 pool:<名称> 引用。"""
+    conn = db()
     data = body()
     value = optional_str(data.get("value"), "value", 20000) or ""
-    return ok(case_test_data.preview(value))
+    return ok(case_test_data.preview_for(conn, optional_int(data.get("projectId"), "projectId"), value))
 
 
 @bp.get("/tree")

@@ -13,7 +13,7 @@ from ..common.secret_store import get_store
 from ..common.security import mask
 from ..common.pagination import RowDict, RowList
 from ..common.time_utils import utcnow_iso
-from .base import BaseRepository
+from .base import BaseRepository, loads
 
 #: 支持的数据库类型；健康监测按类型决定默认端口与探测方式。
 #: 国产库大多兼容 MySQL / PostgreSQL / Oracle 协议，探活只做 TCP 握手，
@@ -200,10 +200,12 @@ class TestEnvRepository(BaseRepository):
         first = servers[0] if servers else {"baseUrl": "", "healthPath": "", "metricsUrl": ""}
         return {
             "id": row.get("id"),
+            "projectId": row.get("project_id"),
             "name": row.get("name"),
             "kind": row.get("env_kind") or "test",
             "kindLabel": ENV_KIND_LABELS.get(str(row.get("env_kind") or "test"), ""),
             "description": row.get("description"),
+            "variables": loads(row.get("variables_json"), {}) or {},
             # 首台字段保留兼容；新代码读 servers
             "app": {**first, "servers": servers},
             "db": {

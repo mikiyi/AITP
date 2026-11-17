@@ -41,6 +41,9 @@
     </div>
 
     <div v-if="messages.length" class="assistant__messages-wrap">
+      <div class="assistant__cache-bar">
+        <el-button link size="small" @click="clearThinking">清理思考缓存</el-button>
+      </div>
       <div v-if="truncated" class="assistant__history-note" role="note">
         这里只回放最近的一部分问答，更早的在「AI 记录 → 会话记录」里（能力：知识库问答）。
       </div>
@@ -57,8 +60,36 @@
           :class="[`is-${item.role}`, `is-tone-${toneOf(item)}`]"
         >
           <div class="assistant__bubble">
+            <div
+              v-if="item.thinking && (item.thinking.text || item.thinking.interrupted)"
+              class="assistant__thinking"
+            >
+              <button type="button" class="assistant__thinking-head" @click="toggleThinking(item)">
+                <el-icon>
+                  <ArrowRight v-if="item.thinking.collapsed" />
+                  <ArrowDown v-else />
+                </el-icon>
+                <span v-if="!item.thinking.done">思考中…</span>
+                <span v-else>已思考 {{ item.thinking.seconds }} 秒 / {{ item.thinking.chars }} 字</span>
+                <el-tag v-if="item.thinking.interrupted" size="small" type="warning" effect="plain">未完成</el-tag>
+                <el-tag v-if="item.thinking.saved" size="small" type="success" effect="plain">已保存</el-tag>
+              </button>
+              <pre v-show="!item.thinking.collapsed" class="assistant__thinking-body">{{ thinkingDisplay(item) }}</pre>
+              <div v-if="item.thinking.done && !item.thinking.saved && item.thinking.text" class="assistant__thinking-actions">
+                <el-button link type="primary" size="small" :loading="savingThinking" @click="saveThinking(item)">
+                  保存思考
+                </el-button>
+                <span class="muted">默认仅本标签页缓存，不入库</span>
+              </div>
+            </div>
             <MarkdownView v-if="item.role === 'assistant'" :source="item.content" />
             <span v-else>{{ item.content }}</span>
+            <div
+              v-if="item.role === 'assistant' && item.meta && item.meta.mode !== 'kb' && !item.thinking"
+              class="muted assistant__thinking-note"
+            >
+              思考过程未保存（仅当次会话可见）
+            </div>
             <div v-if="item.role === 'assistant' && item.meta" class="assistant__meta">
               <el-tag size="small" effect="plain" type="info">{{ item.meta.modeLabel }}</el-tag>
               <span v-if="item.meta.model" class="muted">模型：{{ item.meta.model }}</span>
@@ -201,7 +232,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { storeToRefs } from 'pinia'
-import { Collection, Cpu, MagicStick, Promotion } from '@element-plus/icons-vue'
+import { Collection, Cpu, MagicStick, Promotion, ArrowDown, ArrowRight } from '@element-plus/icons-vue'
 import MarkdownView from '@/components/MarkdownView.vue'
 import { aiApi, knowledgeApi } from '@/api'
 import type { MaskInfo } from '@/api/types'
@@ -209,6 +240,9 @@ import { useAiGuardStore } from '@/stores/aiGuard'
 import { useKnowledgeAssistantStore } from '@/stores/knowledgeAssistant'
 import type { AssistantChatItem as ChatItem, AssistantMode as Mode } from '@/stores/knowledgeAssistant'
 import { textareaHint } from '@/utils/inputHints'
+import {
+  clearThinkingCache, maskThinking, setSensitiveMode, setThinking, thinkingKey,
+} from '@/utils/thinkingCache'
 
 withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
 
@@ -379,40 +413,196 @@ async function send(): Promise<void> {
   question.value = ''
   await scrollToBottom()
   try {
-    const result = await knowledgeApi.ask({
-      question: text,
-      mode: mode.value,
-      sessionId: assistantStore.sessionId,
-    })
-    // 后端落库失败时 sessionId 为空：下次提问重新开会话，不把无效 id 记在本地
-    assistantStore.sessionId = result.sessionId ?? null
-    messages.value = [
-      ...messages.value,
-      {
-        role: 'assistant',
-        content: result.answer || '（模型没有返回内容）',
-        question: text,
-        refs: result.refs ?? [],
-        egressWarning: result.egressWarning,
-        // 留档时间以服务端为准：历史回放与「加入知识库」要用同一个值算同一条记录
-        answeredAt: result.answeredAt || new Date().toISOString(),
-        mask: result.mask,
-        submitState: 'idle',
-        meta: {
-          mode: result.mode,
-          modeLabel: MODE_LABELS[result.mode],
-          model: result.model,
-          latencyMs: result.latencyMs,
-          reviewRequired: result.reviewRequired,
-        },
-      },
-    ]
-    await scrollToBottom()
+    if (mode.value === 'kb') {
+      await sendKb(text)
+    } else {
+      await sendStream(text, mode.value)
+    }
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '问答失败')
   } finally {
     sending.value = false
   }
+}
+
+/** 纯知识库直答：不调模型、无思考过程。 */
+async function sendKb(text: string): Promise<void> {
+  const result = await knowledgeApi.ask({
+    question: text, mode: 'kb', sessionId: assistantStore.sessionId,
+  })
+  assistantStore.sessionId = result.sessionId ?? null
+  messages.value = [
+    ...messages.value,
+    {
+      role: 'assistant',
+      content: result.answer || '（模型没有返回内容）',
+      question: text,
+      refs: result.refs ?? [],
+      egressWarning: result.egressWarning,
+      answeredAt: result.answeredAt || new Date().toISOString(),
+      mask: result.mask,
+      submitState: 'idle',
+      meta: {
+        mode: result.mode, modeLabel: MODE_LABELS[result.mode], model: result.model,
+        latencyMs: result.latencyMs, reviewRequired: result.reviewRequired,
+      },
+    },
+  ]
+  await scrollToBottom()
+}
+
+/** 流式问答：reasoning / delta 双通道；思考默认只到浏览器瞬态缓存，不落库。 */
+async function sendStream(text: string, m: Mode): Promise<void> {
+  const item: ChatItem = {
+    role: 'assistant',
+    content: '',
+    question: text,
+    refs: [],
+    egressWarning: '',
+    answeredAt: '',
+    submitState: 'idle',
+    thinking: {
+      text: '', seconds: 0, chars: 0, done: false, interrupted: false,
+      collapsed: false, saved: false, fromHistory: false,
+    },
+    meta: { mode: m, modeLabel: MODE_LABELS[m], model: '', latencyMs: 0, reviewRequired: false },
+  }
+  messages.value = [...messages.value, item]
+  const resp = await fetch('/api/v1/knowledge/assistant/ask-stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question: text, mode: m, sessionId: assistantStore.sessionId }),
+  })
+  if (!resp.ok || !resp.body) {
+    throw new Error('问答流启动失败')
+  }
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  let reasoning = ''
+  let answer = ''
+  let doneMeta: Record<string, any> | null = null
+  let errored = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    let sep = buf.indexOf('\n\n')
+    while (sep >= 0) {
+      const chunk = buf.slice(0, sep)
+      buf = buf.slice(sep + 2)
+      const ev = /event: (.+)/.exec(chunk)?.[1]?.trim()
+      const dataLine = /data: (.+)/.exec(chunk)?.[1]
+      sep = buf.indexOf('\n\n')
+      if (!ev || !dataLine) continue
+      const payload = JSON.parse(dataLine)
+      if (ev === 'reasoning') {
+        reasoning += payload.content
+        if (item.thinking) {
+          item.thinking.text = reasoning
+          item.thinking.chars = reasoning.length
+        }
+        await scrollToBottom()
+      } else if (ev === 'delta') {
+        answer += payload.content
+        item.content = answer
+        await scrollToBottom()
+      } else if (ev === 'mask') {
+        item.mask = payload as MaskInfo
+      } else if (ev === 'degrade') {
+        ElMessage.warning(String(payload.message || '已降级'))
+      } else if (ev === 'done') {
+        doneMeta = payload
+      } else if (ev === 'error') {
+        errored = String(payload.message || '模型调用失败')
+      }
+    }
+  }
+  const th = item.thinking
+  if (errored) {
+    if (th) {
+      th.interrupted = true
+      th.done = true
+    }
+    item.content = item.content || '（模型调用失败）'
+    ElMessage.error(errored)
+    await scrollToBottom()
+    return
+  }
+  if (!doneMeta) {
+    if (th) th.interrupted = true
+    item.content = item.content || '（模型没有返回内容）'
+    await scrollToBottom()
+    return
+  }
+  assistantStore.sessionId = doneMeta.sessionId ?? null
+  const answeredAt = String(doneMeta.answeredAt || new Date().toISOString())
+  item.content = answer || '（模型没有返回内容）'
+  item.refs = doneMeta.refs ?? []
+  item.egressWarning = doneMeta.egressWarning
+  item.answeredAt = answeredAt
+  item.mask = doneMeta.mask
+  item.meta = {
+    mode: m, modeLabel: MODE_LABELS[m], model: doneMeta.model,
+    latencyMs: doneMeta.latencyMs, reviewRequired: doneMeta.reviewRequired,
+  }
+  // 敏感（走过脱敏）→ 思考仅内存缓存，不写 sessionStorage
+  setSensitiveMode(Boolean(item.mask && Object.keys(item.mask).length))
+  if (th) {
+    if (reasoning) {
+      th.done = true
+      th.seconds = Number(doneMeta.reasoningSeconds ?? 0)
+      th.chars = Number(doneMeta.reasoningChars ?? reasoning.length)
+      th.collapsed = collapsePref.value
+      setThinking(thinkingKey(doneMeta.sessionId, answeredAt, doneMeta.model), {
+        text: reasoning, seconds: th.seconds, chars: th.chars,
+        done: true, interrupted: false, saved: false, ts: Date.now(),
+      })
+    } else {
+      // 模型没返回思考：不显示空框（P0 降级）
+      item.thinking = undefined
+    }
+  }
+  await scrollToBottom()
+}
+
+/** 折叠偏好：回答完成后默认自动折叠为一行摘要，可再展开；偏好记浏览器。 */
+const collapsePref = ref(localStorage.getItem('aitp.assistant.thinking.collapsed') !== '0')
+const savingThinking = ref(false)
+
+function thinkingDisplay(item: ChatItem): string {
+  return maskThinking(item.thinking?.text ?? '')
+}
+
+function toggleThinking(item: ChatItem): void {
+  if (!item.thinking) return
+  item.thinking.collapsed = !item.thinking.collapsed
+  collapsePref.value = item.thinking.collapsed
+  localStorage.setItem('aitp.assistant.thinking.collapsed', item.thinking.collapsed ? '1' : '0')
+}
+
+/** opt-in：把思考随消息保存（默认不存）。 */
+async function saveThinking(item: ChatItem): Promise<void> {
+  if (!item.thinking || !item.answeredAt || assistantStore.sessionId == null) return
+  savingThinking.value = true
+  try {
+    await knowledgeApi.assistantSaveThinking({
+      sessionId: assistantStore.sessionId,
+      answeredAt: item.answeredAt,
+      text: item.thinking.text,
+    })
+    item.thinking.saved = true
+    ElMessage.success('思考已随本条回答保存')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '保存思考失败')
+  } finally {
+    savingThinking.value = false
+  }
+}
+
+function clearThinking(): void {
+  clearThinkingCache()
+  ElMessage.success('已清理本标签页的思考缓存')
 }
 
 async function addToKnowledge(index: number, item: ChatItem): Promise<void> {
@@ -714,6 +904,73 @@ html[data-theme='black'] .is-assistant .assistant__bubble,
 html[data-theme='tech'] .is-assistant .assistant__bubble,
 html[data-theme='industry'] .is-assistant .assistant__bubble {
   background: color-mix(in srgb, var(--bubble-tone) 14%, var(--aitp-panel));
+}
+
+.assistant__cache-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 4px;
+}
+
+.assistant__thinking {
+  margin-bottom: 8px;
+  border: 1px solid var(--aitp-border, #e4e7ed);
+  border-left: 3px solid var(--el-color-primary-light-5, #79bbff);
+  border-radius: 6px;
+  background: var(--aitp-subtle, #f5f7fa);
+  padding: 6px 8px;
+}
+
+.assistant__thinking-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--aitp-text-secondary, #606266);
+}
+
+.assistant__thinking-head:hover {
+  color: var(--el-color-primary, #409eff);
+}
+
+.assistant__thinking-body {
+  margin: 6px 0 0;
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--aitp-text-secondary, #606266);
+  scrollbar-width: thin;
+  scrollbar-color: var(--el-color-primary-light-5, #79bbff) var(--aitp-subtle, #f5f7fa);
+}
+
+.assistant__thinking-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.assistant__thinking-body::-webkit-scrollbar-thumb {
+  background: var(--el-color-primary-light-5, #79bbff);
+  border-radius: 3px;
+}
+
+.assistant__thinking-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.assistant__thinking-note {
+  margin-top: 4px;
+  font-size: 12px;
 }
 
 .assistant__meta {

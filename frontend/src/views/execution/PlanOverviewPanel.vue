@@ -222,6 +222,7 @@ import { ArrowDown, ArrowRight, Refresh } from '@element-plus/icons-vue'
 import { bugApi, projectVersionApi, requirementApi, testPlanApi, testRunApi } from '@/api'
 import type { ProjectVersion, Requirement, TestPlan, TestRun, TestRunCase } from '@/api/types'
 import { useAppStore } from '@/stores/app'
+import { fetchAllPages } from '@/utils/fetchAll'
 
 const appStore = useAppStore()
 const router = useRouter()
@@ -698,18 +699,18 @@ async function load(): Promise<void> {
   if (!projectId) return
   loading.value = true
   try {
-    const [v, p, r, req, bugs] = await Promise.all([
+    const [v, planRows, runRows, reqRows, bugRows] = await Promise.all([
       projectVersionApi.list(projectId),
-      testPlanApi.list({ projectId, pageNum: 1, pageSize: 200 }),
-      testRunApi.list({ projectId, pageNum: 1, pageSize: 200 }),
-      requirementApi.list({ projectId, pageNum: 1, pageSize: 500 }),
-      bugApi.list({ projectId, pageNum: 1, pageSize: 500 }),
+      fetchAllPages((pageNum, pageSize) => testPlanApi.list({ projectId, pageNum, pageSize })),
+      fetchAllPages((pageNum, pageSize) => testRunApi.list({ projectId, pageNum, pageSize })),
+      fetchAllPages((pageNum, pageSize) => requirementApi.list({ projectId, pageNum, pageSize })),
+      fetchAllPages((pageNum, pageSize) => bugApi.list({ projectId, pageNum, pageSize })),
     ])
     versions.value = v.list ?? []
-    plans.value = p.list ?? []
-    runs.value = r.list ?? []
-    requirements.value = req.list ?? []
-    openBugs.value = (bugs.list ?? []).filter((b) => !['closed', 'rejected'].includes(b.status)).length
+    plans.value = planRows
+    runs.value = runRows
+    requirements.value = reqRows
+    openBugs.value = bugRows.filter((b) => !['closed', 'rejected'].includes(b.status)).length
     if (!kanbanRunId.value && runs.value.length) {
       kanbanRunId.value = runs.value[0].id
       await loadKanbanCases()
