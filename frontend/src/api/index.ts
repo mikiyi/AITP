@@ -94,6 +94,8 @@ import type {
   ReportTrend,
   Requirement,
   SqlAnalysis,
+  SqlScript,
+  SqlScriptResult,
   RestoreResult,
   RouteResponse,
   SearchResult,
@@ -902,6 +904,21 @@ export const sqlAnalysisApi = {
   update: (id: number, body: Record<string, unknown>) =>
     put<SqlAnalysis>(`/sql-analyses/${id}`, body),
   remove: (id: number) => del(`/sql-analyses/${id}`),
+}
+
+/** 数据库脚本：SQL 脚本库，供自动化脚本断言/前后置引用。 */
+export const sqlScriptApi = {
+  list: (query: Record<string, unknown> = {}) =>
+    get<PagePayload<SqlScript>>('/sql-scripts', query as never),
+  get: (id: number) => get<SqlScript>(`/sql-scripts/${id}`),
+  create: (body: Record<string, unknown>) => post<SqlScript>('/sql-scripts', body),
+  update: (id: number, body: Record<string, unknown>) =>
+    put<SqlScript>(`/sql-scripts/${id}`, body),
+  remove: (id: number) => del<{ deleted: boolean; refs: { kind: string; id: number; name: string }[] }>(`/sql-scripts/${id}`),
+  refs: (id: number) =>
+    get<{ refs: { kind: string; id: number; name: string }[] }>(`/sql-scripts/${id}/refs`),
+  execute: (id: number, body: { allowWrite?: boolean; variables?: Record<string, string>; timeoutSeconds?: number }) =>
+    post<SqlScriptResult>(`/sql-scripts/${id}/execute`, body),
 }
 
 /** 测试数据生成：文件分支全程本地，不经过大模型。 */

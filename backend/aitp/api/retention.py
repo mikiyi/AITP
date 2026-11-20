@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 from flask import Blueprint, Response, request
 
-from ..common.validators import optional_int, optional_str
+from ..common.validators import check_choice, optional_int, optional_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.archive_repo import ArchiveBundleRepository
@@ -19,6 +20,25 @@ from ..services import audit_service, job_queue, retention_service
 from .helpers import audit, body, commit, db, path_int, page_args
 
 bp = Blueprint("retention", __name__)
+
+
+def _validated_types(data: dict[str, Any]) -> list[str] | None:
+    """清理目标类型：缺省 None = 全类型；给了就必须是 DATA_TYPES 白名单内的合法元素。
+
+    不校验元素会导致静默忽略（run_cleanup 只匹配已知类型），用户以为清理了实际没动。
+    """
+    data_types = data.get("dataTypes")
+    if data_types is None:
+        return None
+    if not isinstance(data_types, list):
+        raise AppError(ErrorCode.PARAM_ERROR, "dataTypes 必须是数组")
+    validated: list[str] = []
+    for item in data_types:
+        # str(item) 非空时 check_choice 必返回 str（不会走 default 分支），显式断言收敛类型
+        chosen = check_choice(str(item), retention_service.DATA_TYPES, "dataTypes[]")
+        assert chosen is not None
+        validated.append(chosen)
+    return validated
 
 
 @bp.get("/settings")
@@ -48,9 +68,7 @@ def cleanup_api() -> Response:
     conn = db()
     data = body()
     dry_run = bool(data.get("dryRun"))
-    data_types = data.get("dataTypes")
-    if data_types is not None and not isinstance(data_types, list):
-        raise AppError(ErrorCode.PARAM_ERROR, "dataTypes 必须是数组")
+    data_types = _validated_types(data)
     if dry_run:
         return ok(retention_service.run_cleanup(conn, _db_path(conn), data_types=data_types,
                                                 dry_run=True, created_by="local"))

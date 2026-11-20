@@ -45,7 +45,9 @@ def run_scenario_job(conn: sqlite3.Connection, payload: dict[str, Any],
     scenario = ApiScenarioRepository(conn).get(int(payload.get("scenarioId") or 0))
     if scenario is None:
         raise ValueError("调度目标场景不存在")
-    result = api_scenario_service.run_with_data(conn, dict(scenario), scenario.get("env_id"))
+    result = api_scenario_service.run_with_data(
+        conn, dict(scenario), scenario.get("env_id"), db_path
+    )
     return {"passed": result["passed"], "runNo": result["runNo"]}
 
 

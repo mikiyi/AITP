@@ -14,7 +14,7 @@ import sqlite3
 from typing import Any
 
 from ..common.pagination import MAX_PAGE_SIZE, Page, RowDict, build_page
-from .base import BaseRepository
+from .base import BaseRepository, loads
 from .numbering import begin_claim
 
 #: 四类脚本
@@ -31,6 +31,15 @@ CATEGORY_PREFIX = {
     CATEGORY_APP: "AUTO-A",
     CATEGORY_API: "AUTO-I",
     CATEGORY_PERFORMANCE: "PERF",
+}
+
+#: 类别 → AI 一键入库编号前缀：在普通前缀前加 "AI_"，
+#: AI 产出的脚本一眼可识别来源，与人工创建走独立序列
+CATEGORY_PREFIX_AI = {
+    CATEGORY_WEB: "AI_AUTO-W",
+    CATEGORY_APP: "AI_AUTO-A",
+    CATEGORY_API: "AI_AUTO-I",
+    CATEGORY_PERFORMANCE: "AI_PERF",
 }
 
 #: 类别 → 默认文件名后缀
@@ -116,13 +125,17 @@ class AutomationScriptRepository(BaseRepository):
     }
     searchable = ["name", "script_no", "description", "framework", "file_name"]
 
-    def next_script_no(self, category: str) -> str:
+    def next_script_no(self, category: str, ai: bool = False) -> str:
         """按类别前缀取下一个可用编号；软删的编号可以被复用。
+
+        ai=True 时走 AI_AUTO-W / AI_AUTO-A / AI_AUTO-I / AI_PERF 独立序列，
+        与人工创建的 AUTO-W 等编号互不干扰。
 
         script_no 上有全局唯一索引（uk_biz_automation_script_no），
         取号必须与紧随其后的插入同处一个写事务，见 numbering.begin_claim。
         """
-        prefix = CATEGORY_PREFIX.get(category, "AUTO")
+        prefix_table = CATEGORY_PREFIX_AI if ai else CATEGORY_PREFIX
+        prefix = prefix_table.get(category, "AUTO")
         begin_claim(self.conn)
         rows = self.conn.execute(
             "SELECT script_no FROM biz_automation_script WHERE is_deleted = 0"
@@ -153,6 +166,39 @@ class AutomationScriptRepository(BaseRepository):
             if key in counts:
                 counts[key] = int(row["c"])
         return counts
+
+    def scenario_refs(self, project_id: int | None = None) -> dict[int, list[dict[str, Any]]]:
+        """脚本在场景自动化里被引用的清单：script_id -> 引用条目（SCN 编号 + 名称）。
+
+        引用口径只认场景自动化 steps_json 里的 automation 步骤（scriptNo）；
+        执行记录与定时调度都不算引用——跑过/调度过不代表被场景引用。
+        """
+        scenario_rows = self.conn.execute(
+            "SELECT id, name, scenario_no, steps_json, project_id"
+            " FROM biz_api_scenario WHERE is_deleted = 0"
+        ).fetchall()
+        script_rows = self.conn.execute(
+            "SELECT id, script_no FROM biz_automation_script WHERE is_deleted = 0"
+        ).fetchall()
+        no_to_id = {str(r["script_no"]): int(r["id"]) for r in script_rows}
+        out: dict[int, list[dict[str, Any]]] = {}
+        for row in scenario_rows:
+            if project_id and int(row["project_id"] or 0) != int(project_id):
+                continue
+            steps = loads(row["steps_json"], []) or []
+            hit_nos: set[str] = set()
+            for step in steps:
+                if not isinstance(step, dict) or str(step.get("type") or "") != "automation":
+                    continue
+                no = str(step.get("scriptNo") or "").strip()
+                if no in no_to_id:
+                    hit_nos.add(no)
+            for no in hit_nos:
+                out.setdefault(no_to_id[no], []).append(
+                    {"kind": "scenario", "refNo": str(row["scenario_no"] or ""),
+                     "name": str(row["name"] or "")}
+                )
+        return out
 
 
 class AutomationRunRepository(BaseRepository):
@@ -289,6 +335,9 @@ def script_summary(row: dict[str, Any]) -> dict[str, Any]:
         "timeoutSeconds": row.get("timeout_seconds"),
         "caseMatchMode": row.get("case_match_mode") or MATCH_MODE_CASE_NO,
         "caseMatchValue": row.get("case_match_value") or "",
+        "preDbRefs": loads(row.get("pre_db_refs"), []) or [],
+        "postDbRefs": loads(row.get("post_db_refs"), []) or [],
+        "dbAssertRefs": loads(row.get("db_assert_refs"), []) or [],
         "status": row.get("status") or SCRIPT_STATUS_READY,
         "lastRunStatus": row.get("last_run_status") or "",
         "lastRunAt": row.get("last_run_at") or "",

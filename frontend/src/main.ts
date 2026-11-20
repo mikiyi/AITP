@@ -8,6 +8,7 @@ import 'element-plus/dist/index.css'
 import App from './App.vue'
 import router from './router'
 import { installGlobalErrorGuard } from './composables/useGlobalError'
+import { installInputHintTip } from './utils/inputHintTip'
 import { useAppStore } from './stores/app'
 import { useThemeStore } from './stores/theme'
 import './styles/main.css'
@@ -29,6 +30,9 @@ useThemeStore().init()
 
 // 兜底页要在挂载前登记：首屏渲染自己抛出的异常也要能被捕获到
 installGlobalErrorGuard(app)
+
+// 占位提示被截断的输入框全站悬停浮显（事件委托，不依赖各页面配合）
+installInputHintTip()
 
 // 先拿到当前项目再挂载：详情页的首个请求就会带 projectId，避免项目作用域竞态
 void useAppStore(pinia).loadProjects().finally(() => {

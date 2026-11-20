@@ -7,7 +7,9 @@
       </div>
       <div class="auto-head__actions">
         <el-button :icon="Refresh" @click="reloadAll">刷新</el-button>
-        <el-button @click="openElements">元素库</el-button>
+        <!-- 元素库（Page Object）只对 Web / App 脚本有意义：存的是浏览器 / APP 元素选择器，
+             接口与性能脚本用不到，不该在这两个入口出现 -->
+        <el-button v-if="category === 'web' || category === 'app'" @click="openElements">元素库</el-button>
         <el-button @click="openSchedules">定时</el-button>
         <el-button type="primary" :icon="Plus" @click="openCreate">新建脚本</el-button>
       </div>
@@ -52,7 +54,6 @@
         <template #name="{ row }">
           <div class="auto-name">
             <span class="auto-name__title">{{ row.name }}</span>
-            <span class="muted text-mono">{{ row.scriptNo }}</span>
             <span v-if="row.envId" class="muted">{{ envNameOf(row.envId) }}</span>
           </div>
         </template>
@@ -68,6 +69,9 @@
         </template>
         <template #lastRunAt="{ row }">
           <span :class="{ muted: !row.lastRunAt }">{{ dateTimeText(row.lastRunAt) }}</span>
+        </template>
+        <template #referenced="{ row }">
+          <ReferenceRefs :refs="row.refs" :used="row.referenced" />
         </template>
         <template #status="{ row }">
           <el-tag :type="row.status === 'ready' ? 'success' : 'info'" size="small" effect="plain">
@@ -189,6 +193,68 @@
             :placeholder="codePlaceholder"
           />
         </el-form-item>
+        <el-form-item label="数据库脚本">
+          <div class="auto-db-refs">
+            <div class="auto-db-refs__row">
+              <span class="auto-db-refs__label">执行前预处理</span>
+              <el-select
+                v-model="form.preDbRefs"
+                multiple
+                filterable
+                clearable
+                placeholder="选择 SQL 脚本（造数/初始化）"
+                style="flex: 1"
+              >
+                <el-option
+                  v-for="s in sqlScriptOptions"
+                  :key="s.scriptNo"
+                  :label="`${s.scriptNo} ${s.alias ? `· ${s.alias}` : ''} ${s.name}`"
+                  :value="s.scriptNo"
+                />
+              </el-select>
+            </div>
+            <div class="auto-db-refs__row">
+              <span class="auto-db-refs__label">执行后处理</span>
+              <el-select
+                v-model="form.postDbRefs"
+                multiple
+                filterable
+                clearable
+                placeholder="选择 SQL 脚本（清理/收尾）"
+                style="flex: 1"
+              >
+                <el-option
+                  v-for="s in sqlScriptOptions"
+                  :key="s.scriptNo"
+                  :label="`${s.scriptNo} ${s.alias ? `· ${s.alias}` : ''} ${s.name}`"
+                  :value="s.scriptNo"
+                />
+              </el-select>
+            </div>
+            <div class="auto-db-refs__row">
+              <span class="auto-db-refs__label">结果断言</span>
+              <el-select
+                v-model="form.dbAssertRefs"
+                multiple
+                filterable
+                clearable
+                placeholder="选择 SQL 脚本（只读查询）"
+                style="flex: 1"
+              >
+                <el-option
+                  v-for="s in sqlScriptOptions"
+                  :key="s.scriptNo"
+                  :label="`${s.scriptNo} ${s.alias ? `· ${s.alias}` : ''} ${s.name}`"
+                  :value="s.scriptNo"
+                />
+              </el-select>
+            </div>
+            <p class="muted" style="font-size: 12px; margin-top: 6px">
+              按编号拉取数据库脚本：执行前预处理 / 执行后处理允许写操作（造数/清理）；
+              结果断言走只读查询，断言未通过时脚本判定为失败。
+            </p>
+          </div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="editorVisible = false">取消</el-button>
@@ -256,15 +322,25 @@
               <div v-for="item in lastRun.artifacts" :key="item.path" class="auto-artifacts__row">
                 <span class="text-mono auto-artifacts__path">{{ item.path }}</span>
                 <span class="muted">{{ formatSize(item.size) }}</span>
+                <el-button
+                  v-if="isImage(item.path)"
+                  link
+                  type="primary"
+                  @click="openPreview(lastRun.id, item.path)"
+                >预览</el-button>
                 <a :href="artifactUrl(lastRun.id, item.path)" class="auto-artifacts__link">
                   <el-button link type="primary" :icon="Download">下载</el-button>
                 </a>
               </div>
             </div>
-            <p v-else class="muted auto-artifacts__empty">
-              本次执行没有产物。脚本把截图、日志等文件写到环境变量 AITP_RUN_DIR
-              指向的目录，即可在这里下载。
-            </p>
+            <div v-else class="muted auto-artifacts__empty">
+              <p>本次执行没有产物。失败截图是排查的关键：脚本把截图存到环境变量
+                <code>AITP_RUN_DIR</code> 指向的目录，就会出现在这里（图片可直接点「预览」）。</p>
+              <p>Selenium 失败留截图，在 except 里加一行：</p>
+              <pre class="text-mono">import os; driver.save_screenshot(os.path.join(os.environ["AITP_RUN_DIR"], "fail.png"))</pre>
+              <p>Playwright 同步 API：</p>
+              <pre class="text-mono">page.screenshot(path=os.path.join(os.environ["AITP_RUN_DIR"], "fail.png"))</pre>
+            </div>
           </el-tab-pane>
         </el-tabs>
       </div>
@@ -274,6 +350,19 @@
         </a>
         <el-button @click="resultVisible = false">关闭</el-button>
       </template>
+    </el-dialog>
+
+    <!-- 截图等图片产物直接预览（嵌在执行结果弹窗里，需 append-to-body 才不被遮挡） -->
+    <el-dialog
+      v-model="previewVisible"
+      :title="previewArtifact?.path"
+      width="720px"
+      top="6vh"
+      append-to-body
+    >
+      <div v-if="previewArtifact" class="auto-preview">
+        <img :src="artifactUrl(previewArtifact.runId, previewArtifact.path)" alt="产物预览" />
+      </div>
     </el-dialog>
 
     <!-- 执行历史 -->
@@ -399,6 +488,7 @@
         <el-button type="primary" @click="saveSchedule">添加</el-button>
       </div>
       <el-table :data="schedules" size="small" border max-height="300">
+        <el-table-column prop="scheduleNo" label="编号" width="100" />
         <el-table-column prop="name" label="名称" min-width="120" />
         <el-table-column label="目标" width="110">
           <template #default="{ row }">{{ row.targetType === 'scenario' ? '场景' : '脚本' }}#{{ row.targetId }}</template>
@@ -441,9 +531,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Download, Plus, Refresh } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import MetricCard from '@/components/MetricCard.vue'
+import ReferenceRefs from '@/components/ReferenceRefs.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
 import ProdConfirmDialog from '@/components/ProdConfirmDialog.vue'
-import { automationApi, testEnvApi, schedulesApi } from '@/api'
+import { automationApi, sqlScriptApi, testEnvApi, schedulesApi } from '@/api'
 import { useAppStore } from '@/stores/app'
 import { dateTimeText } from '@/utils/format'
 import type {
@@ -453,6 +544,7 @@ import type {
   AutomationRun,
   AutomationRuntime,
   AutomationScript,
+  SqlScript,
   TestEnv,
 } from '@/api/types'
 
@@ -645,9 +737,11 @@ const runtimeHintType = computed<'success' | 'warning'>(() => {
 const tableRef = ref<TableExpose | null>(null)
 
 const columns: ColumnDef[] = [
+  { prop: 'scriptNo', label: '编号', width: 110 },
   { prop: 'name', label: '脚本', minWidth: 220, slot: 'name' },
   { prop: 'framework', label: '框架', width: 110, slot: 'framework' },
   { prop: 'fileName', label: '文件名', width: 180 },
+  { prop: 'referenced', label: '是否被引用', width: 110, align: 'center', slot: 'referenced' },
   { prop: 'status', label: '状态', width: 90, slot: 'status' },
   { prop: 'lastRunStatus', label: '最近执行', width: 110, slot: 'lastRunStatus' },
   { prop: 'lastRunAt', label: '最近执行时间', width: 170, slot: 'lastRunAt' },
@@ -663,6 +757,16 @@ const searchFields = computed<SearchField[]>(() => [
     options: frameworkOptions.value,
   },
   {
+    prop: 'referenced',
+    label: '是否被引用',
+    type: 'select',
+    options: [
+      { label: '全部', value: '' },
+      { label: '已被引用', value: 'true' },
+      { label: '未被引用', value: 'false' },
+    ],
+  },
+  {
     prop: 'status',
     label: '状态',
     type: 'select',
@@ -674,7 +778,10 @@ const searchFields = computed<SearchField[]>(() => [
 ])
 
 function fetcher(query: Record<string, unknown>) {
-  return automationApi.list({ ...query, category: category.value })
+  const q: Record<string, unknown> = { ...query, category: category.value }
+  const refVal = String(q.referenced ?? '').trim()
+  if (refVal !== 'true' && refVal !== 'false') delete q.referenced
+  return automationApi.list(q as never)
 }
 
 // ---- 执行 ----
@@ -766,7 +873,21 @@ const form = reactive({
   caseMatchValue: '',
   description: '',
   content: '',
+  preDbRefs: [] as string[],
+  postDbRefs: [] as string[],
+  dbAssertRefs: [] as string[],
 })
+
+const sqlScriptOptions = ref<SqlScript[]>([])
+
+async function loadSqlScripts(): Promise<void> {
+  try {
+    const payload = await sqlScriptApi.list({ pageSize: 100 })
+    sqlScriptOptions.value = payload.list ?? []
+  } catch {
+    sqlScriptOptions.value = []
+  }
+}
 
 function openCreate(): void {
   editingId.value = null
@@ -780,6 +901,10 @@ function openCreate(): void {
   form.caseMatchValue = ''
   form.description = ''
   form.content = ''
+  form.preDbRefs = []
+  form.postDbRefs = []
+  form.dbAssertRefs = []
+  void loadSqlScripts()
   editorVisible.value = true
 }
 
@@ -797,6 +922,10 @@ async function openEdit(row: AutomationScript): Promise<void> {
     form.caseMatchValue = detail.caseMatchValue ?? ''
     form.description = detail.description
     form.content = detail.content
+    form.preDbRefs = detail.preDbRefs ?? []
+    form.postDbRefs = detail.postDbRefs ?? []
+    form.dbAssertRefs = detail.dbAssertRefs ?? []
+    void loadSqlScripts()
     editorVisible.value = true
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载脚本失败')
@@ -822,6 +951,9 @@ async function saveScript(): Promise<void> {
       caseMatchValue: form.caseMatchValue.trim(),
       description: form.description,
       content: form.content,
+      preDbRefs: form.preDbRefs,
+      postDbRefs: form.postDbRefs,
+      dbAssertRefs: form.dbAssertRefs,
     }
     if (editingId.value) {
       await automationApi.update(editingId.value, body)
@@ -992,6 +1124,19 @@ async function openRunDetail(row: AutomationRun): Promise<void> {
 
 function artifactUrl(runId: number | string, path: string): string {
   return automationApi.artifactUrl(Number(runId), path)
+}
+
+/** 是否图片产物：截图是失败复盘的核心，给个直接预览入口而不是只能下载 */
+function isImage(path: string): boolean {
+  return /\.(png|jpe?g|gif|webp)$/i.test(path || '')
+}
+
+const previewVisible = ref(false)
+const previewArtifact = ref<{ runId: number | string; path: string } | null>(null)
+
+function openPreview(runId: number | string, path: string): void {
+  previewArtifact.value = { runId, path }
+  previewVisible.value = true
 }
 
 function reportUrl(runId: number | string): string {
@@ -1230,6 +1375,18 @@ watch(category, () => {
   margin: 4px 0;
   font-size: 13px;
   line-height: 1.7;
+}
+
+/* 产物预览：失败截图是复盘核心，限宽自适应方便直接看 */
+.auto-preview {
+  text-align: center;
+}
+
+.auto-preview img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 4px;
 }
 
 .env-hint {

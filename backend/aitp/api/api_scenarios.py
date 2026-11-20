@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 from typing import Any
 
-from flask import Blueprint, Response
+from flask import Blueprint, Response, current_app
 
-from ..common.validators import optional_int, optional_str, require_int, require_str
+from ..common.validators import check_choice, optional_int, optional_str, require_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.api_scenario_repo import ApiScenarioRepository, ApiScenarioRunRepository
@@ -30,7 +31,10 @@ from .helpers import (
 
 bp = Blueprint("api_scenarios", __name__)
 
-FILTERS = {"projectId": "project_id", "status": "status"}
+FILTERS = {"projectId": "project_id", "status": "status", "scenarioType": "scenario_type"}
+
+#: 场景类型：web=浏览器场景 / app=App 场景（占位，引擎待接入） / api=接口场景
+SCENARIO_TYPES = ("web", "app", "api")
 
 
 def _public(row: dict[str, Any]) -> dict[str, Any]:
@@ -40,6 +44,7 @@ def _public(row: dict[str, Any]) -> dict[str, Any]:
         "projectId": row.get("project_id"),
         "name": row.get("name"),
         "description": row.get("description") or "",
+        "scenarioType": row.get("scenario_type") or "api",
         "envId": row.get("env_id"),
         "dataSource": row.get("data_source") or "",
         "steps": loads(row.get("steps_json"), []) or [],
@@ -58,6 +63,21 @@ def _steps_of(data: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(item, dict):
             raise AppError(ErrorCode.PARAM_ERROR, "步骤必须是对象")
         stype = str(item.get("type") or "interface")
+        if stype == "database":
+            raw_extra = item.get("extra")
+            db_extra = raw_extra if isinstance(raw_extra, dict) else {}
+            db_ref = str(item.get("dbRef") or "").strip()
+            statement = str(item.get("statement") or db_extra.get("查询语句") or "").strip()
+            if not db_ref and not statement:
+                raise AppError(ErrorCode.PARAM_ERROR, "数据库步骤必须填写查询语句或引用数据库脚本编号")
+            steps.append({
+                "name": str(item.get("name") or ""), "type": "database",
+                "statement": statement, "dbRef": db_ref, "extra": db_extra,
+                "extract": item.get("extract") if isinstance(item.get("extract"), list) else [],
+                "continueOnError": bool(item.get("continueOnError")),
+                "waitMs": int(item.get("waitMs") or 0),
+            })
+            continue
         if stype == "browser":
             action = str(item.get("action") or "navigate")
             if action != "snapshot" and not (str(item.get("url") or "").strip() or str(item.get("selector") or "").strip()):
@@ -67,6 +87,19 @@ def _steps_of(data: dict[str, Any]) -> list[dict[str, Any]]:
                 "action": action,
                 "url": str(item.get("url") or ""), "selector": str(item.get("selector") or ""),
                 "value": str(item.get("value") or ""),
+                "extract": item.get("extract") if isinstance(item.get("extract"), list) else [],
+                "continueOnError": bool(item.get("continueOnError")),
+                "waitMs": int(item.get("waitMs") or 0),
+            })
+            continue
+        if stype == "automation":
+            # 自动化脚本步骤：只存脚本编号，执行时按编号取脚本；引用判定扫 steps_json 里的编号
+            script_no = str(item.get("scriptNo") or "").strip()
+            if not script_no:
+                raise AppError(ErrorCode.PARAM_ERROR, "自动化脚本步骤必须选择脚本编号")
+            steps.append({
+                "name": str(item.get("name") or ""), "type": "automation",
+                "scriptNo": script_no,
                 "extract": item.get("extract") if isinstance(item.get("extract"), list) else [],
                 "continueOnError": bool(item.get("continueOnError")),
                 "waitMs": int(item.get("waitMs") or 0),
@@ -112,17 +145,21 @@ def create_scenario() -> Response:
     data = body()
     project_id = require_project(conn, require_int(data.get("projectId"), "projectId"))
     name = require_str(data.get("name"), "name", 200)
+    scenario_type = check_choice(
+        data.get("scenarioType"), SCENARIO_TYPES, "scenarioType", "api"
+    ) or "api"
     repo = ApiScenarioRepository(conn)
     scenario_no = repo.next_scenario_no()
     new_id = repo.insert({
         "scenario_no": scenario_no,
         "project_id": project_id,
         "name": name,
+        "scenario_type": scenario_type,
         "description": optional_str(data.get("description"), "description", 2000),
         "env_id": optional_int(data.get("envId"), "envId"),
         "data_source": optional_str(data.get("dataSource"), "dataSource", 20000) or "",
         "steps_json": dumps(_steps_of(data)),
-        "status": "ready",
+        "status": check_choice(data.get("status"), ("ready", "disabled"), "status", "ready") or "ready",
     })
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_CREATE, "api_scenario", new_id, name,
@@ -149,10 +186,14 @@ def update_scenario(pk: str) -> Response:
         payload["env_id"] = optional_int(data["envId"], "envId")
     if "dataSource" in data:
         payload["data_source"] = optional_str(data["dataSource"], "dataSource", 20000) or ""
+    if "scenarioType" in data:
+        payload["scenario_type"] = check_choice(
+            data["scenarioType"], SCENARIO_TYPES, "scenarioType"
+        ) or "api"
     if "steps" in data:
         payload["steps_json"] = dumps(_steps_of(data))
     if "status" in data:
-        payload["status"] = str(data["status"])
+        payload["status"] = check_choice(data["status"], ("ready", "disabled"), "status") or "ready"
     repo.update(target, payload)
     commit(conn)
     return ok(_public(repo.get(target) or {}))
@@ -182,7 +223,8 @@ def run_scenario(pk: str) -> Response:
     guard_project_scope(row, scope_arg(), "接口场景")
     data = body()
     env_id = optional_int(data.get("envId"), "envId") or row.get("env_id")
-    result = api_scenario_service.run_with_data(conn, dict(row), env_id)
+    db_path = Path(current_app.config["AITP_DB_PATH"])
+    result = api_scenario_service.run_with_data(conn, dict(row), env_id, db_path)
     audit(conn, audit_service.AUDIT_ACTION_EXECUTE, "api_scenario_run",
           int(result["runId"]), str(row.get("name")), {"passed": result["passed"]})
     return ok(result)

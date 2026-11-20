@@ -107,8 +107,67 @@ def main() -> int:
             "targetId": scn["id"], "intervalMinutes": 1,
         })
         check("调度创建", sch["intervalMinutes"] == 1, str(sch))
+        # A3 边界：间隔钳到 [1, 1440]，enabled 严格布尔解析（字符串 "false" 不再误判为真）
+        clamped = api.data("POST", "/api/v1/schedules", {
+            "projectId": pid, "name": "超上限", "targetType": "scenario",
+            "targetId": scn["id"], "intervalMinutes": 99999, "enabled": "false",
+        })
+        check("间隔超上限钳到 1440 且 enabled 字符串 false 判为关",
+              clamped["intervalMinutes"] == 1440 and clamped["enabled"] is False, str(clamped)[:200])
+        neg = api.data("POST", "/api/v1/schedules", {
+            "projectId": pid, "name": "负间隔", "targetType": "scenario",
+            "targetId": scn["id"], "intervalMinutes": -5,
+        })
+        check("间隔负数钳到 1", neg["intervalMinutes"] == 1, str(neg)[:200])
         lst = api.data("GET", f"/api/v1/schedules?projectId={pid}")["list"]
-        check("调度列表", len(lst) == 1, str(len(lst)))
+        check("调度列表", len(lst) >= 1, str(len(lst)))
+        check("调度带 SCH 编号",
+              all(str(s.get("scheduleNo") or "").startswith("SCH-") for s in lst),
+              str(lst)[:200])
+
+        # 自动化脚本「已被引用」口径：只认场景自动化 steps_json 里的 automation 步骤，
+        # 定时调度与执行记录都不算引用；浮显数据 refs 带 SCN 编号
+        used_script = api.data("POST", "/api/v1/automation/scripts", {
+            "projectId": pid, "name": "被场景引用脚本", "category": "web", "content": "print(1)",
+        })
+        idle_script = api.data("POST", "/api/v1/automation/scripts", {
+            "projectId": pid, "name": "无引用脚本", "category": "web", "content": "print(1)",
+        })
+        api.data("POST", "/api/v1/api-scenarios", {
+            "projectId": pid, "name": "引用自动化脚本的场景", "scenarioType": "web",
+            "steps": [
+                {"name": "接口步", "type": "interface",
+                 "extra": {"接口URL": "http://127.0.0.1:1/x", "请求方式": "GET"}},
+                {"name": "脚本步", "type": "automation", "scriptNo": used_script["scriptNo"]},
+            ],
+        })
+        # 反向对照：只建脚本调度不应再点亮「已被引用」
+        api.data("POST", "/api/v1/schedules", {
+            "projectId": pid, "name": "脚本调度", "targetType": "script",
+            "targetId": idle_script["id"], "intervalMinutes": 60,
+        })
+        scripts = api.data("GET", f"/api/v1/automation/scripts?projectId={pid}&category=web")["list"]
+        used_item = next(s for s in scripts if s["id"] == used_script["id"])
+        idle_item = next(s for s in scripts if s["id"] == idle_script["id"])
+        check("被场景 automation 步骤引用的脚本判为已被引用且 refs 带 SCN 编号",
+              used_item["referenced"] is True
+              and any(str(r.get("refNo") or "").startswith("SCN-") for r in used_item.get("refs") or []),
+              str(used_item.get("refs"))[:200])
+        check("只有调度引用的脚本未被引用（调度与执行记录都不算）",
+              idle_item["referenced"] is False and not idle_item.get("refs"),
+              str(idle_item.get("refs"))[:200])
+
+        # 场景状态字段：新建可指定停用，非法值拒绝
+        scn_off = api.data("POST", "/api/v1/api-scenarios", {
+            "projectId": pid, "name": "停用场景", "status": "disabled",
+            "steps": [{"name": "s", "extra": {"接口URL": "http://127.0.0.1:1/x", "请求方式": "GET"}}],
+        })
+        check("场景新建可指定停用状态", scn_off["status"] == "disabled", str(scn_off)[:200])
+        _, bad_body = api.call("POST", "/api/v1/api-scenarios", {
+            "projectId": pid, "name": "非法状态", "status": "bogus",
+            "steps": [{"name": "s", "extra": {"接口URL": "http://127.0.0.1:1/x", "请求方式": "GET"}}],
+        })
+        check("场景非法状态被拒绝", bad_body.get("code") == ErrorCode.PARAM_ERROR, str(bad_body)[:200])
         trig = api.data("POST", f"/api/v1/schedules/{sch['id']}/trigger", {})
         check("手动触发投递任务", trig.get("taskId") is not None, str(trig))
 

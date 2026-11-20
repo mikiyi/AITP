@@ -371,6 +371,16 @@
             采纳为报告
           </el-button>
           <el-button
+            v-if="capability === 'test_data_generation' && dataMode === 'sql'"
+            :icon="FolderAdd"
+            type="success"
+            :loading="importingSqlScript"
+            :disabled="!finished || !output"
+            @click="importToSqlScript"
+          >
+            添加为数据库脚本
+          </el-button>
+          <el-button
             v-if="capability === 'performance_script'"
             type="success"
             :icon="Odometer"
@@ -388,7 +398,7 @@
             :disabled="!finished || !output"
             @click="importToAutomation(automationCategory)"
           >
-            加入{{ automationCategoryLabel }}自动化
+            添加为{{ automationScriptButtonLabel }}
           </el-button>
         </div>
 
@@ -821,7 +831,7 @@ import PromptOptimizer from '@/components/PromptOptimizer.vue'
 import TestDataFilesPanel from './TestDataFilesPanel.vue'
 import TestDataSamplesPanel from './TestDataSamplesPanel.vue'
 import TestDataPoolPanel from './TestDataPoolPanel.vue'
-import { aiApi, automationApi, caseApi, knowledgeApi, labApi, moduleApi, projectVersionApi, recordApi, reportApi, requirementApi, templateApi } from '@/api'
+import { aiApi, automationApi, caseApi, knowledgeApi, labApi, moduleApi, projectVersionApi, recordApi, reportApi, requirementApi, sqlScriptApi, templateApi } from '@/api'
 import { streamPost, type DegradeInfo } from '@/api/stream'
 import type {
   AdoptCaseItem,
@@ -2232,17 +2242,18 @@ const automationCategory = computed<AutomationCategory>(() => {
   return 'web'
 })
 
-const automationCategoryLabel = computed(() => {
+const automationScriptButtonLabel = computed(() => {
   const labels: Record<AutomationCategory, string> = {
-    web: 'Web',
-    app: 'App',
-    api: '接口',
-    performance: '性能',
+    web: 'web自动化脚本',
+    app: 'app自动化脚本',
+    api: '接口自动化脚本',
+    performance: '性能测试脚本',
   }
   return labels[automationCategory.value]
 })
 
 const importingScript = ref(false)
+const importingSqlScript = ref(false)
 
 /** 脚本名：优先用场景首行，其次用项目名，避免生成一串无意义的名字。 */
 function scriptNameOf(category: AutomationCategory): string {
@@ -2255,6 +2266,8 @@ function scriptNameOf(category: AutomationCategory): string {
 /**
  * 一键入库：把产出的代码块存成脚本资产，并跳到对应管理页。
  * 后端会按类别从产出里挑代码块（性能取 xml、其余取 python），前端只管传原文。
+ * ai=true 时编号走 AI_ 前缀独立序列（AI_AUTO-W / AI_AUTO-A / AI_AUTO-I / AI_PERF），
+ * 与人工创建脚本互不干扰。
  */
 async function importToAutomation(category: AutomationCategory): Promise<void> {
   if (!output.value.trim()) {
@@ -2276,6 +2289,7 @@ async function importToAutomation(category: AutomationCategory): Promise<void> {
         category === 'app' ? (multiValues.appPlatforms ?? []).join(',') : '',
       targetType: category === 'performance' ? 'performance' : category,
       source: 'ai',
+      ai: true,
     })
     ElMessage.success(`已入库：${script.scriptNo}`)
     await badgeStore.load()
@@ -2285,6 +2299,40 @@ async function importToAutomation(category: AutomationCategory): Promise<void> {
   } finally {
     importingScript.value = false
   }
+}
+
+/**
+ * 一键入库：把 SQL 造数产出存成数据库脚本资产，编号走 AI_SQL-xxx 独立序列。
+ */
+async function importToSqlScript(): Promise<void> {
+  if (!output.value.trim()) {
+    ElMessage.warning('暂无产出')
+    return
+  }
+  importingSqlScript.value = true
+  try {
+    const script = await sqlScriptApi.create({
+      name: sqlScriptName(),
+      content: output.value,
+      projectId: appStore.currentProjectId ?? undefined,
+      description: values.intent ?? values.schemaDesc ?? '',
+      ai: true,
+    })
+    ElMessage.success(`已入库：${script.scriptNo}`)
+    await badgeStore.load()
+    await router.push('/sql-scripts')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '入库失败')
+  } finally {
+    importingSqlScript.value = false
+  }
+}
+
+/** SQL 脚本名：优先用意图首行，其次用项目名。 */
+function sqlScriptName(): string {
+  const intent = (values.intent ?? '').split('\n')[0].trim()
+  const project = (values.projectName ?? '').trim()
+  return (intent || project || 'SQL 造数脚本').slice(0, 60)
 }
 
 const pageActive = ref(true)
@@ -2330,6 +2378,9 @@ watch(capability, () => {
 })
 
 onMounted(async () => {
+  // 表单初值只依赖静态配置与路由参数，必须先于任何 await 落定：
+  // 放在异步加载之后会在慢后端下晚到，把用户已切换的数据模式/已填内容重置掉
+  resetValues()
   await labStore.loadAllCapabilities()
   if (!spec.value) {
     // 能力已下线的旧书签：留在只有裸编码的空壳页没有意义，退回能力总览
@@ -2338,8 +2389,8 @@ onMounted(async () => {
     return
   }
   await labStore.loadModuleOptions(appStore.currentProjectId ?? undefined)
+  syncModulePath()
   await loadVersionOptions()
-  resetValues()
   void loadHistory(1)
   void categoryStore.load()
   window.addEventListener('paste', onPaste)

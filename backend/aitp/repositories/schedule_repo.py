@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .base import BaseRepository
+from .numbering import next_no
 
 
 class TestScheduleRepository(BaseRepository):
@@ -10,4 +11,7 @@ class TestScheduleRepository(BaseRepository):
     default_order = "id"
     default_order_dir = "desc"
     order_whitelist = {"id", "name", "next_run_at", "created_at"}
-    searchable = ["name"]
+    searchable = ["name", "schedule_no"]
+
+    def next_schedule_no(self) -> str:
+        return next_no(self.conn, self.table, "schedule_no", "SCH")

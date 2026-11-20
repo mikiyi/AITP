@@ -577,7 +577,11 @@ def artifact_file(db_path: Path, run_no: str, relative: str) -> Path | None:
 # ---------------------------------------------------------------------
 
 def parse_jtl(path: Path) -> dict[str, Any] | None:
-    """解析 JMeter CSV 结果（.jtl），汇总样本/失败/错误率/耗时/吞吐。"""
+    """解析 JMeter CSV 结果（.jtl），汇总样本/失败/错误率/耗时/吞吐与分位数。
+
+    分位数与 JMeter 聚合报告口径一致：对样本耗时升序取最近秩插值
+    （ceil(p/100 * n) - 1 下标），与 JMeter 自带 Aggregate Report 对齐。
+    """
     import csv
 
     try:
@@ -603,6 +607,12 @@ def parse_jtl(path: Path) -> dict[str, Any] | None:
         return None
     total = len(elapsed)
     span_s = (max(stamps) - min(stamps)) / 1000.0 if stamps and max(stamps) > min(stamps) else 0
+    ordered = sorted(elapsed)
+
+    def _percentile(p: int) -> int:
+        idx = max(0, min(total - 1, -(-p * total // 100) - 1))
+        return ordered[idx]
+
     return {
         "samples": total,
         "failures": failures,
@@ -610,8 +620,22 @@ def parse_jtl(path: Path) -> dict[str, Any] | None:
         "avgMs": round(sum(elapsed) / total, 1),
         "minMs": min(elapsed),
         "maxMs": max(elapsed),
+        "p90Ms": _percentile(90),
+        "p95Ms": _percentile(95),
+        "p99Ms": _percentile(99),
         "throughput": round(total / span_s, 2) if span_s > 0 else None,
     }
+
+
+def _percentile_line(jtl: dict[str, Any]) -> str:
+    """性能摘要里的分位线；老 jtl 缺分位字段时降级为「-」，不报错。"""
+    def _fmt(value: int | None) -> str:
+        return f"{value} ms" if value is not None else "-"
+
+    p90, p95, p99 = jtl.get("p90Ms"), jtl.get("p95Ms"), jtl.get("p99Ms")
+    if p90 is None and p95 is None and p99 is None:
+        return "- 分位：未采集"
+    return f"- 分位：P90 {_fmt(p90)}　P95 {_fmt(p95)}　P99 {_fmt(p99)}"
 
 
 def build_run_report(
@@ -645,7 +669,8 @@ def build_run_report(
             "## 二、性能摘要（JMeter）",
             f"- 样本数：{jtl['samples']}　失败：{jtl['failures']}　错误率：{jtl['errorRate']}%",
             f"- 平均响应：{jtl['avgMs']} ms　最小：{jtl['minMs']} ms　最大：{jtl['maxMs']} ms",
-            f"- 吞吐：{jtl['throughput'] if jtl['throughput'] is not None else '-'} 请求/秒",
+            _percentile_line(jtl),
+            f"- 吞吐：{jtl['throughput'] if jtl.get('throughput') is not None else '-'} 请求/秒",
         ]
     if case_results:
         passed = sum(1 for c in case_results if c.get("result") == "passed")
@@ -708,6 +733,7 @@ def _jmeter_command(conn: sqlite3.Connection, script: dict[str, Any],
         )
     result_file = run_dir / "result.jtl"
     log_file = run_dir / "jmeter.log"
+    html_dir = run_dir / "html"
     target = script_path
     props: list[str] = []
     csv_path = run_dir / "testdata.csv"
@@ -735,10 +761,15 @@ def _jmeter_command(conn: sqlite3.Connection, script: dict[str, Any],
         for key in ("threads", "rampUp", "loops", "duration"):
             if load.get(key) not in (None, ""):
                 props.append(f"-J{key}={load[key]}")
+    # A2：JMeter 可视化 HTML 报告。`-o` 指定的目录必须不存在，否则 JMeter 直接报错退出，
+    # 所以每次执行前先清掉残留（run_dir 本身是一次性的，通常不存在，这里兜底）。
+    if html_dir.is_dir():
+        shutil.rmtree(html_dir, ignore_errors=True)
     return [
         command, "-n", "-t", str(target),
         "-l", str(result_file),
         "-j", str(log_file),
+        "-e", "-o", str(html_dir),
         *props,
         *jmeter_args(conn),
     ]
@@ -902,6 +933,17 @@ def execute_script(
                 for e in elems.list
             ], ensure_ascii=False)
 
+        # 数据库脚本下沉：执行前预处理（允许写，造数）
+        from ..repositories.base import loads as _json_loads
+        pre_refs = _json_loads(script.get("pre_db_refs"), []) or []
+        pre_summary = _run_db_refs(
+            conn, script, pre_refs, allow_write=True,
+            merged_env=merged_env, extra_env=extra_env, run_dir=run_dir,
+            label="执行前预处理",
+        )
+        stdout += (pre_summary["stdout"] or "")
+        stderr += (pre_summary["stderr"] or "")
+
         if category == CATEGORY_PERFORMANCE or script.get("run_mode") == RUN_MODE_JMETER:
             command = _jmeter_command(conn, script, script_path, run_dir, test_data=test_data)
             limit = timeout_seconds or DEFAULT_JMETER_TIMEOUT
@@ -927,11 +969,33 @@ def execute_script(
         )
         stdout = _truncate(stdout)
         stderr = _truncate(stderr)
+
+        # 数据库脚本下沉：执行后处理（允许写，清理）
+        post_refs = _json_loads(script.get("post_db_refs"), []) or []
+        post_summary = _run_db_refs(
+            conn, script, post_refs, allow_write=True,
+            merged_env=merged_env, extra_env=extra_env, run_dir=run_dir,
+            label="执行后处理",
+        )
+        stdout += (post_summary["stdout"] or "")
+        stderr += (post_summary["stderr"] or "")
+
         if cancelled:
             status = RUN_STATUS_CANCELLED
             error_message = "用户取消"
         elif exit_code == 0:
             status = RUN_STATUS_SUCCESS
+            # 结果断言：只读路径，失败把结论落 stderr 并记「断言未通过」
+            assert_refs = _json_loads(script.get("db_assert_refs"), []) or []
+            assert_summary = _run_db_refs(
+                conn, script, assert_refs, allow_write=False,
+                merged_env=merged_env, extra_env=extra_env, run_dir=run_dir,
+                label="结果断言",
+            )
+            stdout += (assert_summary["stdout"] or "")
+            stderr += (assert_summary["stderr"] or "")
+            if not assert_summary["passed"]:
+                error_message = "结果断言未通过，详见 stderr"
         else:
             status = RUN_STATUS_FAILED
             if not stderr.strip():
@@ -1185,3 +1249,86 @@ def _require_framework_ready(conn: sqlite3.Connection, category: str, framework:
         f"框架「{item['label']}」还没就绪：缺 {detail}。"
         f"{item['setupHint']}（当前解释器：{item.get('interpreter') or python_interpreter(conn)}）",
     )
+
+
+def _run_db_refs(
+    conn: sqlite3.Connection,
+    script: dict[str, Any],
+    refs: list[Any],
+    *,
+    allow_write: bool,
+    merged_env: dict[str, str],
+    extra_env: dict[str, str] | None,
+    run_dir: Path,
+    label: str,
+) -> dict[str, Any]:
+    """执行脚本里引用的一组数据库脚本（按编号），把结果摘要写进 run_dir/db_refs.jsonl。
+
+    返回 {passed, stdout, stderr}：passed 表示全部成功（断言场景用于翻状态）；
+    stdout/stderr 追加到主脚本执行结果，留痕到执行历史。
+    """
+    from . import db_checkpoint_service
+    from ..repositories.sql_script_repo import SqlScriptRepository
+
+    summary: dict[str, Any] = {"passed": True, "stdout": "", "stderr": "", "details": []}
+    if not refs:
+        return summary
+    repo = SqlScriptRepository(conn)
+    env_id = script.get("env_id")
+    env_row = None
+    if env_id:
+        from ..repositories.test_env_repo import TestEnvRepository
+        env_row = TestEnvRepository(conn).get_by_id(int(env_id))
+    for ref in refs:
+        token = str(ref).strip()
+        if not token:
+            continue
+        row = repo.find_by_no(token)
+        if row is None:
+            summary["passed"] = False
+            summary["stderr"] += f"[{label}] 引用的数据库脚本 {token} 不存在或已删除\n"
+            summary["details"].append({"ref": token, "ok": False, "error": "脚本不存在"})
+            continue
+        if str(row.get("status") or "") != "ready":
+            summary["passed"] = False
+            summary["stderr"] += f"[{label}] 数据库脚本 {token} 已停用\n"
+            summary["details"].append({"ref": token, "ok": False, "error": "脚本已停用"})
+            continue
+        target_env = env_row
+        if not target_env and row.get("env_id"):
+            from ..repositories.test_env_repo import TestEnvRepository
+            target_env = TestEnvRepository(conn).get_by_id(int(row["env_id"]))
+        if target_env is None:
+            summary["passed"] = False
+            summary["stderr"] += f"[{label}] 数据库脚本 {token} 未绑定执行环境\n"
+            summary["details"].append({"ref": token, "ok": False, "error": "未绑定执行环境"})
+            continue
+        try:
+            result = db_checkpoint_service.run_statement(
+                conn, target_env, str(row.get("content") or ""),
+                allow_write=allow_write,
+            )
+            summary["stdout"] += (
+                f"[{label}] {token} 执行成功，{result.get('rowCount', 0)} 行"
+                + (f"，影响 {result.get('affectedRows', 0)} 行" if allow_write else "")
+                + "\n"
+            )
+            summary["details"].append({
+                "ref": token, "ok": True,
+                "rowCount": result.get("rowCount"),
+                "affectedRows": result.get("affectedRows"),
+                "dbType": result.get("dbType"),
+            })
+        except Exception as exc:  # noqa: BLE001 - 单个失败不中断整组
+            summary["passed"] = False
+            summary["stderr"] += f"[{label}] {token} 执行失败：{exc}\n"
+            summary["details"].append({"ref": token, "ok": False, "error": str(exc)})
+    if summary["details"]:
+        try:
+            (run_dir / "db_refs.jsonl").write_text(
+                "\n".join(dumps(item, ensure_ascii=False) for item in summary["details"]),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+    return summary

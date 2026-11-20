@@ -14,6 +14,7 @@ export const SECTION_BY_PATH: Record<string, string> = {
   '/automation/app': 'automation_app',
   '/automation/api': 'automation_api',
   '/automation/performance': 'automation_performance',
+  '/sql-scripts': 'sql_scripts',
   '/knowledge': 'knowledge',
 }
 

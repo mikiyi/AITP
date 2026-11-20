@@ -130,7 +130,7 @@
         </el-form-item>
         <el-form-item label="优先级">
           <el-select v-model="form.priority">
-            <el-option v-for="item in ['P0', 'P1', 'P2', 'P3']" :key="item" :label="item" :value="item" />
+            <el-option v-for="p in CASE_PRIORITY_OPTIONS" :key="p.value" :label="p.label" :value="p.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="执行状态">
@@ -364,6 +364,7 @@ import type {
   TestEnv,
 } from '@/api/types'
 import { caseTypeText } from '@/utils/format'
+import { CASE_PRIORITY_OPTIONS } from '@/constants/enums'
 import { useProjectScope } from '@/composables/useProjectScope'
 import { useAppStore } from '@/stores/app'
 
@@ -441,7 +442,7 @@ const EXTRA_FIELDS: Record<string, ExtraField[]> = {
     { key: '请求体', label: '请求体', placeholder: 'JSON 请求体' },
     { key: '预期状态码', label: '预期状态码', placeholder: '200' },
     { key: '预期响应体', label: '预期响应体', placeholder: '' },
-    { key: '断言规则', label: '断言规则', placeholder: '' },
+    { key: '断言规则', label: '断言规则', placeholder: '每行一条，如 json:$.code = 0；数据库检查点 db:SELECT count(*) FROM t = 1' },
     { key: '幂等性校验', label: '幂等性校验', placeholder: '' },
     { key: '备注', label: '备注', placeholder: '' },
   ],
@@ -669,7 +670,7 @@ const columns: ColumnDef[] = [
 const searchFields = computed<SearchField[]>(() => [
   { prop: 'keyword', label: '标题 / 编号' },
   { prop: 'caseType', label: '类型', type: 'select', options: caseTypeOptions },
-  { prop: 'priority', label: '优先级', type: 'select', options: ['P0', 'P1', 'P2', 'P3'].map((p) => ({ label: p, value: p })) },
+  { prop: 'priority', label: '优先级', type: 'select', options: CASE_PRIORITY_OPTIONS.map((p) => ({ label: p.label, value: p.value })) },
   { prop: 'status', label: '执行状态', type: 'select', options: caseStatusOptions },
   { prop: 'versionId', label: '版本', type: 'select', options: versionOptions.value },
   // 功能点由左侧面板驱动，不占工具栏；登记成筛选项才能进地址栏、被重置清掉、跟着导出走。

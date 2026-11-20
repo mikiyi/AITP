@@ -148,6 +148,43 @@ export interface DataPool {
   updatedAt?: string
 }
 
+/** 数据库脚本库：一条 SQL 脚本 = 编号 + 别称 + 正文（可含 {{var}}）+ 变量表 + 绑定环境。 */
+export interface SqlScript {
+  id: Id
+  scriptNo: string
+  name: string
+  alias: string
+  content: string
+  variables: { name: string; value: string }[]
+  envId: Id | null
+  envName: string
+  projectId: Id | null
+  description: string
+  status: string
+  refCount: number
+  /** 是否被引用（场景或自动化脚本引用了本脚本） */
+  referenced: boolean
+  /** 引用方清单（场景 SCN / 自动化脚本 AUTO-x 编号），供悬停浮显。 */
+  refs?: Array<{ kind?: string; refNo?: string; name?: string }>
+  createdAt?: string
+  updatedAt?: string
+}
+
+/** 数据库脚本执行结果（只读或写路径统一结构）。 */
+export interface SqlScriptResult {
+  dbType: string
+  dbTypeLabel: string
+  columns: string[]
+  rows: Record<string, unknown>[]
+  rowCount: number
+  scalar: unknown
+  truncated: boolean
+  affectedRows?: number
+  durationMs: number
+  /** 非 2xx 时后端透传的 error 消息；成功时 undefined */
+  error?: string
+}
+
 /** 环境差异归因：其他环境最近一次同用例结论。 */
 export interface EnvDiffBaseline {
   envId: number
@@ -1621,10 +1658,20 @@ export interface AutomationScript {
   /** 结果回写：覆盖用例的圈定方式（按用例编号 / 按标签）。 */
   caseMatchMode?: AutomationMatchMode
   caseMatchValue?: string
+  /** 数据库脚本下沉：执行前预处理（允许写）。 */
+  preDbRefs?: string[]
+  /** 数据库脚本下沉：执行后处理（允许写）。 */
+  postDbRefs?: string[]
+  /** 数据库脚本下沉：结果断言（只读）。 */
+  dbAssertRefs?: string[]
   status: string
   lastRunStatus: string
   lastRunAt: string
   remark: string
+  /** 是否被引用：有定时调度引用（与数据库脚本同口径，执行记录不算引用） */
+  referenced?: boolean
+  /** 引用方清单（定时调度 SCH 编号），列表接口附带，供悬停浮显。 */
+  refs?: Array<{ kind?: string; refNo?: string; name?: string }>
   createdAt?: string
   updatedAt?: string
   /** 只有详情接口会带执行历史。 */
@@ -1905,11 +1952,16 @@ export interface AssistantThinking {
 /** 多接口串联场景：步骤复用接口用例 extra 口径 + 变量提取/传递 */
 export interface ApiScenarioStep {
   name: string
-  type?: 'interface' | 'browser'
+  type?: 'interface' | 'browser' | 'database' | 'automation'
   action?: string
   url?: string
   selector?: string
   value?: string
+  statement?: string
+  /** database 步引用数据库脚本编号（SQL-xxx），有则优先于 statement */
+  dbRef?: string
+  /** automation 步引用自动化脚本编号（AUTO-W/AI_AUTO-W 等） */
+  scriptNo?: string
   extra: Record<string, string>
   extract: { var: string; path?: string; regex?: string }[]
   continueOnError?: boolean
@@ -1922,6 +1974,8 @@ export interface ApiScenario {
   projectId: number
   name: string
   description: string
+  /** 场景类型：web=浏览器场景 / app=App 场景（占位）/ api=接口场景 */
+  scenarioType: 'web' | 'app' | 'api'
   envId: number | null
   dataSource: string
   steps: ApiScenarioStep[]

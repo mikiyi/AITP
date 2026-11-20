@@ -37,7 +37,13 @@ from ..repositories.test_run_repo import (
     TestRunCaseRepository,
     TestRunRepository,
 )
-from . import assertion_schema, case_test_data, execution_protocol, test_run_service
+from . import (
+    assertion_schema,
+    case_test_data,
+    db_checkpoint_service,
+    execution_protocol,
+    test_run_service,
+)
 
 DEFAULT_TIMEOUT = 10
 MAX_TIMEOUT = 60
@@ -397,6 +403,41 @@ def _status_matches(
     return any(low <= status <= high for low, high in ranges)
 
 
+_OP_ALIASES = {
+    "==": "=",
+    "等于": "=",
+    "不等于": "!=",
+    "包含": "contains",
+    "不包含": "not_contains",
+    "正则": "regex",
+    "~": "regex",
+    "~>": "regex",
+    "存在": "exists",
+    "不存在": "not_exists",
+    "大于等于": ">=",
+    "小于等于": "<=",
+    "大于": ">",
+    "小于": "<",
+    "不为空": "not_empty",
+    "为空": "is_empty",
+    "类型": "type",
+    "属于": "one_of",
+}
+
+#: db: 断言的比较符两侧必须留空格（SQL 自身可能含 = / > 等符号），
+#: 目标部分贪婪匹配，取「最后一个」两侧带空格的比较符，避免吃掉 WHERE 条件。
+_DB_OPS = (
+    ">=|<=|==|!=|=|>|<|not_contains|contains|not_exists|exists|one_of|not_empty"
+    "|is_empty|regex|type|等于|不等于|包含|不包含|正则|存在|不存在|大于等于|小于等于"
+    "|大于|小于|不为空|为空|类型|属于"
+)
+_DB_RULE_RE = re.compile(rf"^db:(rows:|json:)?(.+)\s+({_DB_OPS})\s+(.+)$", re.I)
+_DB_RULE_NOVAL_RE = re.compile(
+    r"^db:(rows:|json:)?(.+?)\s+(exists|not_exists|not_empty|is_empty|存在|不存在|不为空|为空)$",
+    re.I,
+)
+
+
 def _parse_rule(line: str) -> tuple[str, str, str]:
     """解析一行断言：目标 + 比较符 + 期望值。解析失败按「响应体包含」处理。
 
@@ -417,27 +458,7 @@ def _parse_rule(line: str) -> tuple[str, str, str]:
     target = matched.group(1).strip()
     op = matched.group(2).strip().lower()
     expected = _unquote(matched.group(3).strip())
-    ops = {
-        "==": "=",
-        "等于": "=",
-        "不等于": "!=",
-        "包含": "contains",
-        "不包含": "not_contains",
-        "正则": "regex",
-        "~": "regex",
-        "~>": "regex",
-        "存在": "exists",
-        "不存在": "not_exists",
-        "大于等于": ">=",
-        "小于等于": "<=",
-        "大于": ">",
-        "小于": "<",
-        "不为空": "not_empty",
-        "为空": "is_empty",
-        "类型": "type",
-        "属于": "one_of",
-    }
-    return target, ops.get(op, op), expected
+    return target, _OP_ALIASES.get(op, op), expected
 
 
 def _make_assertion(
@@ -550,7 +571,14 @@ def _eval_rule(
     parsed_json: Any,
     json_ok: bool,
     duration_ms: int = 0,
+    *,
+    conn: sqlite3.Connection | None = None,
+    env: dict[str, Any] | None = None,
+    variables: dict[str, str] | None = None,
+    db_queries: list[dict[str, Any]] | None = None,
 ) -> Assertion:
+    if line.strip().lower().startswith("db:"):
+        return _eval_db_rule(line, conn, env, variables, db_queries)
     if line.strip().lower().startswith(("schema:", "schema ")):
         return _eval_schema_rule(line, status, headers, body, parsed_json, json_ok)
     if line.strip().lower().startswith(assertion_schema.LIBRARY_PREFIX):
@@ -594,6 +622,86 @@ def _eval_rule(
             return _make_assertion(name, False, expected, "非 JSON 响应", "响应体不是合法 JSON")
         exists, actual = _json_path_get(parsed_json, path)
 
+    return _apply_op(name, op, expected, actual, exists)
+
+
+def _eval_db_rule(
+    line: str,
+    conn: sqlite3.Connection | None,
+    env: dict[str, Any] | None,
+    variables: dict[str, str] | None,
+    db_queries: list[dict[str, Any]] | None,
+) -> Assertion:
+    """方案 A：``db:`` 数据库查询检查点。
+
+    ``db:<查询> = 期望`` 比首行首列；``db:rows:<查询>`` 比行数；
+    ``db:json:<查询>`` 把结果行转 JSON 后做包含/正则等比较。
+    比较符两侧必须留空格；查询里的 {{var}} 用执行变量替换。
+    """
+    text = line.strip()
+    mode = "scalar"
+    # 先匹配无值形式（exists/not_empty 等）：否则带值正则会把 not_exists
+    # 当成比较符、把前面的 WHERE 条件当成期望值
+    noval = _DB_RULE_NOVAL_RE.match(text)
+    matched = _DB_RULE_RE.match(text) if not noval else None
+    if matched:
+        prefix, statement, op, expected = matched.groups()
+        expected = _unquote(expected.strip())
+    elif noval:
+        prefix, statement, op = noval.groups()
+        expected = ""
+    else:
+        return _make_assertion(
+            f"数据库检查点：{text[:120]}", False, text, None,
+            "db 断言格式：db:<只读查询> <比较符> <期望值>，比较符两侧要留空格，"
+            "如 db:SELECT count(*) FROM orders = 1",
+        )
+    mode = {"rows:": "rows", "json:": "json"}.get((prefix or "").lower(), "scalar")
+    op = _OP_ALIASES.get(op.strip().lower(), op.strip().lower())
+    statement = statement.strip()
+    name = f"数据库检查点：{statement[:120]}"
+
+    if conn is None or not env or not env.get("id"):
+        return _make_assertion(
+            name, False, expected or op, None,
+            "db 断言需要绑定执行环境，且环境里已配置数据库连接",
+        )
+    statement = _substitute(statement, variables or {})
+    record: dict[str, Any] = {
+        "statement": statement[:2000], "envId": int(env["id"]),
+        "envName": str(env.get("name") or ""), "mode": mode,
+    }
+    try:
+        result = db_checkpoint_service.run_query(conn, env, statement)
+    except AppError as exc:
+        record.update({"error": str(exc), "rowCount": 0, "rowsPreview": []})
+        if db_queries is not None:
+            db_queries.append(record)
+        return _make_assertion(name, False, expected or op, None, str(exc))
+    record.update({
+        "dbType": result["dbType"], "rowCount": result["rowCount"],
+        "truncated": result["truncated"], "durationMs": result["durationMs"],
+        "rowsPreview": result["rows"][:5], "error": "",
+    })
+    if db_queries is not None:
+        db_queries.append(record)
+
+    if mode == "rows":
+        actual: Any = result["rowCount"]
+        exists = True
+        name = f"数据库行数：{statement[:120]}"
+    elif mode == "json":
+        actual = json.dumps(result["rows"], ensure_ascii=False)
+        exists = True
+        name = f"数据库结果JSON：{statement[:120]}"
+    else:
+        actual = result["scalar"]
+        exists = result["rowCount"] > 0
+    return _apply_op(name, op, expected, actual, exists)
+
+
+def _apply_op(name: str, op: str, expected: str, actual: Any, exists: bool) -> Assertion:
+    """比较符判定：响应侧断言与 db 检查点共用同一套算子口径。"""
     if op in ("exists", "not_exists"):
         passed = exists if op == "exists" else not exists
         message = "字段不存在" if op == "exists" and not exists else ""
@@ -621,7 +729,7 @@ def _eval_rule(
         )
 
     if not exists:
-        return _make_assertion(name, False, expected, "字段不存在", "字段不存在")
+        return _make_assertion(name, False, expected, "字段不存在", "查询无结果行" if name.startswith("数据库") else "字段不存在")
 
     if op in (">", ">=", "<", "<="):
         passed, message = _compare(actual, expected, op)
@@ -672,6 +780,9 @@ def _evaluate(
     project_id: int | None = None,
     module_id: int | None = None,
     duration_ms: int = 0,
+    env: dict[str, Any] | None = None,
+    variables: dict[str, str] | None = None,
+    db_queries: list[dict[str, Any]] | None = None,
 ) -> list[Assertion]:
     parsed_json: Any = None
     json_ok = False
@@ -738,7 +849,10 @@ def _evaluate(
         else:
             lines = [item.strip() for item in re.split(r"[\n;]+", rules) if item.strip()]
         for rule in lines:
-            assertions.append(_eval_rule(rule, status, headers, body, parsed_json, json_ok, duration_ms))
+            assertions.append(_eval_rule(
+                rule, status, headers, body, parsed_json, json_ok, duration_ms,
+                conn=conn, env=env, variables=variables, db_queries=db_queries,
+            ))
     return assertions
 
 
@@ -800,11 +914,13 @@ def _execute_once(
     status_code = response["statusCode"]
 
     assertions: list[Assertion] = []
+    db_queries: list[dict[str, Any]] = []
     if status_code is not None:
         assertions = _evaluate(
             extra, status_code, response["headers"], body_text,
             conn=conn, project_id=project_id, module_id=module_id,
             duration_ms=int(response["durationMs"] or 0),
+            env=env, variables=variables, db_queries=db_queries,
         )
     failed = [item for item in assertions if not item["passed"]]
     passed = not response["error"] and bool(assertions) and not failed
@@ -834,6 +950,8 @@ def _execute_once(
         },
         "assertions": assertions,
     }
+    if db_queries:
+        detail["dbQueries"] = db_queries
     return detail
 
 
@@ -890,6 +1008,7 @@ def execute(
     passed = all(item["passed"] for item in details)
     assertions = [a for item in details for a in item["assertions"]]
     failed = [a for a in assertions if not a["passed"]]
+    db_queries = [q for item in details for q in item.get("dbQueries") or []]
     last = details[-1]
     return {
         "result": RUN_PASSED if passed else RUN_FAILED,
@@ -904,6 +1023,7 @@ def execute(
         "response": last["response"],
         "assertions": assertions,
         "testDataRecordCount": len(records),
+        **({"dbQueries": db_queries} if db_queries else {}),
     }
 
 

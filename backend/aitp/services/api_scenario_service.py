@@ -12,12 +12,19 @@ import re
 import sqlite3
 import time
 from html import escape
+from pathlib import Path
 from typing import Any
 
 from ..repositories.api_scenario_repo import ApiScenarioRunRepository
 from ..repositories.base import loads
 from ..repositories.numbering import next_no
-from . import auto_bug_service, case_test_data, interface_runner
+from . import (
+    assertion_schema,
+    auto_bug_service,
+    case_test_data,
+    db_checkpoint_service,
+    interface_runner,
+)
 
 MAX_RECORDS = 20
 MAX_WAIT_MS = 5000
@@ -84,11 +91,138 @@ def _run_browser_step(conn: sqlite3.Connection, step: dict[str, Any],
         client.close()
 
 
+def _run_database_step(conn: sqlite3.Connection, step: dict[str, Any],
+                       env: dict[str, Any], variables: dict[str, str],
+                       project_id: int | None) -> dict[str, Any]:
+    """方案 A：数据库检查点步骤。只读查询结果转 JSON 作为步骤响应，
+    json:/len:/schema: 等现有断言算子直接作用于 {rows,rowCount,columns,scalar}。
+    支持 dbRef：从 biz_sql_script 取脚本正文，合并脚本自带变量后再渲染。"""
+    t0 = time.monotonic()
+    db_ref = str(step.get("dbRef") or "").strip()
+    statement = interface_runner._substitute(str(step.get("statement") or ""), variables)
+    script_note = ""
+    if db_ref:
+        from ..repositories.sql_script_repo import SqlScriptRepository
+        row = SqlScriptRepository(conn).find_by_no(db_ref)
+        if row is None:
+            statement = ""
+            script_note = f"未找到数据库脚本 {db_ref}"
+        else:
+            # 合并脚本自带变量（脚本变量优先于场景变量，因为脚本作者更精确）
+            script_vars: dict[str, str] = {
+                str(v.get("name") or ""): str(v.get("value") or "")
+                for v in (loads(row.get("variables"), []) or [])
+                if v.get("name")
+            }
+            merged = {**variables, **script_vars}
+            raw_content = str(row.get("content") or "")
+            statement = interface_runner._substitute(raw_content, merged)
+            script_note = f"脚本 {db_ref}"
+    target = db_checkpoint_service.env_db_label(env) if env else ""
+    request = {"method": "DB", "url": target, "body": statement}
+
+    def _fail(message: str) -> dict[str, Any]:
+        return {"passed": False, "statusCode": None,
+                "durationMs": int((time.monotonic() - t0) * 1000),
+                "request": request, "response": {"body": ""},
+                "assertions": [], "message": message}
+
+    if not env or not env.get("id"):
+        return _fail("数据库步骤需要选择执行环境，且环境里已配置数据库连接")
+    if db_ref and script_note.startswith("未找到"):
+        return _fail(script_note)
+    if not statement.strip():
+        return _fail("数据库步骤无可用查询语句（dbRef 未找到或脚本正文为空）")
+    try:
+        result = db_checkpoint_service.run_query(conn, env, statement)
+    except Exception as exc:  # noqa: BLE001 - 查询失败记入轨迹，不中断整个场景收口
+        return _fail(str(exc))
+    body = json.dumps(result, ensure_ascii=False)
+    duration = int((time.monotonic() - t0) * 1000)
+    rules = str((step.get("extra") or {}).get("断言规则") or "").strip()
+    assertions: list[dict[str, Any]] = []
+    if rules:
+        for rule in assertion_schema.expand_rules(conn, project_id, None, rules):
+            assertions.append(interface_runner._eval_rule(
+                rule, 200, {}, body, result, True, duration,
+            ))
+    else:
+        assertions.append(interface_runner._make_assertion(
+            "数据库查询", True, "执行成功", f"{result['rowCount']} 行",
+        ))
+    passed = all(bool(a.get("passed")) for a in assertions)
+    failed = [a for a in assertions if not a.get("passed")]
+    return {
+        "passed": passed, "statusCode": None, "durationMs": duration,
+        "request": request,
+        "response": {"body": body[:interface_runner.MAX_BODY_CHARS],
+                     "bodyTruncated": len(body) > interface_runner.MAX_BODY_CHARS},
+        "assertions": assertions,
+        "message": (script_note + "：" if script_note else "") + ("" if passed else f"{len(failed)} 项断言失败"),
+        "dbQuery": {"dbType": result["dbType"], "rowCount": result["rowCount"],
+                    "truncated": result["truncated"]},
+    }
+
+
+def _run_automation_step(conn: sqlite3.Connection, step: dict[str, Any],
+                         db_path: Path | None) -> dict[str, Any]:
+    """自动化脚本步骤：按编号取 web/app/api 脚本并同步执行，
+    复用 automation_service 的子进程执行与执行留痕（biz_automation_run）。"""
+    from . import automation_service
+
+    t0 = time.monotonic()
+    script_no = str(step.get("scriptNo") or "").strip()
+    request = {"method": "SCRIPT", "url": script_no, "body": ""}
+
+    def _fail(message: str) -> dict[str, Any]:
+        return {"passed": False, "statusCode": None,
+                "durationMs": int((time.monotonic() - t0) * 1000),
+                "request": request, "response": {"body": ""},
+                "assertions": [], "message": message}
+
+    if db_path is None:
+        return _fail("自动化脚本步骤缺少运行目录，无法执行")
+    found = conn.execute(
+        "SELECT * FROM biz_automation_script WHERE script_no = ? AND is_deleted = 0",
+        (script_no,),
+    ).fetchone()
+    if found is None:
+        return _fail(f"未找到自动化脚本 {script_no}")
+    row = dict(found)
+    if str(row.get("status") or "") == "disabled":
+        return _fail(f"脚本 {script_no} 已停用")
+    try:
+        result = automation_service.execute_script(conn, dict(row), db_path)
+        conn.commit()
+    except Exception as exc:  # noqa: BLE001 - 脚本失败记入轨迹，按失败策略决定是否中断
+        return _fail(str(exc))
+    duration = int((time.monotonic() - t0) * 1000)
+    passed = str(result.get("status") or "") == "success"
+    run_no = str(result.get("run_no") or "")
+    body = json.dumps({
+        "runNo": run_no,
+        "status": result.get("status"),
+        "exitCode": result.get("exit_code"),
+        "stdout": str(result.get("stdout") or "")[:interface_runner.MAX_BODY_CHARS],
+    }, ensure_ascii=False)
+    return {
+        "passed": passed, "statusCode": None, "durationMs": duration,
+        "request": request,
+        "response": {"body": body[:interface_runner.MAX_BODY_CHARS],
+                     "bodyTruncated": len(body) > interface_runner.MAX_BODY_CHARS},
+        "assertions": [interface_runner._make_assertion(
+            "自动化脚本", passed, f"执行记录 {run_no or '-'}", str(result.get("status") or ""),
+        )],
+        "message": f"脚本 {script_no} 执行{('成功' if passed else '失败')}（{run_no}）",
+    }
+
+
 def run_scenario(
     conn: sqlite3.Connection,
     scenario: dict[str, Any],
     env_id: int | None,
     record: dict[str, Any] | None = None,
+    db_path: Path | None = None,
 ) -> dict[str, Any]:
     """顺序执行一个场景（单条数据记录），返回逐步轨迹与共享变量。"""
     steps = loads(scenario.get("steps_json"), []) or []
@@ -104,8 +238,13 @@ def run_scenario(
         if wait > 0:
             time.sleep(wait / 1000)
         extra = step.get("extra") or {}
-        if str(step.get("type") or "interface") == "browser":
+        stype = str(step.get("type") or "interface")
+        if stype == "browser":
             detail = _run_browser_step(conn, step, variables)
+        elif stype == "database":
+            detail = _run_database_step(conn, step, env, variables, scenario.get("project_id"))
+        elif stype == "automation":
+            detail = _run_automation_step(conn, step, db_path)
         else:
             detail = interface_runner.execute(
                 extra, env, conn=conn,
@@ -143,6 +282,8 @@ def run_scenario(
         "steps": out,
         "variables": variables,
         "durationMs": int((time.monotonic() - t0) * 1000),
+        # B4：标记这条结果对应哪条数据记录，数据驱动失败时能定位「第几条数据失败」
+        "record": dict(record) if record else None,
     }
 
 
@@ -150,16 +291,28 @@ def run_with_data(
     conn: sqlite3.Connection,
     scenario: dict[str, Any],
     env_id: int | None,
+    db_path: Path | None = None,
 ) -> dict[str, Any]:
     """数据驱动：有记录集则逐条跑整个场景，否则单跑；落一条执行记录。"""
     data = case_test_data.resolve_for(
         conn, scenario.get("project_id"), str(scenario.get("data_source") or "")
     )
     records = list(data.get("records") or [])[:MAX_RECORDS]
-    runs = [run_scenario(conn, scenario, env_id, rec) for rec in records] if records \
-        else [run_scenario(conn, scenario, env_id, None)]
+    runs = (
+        [run_scenario(conn, scenario, env_id, rec, db_path) for rec in records]
+        if records
+        else [run_scenario(conn, scenario, env_id, None, db_path)]
+    )
+    # B4：给每条 run 标上第几条数据记录（1 起），失败时前端能直接定位「第 N 条数据失败」
+    for index, one in enumerate(runs, start=1):
+        one["recordIndex"] = index
     passed = all(r["passed"] for r in runs)
     duration = sum(int(r["durationMs"]) for r in runs)
+    #: 失败的数据记录清单（记录序号 + 记录内容摘要），落进 summary 便于排查
+    failed_records = [
+        {"recordIndex": one["recordIndex"], "record": one.get("record")}
+        for one in runs if not one["passed"]
+    ]
     repo = ApiScenarioRunRepository(conn)
     run_no = repo.next_run_no()
     run_id = repo.insert({
@@ -169,13 +322,14 @@ def run_with_data(
         "env_id": env_id,
         "passed": 1 if passed else 0,
         "record_count": len(runs),
-        "summary_json": json.dumps({"runs": runs}, ensure_ascii=False),
+        "summary_json": json.dumps({"runs": runs, "failedRecords": failed_records}, ensure_ascii=False),
         "duration_ms": duration,
     })
     conn.commit()
     result = {
         "runId": run_id, "runNo": run_no, "passed": passed,
         "recordCount": len(runs), "durationMs": duration, "runs": runs,
+        "failedRecords": failed_records,
         "autoBugId": None,
     }
     if not passed:

@@ -180,10 +180,16 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '报告详情', hidden: true },
   },
   {
+    path: '/sql-scripts',
+    name: 'sql-scripts',
+    component: () => import('@/views/automation/DbScriptView.vue'),
+    meta: { title: '数据库脚本', icon: 'Coin' },
+  },
+  {
     path: '/automation/scenario',
     name: 'api-scenario',
     component: () => import('@/views/automation/ApiScenarioView.vue'),
-    meta: { title: '接口场景', icon: 'Operation' },
+    meta: { title: '场景自动化', icon: 'Operation' },
   },
   {
     path: '/automation/:category(web|app|api|performance)',

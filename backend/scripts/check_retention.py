@@ -295,6 +295,11 @@ def main() -> int:
                    ErrorCode.PARAM_ERROR, {"items": [{"dataType": "evidence", "days": -1, "action": "archive"}]})
         api.expect("非法动作被拒", "PUT", f"{V1}/retention/settings",
                    ErrorCode.PARAM_ERROR, {"items": [{"dataType": "test_run", "days": 30, "action": "purge"}]})
+        # A5：dataTypes 元素走白名单，非法元素直接拒（不再静默忽略）
+        api.expect("清理目标非法类型被拒", "POST", f"{V1}/retention/cleanup",
+                   ErrorCode.PARAM_ERROR, {"dryRun": True, "dataTypes": ["test_run", "not_a_type"]})
+        api.expect("清理目标非数组被拒", "POST", f"{V1}/retention/cleanup",
+                   ErrorCode.PARAM_ERROR, {"dryRun": True, "dataTypes": "test_run"})
         api.expect("归档包裹不存在返回 404", "GET", f"{V1}/retention/archives/99999",
                    ErrorCode.RESOURCE_NOT_FOUND)
 

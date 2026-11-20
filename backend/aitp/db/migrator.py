@@ -9,7 +9,7 @@ from pathlib import Path
 from ..common.time_utils import utcnow_iso
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
-APP_VERSION = "2.4.0"
+APP_VERSION = "2.4.3"
 
 
 def _checksum(sql: str) -> str:

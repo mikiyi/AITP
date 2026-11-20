@@ -387,3 +387,22 @@ body {
   border-color: #9a6b00 !important;
   color: #ffffff !important;
 }
+
+/* 占位提示浮显（inputHintTip.ts 单例）：沿用 el-tooltip 深色气泡口径，盖在所有弹层之上 */
+.input-hint-tip {
+  position: fixed;
+  z-index: 4000;
+  max-width: min(480px, calc(100vw - 16px));
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: #303133;
+  color: #ffffff;
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-all;
+  white-space: pre-wrap;
+  box-shadow: 0 2px 12px rgb(0 0 0 / 24%);
+  pointer-events: none;
+}

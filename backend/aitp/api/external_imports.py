@@ -10,10 +10,10 @@ from typing import Any
 
 from flask import Blueprint, Response, request
 
-from ..common.validators import require_int
+from ..common.validators import check_choice, require_int
 from ..envelope import ok
 from ..services import audit_service, external_import_service
-from ..services.external_import_service import default_mapping
+from ..services.external_import_service import PLATFORM_LABELS, default_mapping
 from .helpers import audit, body, commit, db, require_project
 
 bp = Blueprint("external_imports", __name__)
@@ -26,7 +26,15 @@ def _opt_int(value: Any, field: str) -> int | None:
 
 
 def _platform_arg(data: dict[str, Any]) -> str:
-    return str(data.get("platform") or "zentao")
+    """平台编码走白名单：只认 service 里登记过的那几个，非法值一律报参数错误。"""
+    return check_choice(
+        str(data.get("platform") or "zentao"), PLATFORM_LABELS, "platform", "zentao"
+    ) or "zentao"
+
+
+def _platform_query_arg() -> str:
+    """GET/DELETE 里 platform 走 query string；同样白名单，避免非法值落 service 抛 KeyError。"""
+    return _platform_arg({"platform": request.args.get("platform")})
 
 
 @bp.get("/platforms")
@@ -58,7 +66,7 @@ def list_platforms() -> Response:
 def get_config() -> Response:
     conn = db()
     project_id = require_int(request.args.get("projectId"), "projectId")
-    platform = str(request.args.get("platform") or "zentao")
+    platform = _platform_query_arg()
     return ok(external_import_service.get_config(conn, project_id, platform))
 
 
@@ -90,7 +98,7 @@ def save_config() -> Response:
 def delete_config() -> Response:
     conn = db()
     project_id = require_int(request.args.get("projectId"), "projectId")
-    platform = str(request.args.get("platform") or "zentao")
+    platform = _platform_query_arg()
     external_import_service.delete_config(conn, project_id, platform)
     audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_EXTERNAL_IMPORT,
           project_id, platform, {"kind": "config_delete"})
@@ -102,7 +110,7 @@ def delete_config() -> Response:
 def list_mappings() -> Response:
     conn = db()
     project_id = require_int(request.args.get("projectId"), "projectId")
-    platform = str(request.args.get("platform") or "zentao")
+    platform = _platform_query_arg()
     return ok(external_import_service.list_mappings(conn, project_id, platform))
 
 

@@ -61,7 +61,7 @@
         </el-form-item>
         <el-form-item label="优先级">
           <el-select v-model="form.priority">
-            <el-option v-for="item in ['P0', 'P1', 'P2', 'P3']" :key="item" :label="item" :value="item" />
+            <el-option v-for="p in CASE_PRIORITY_OPTIONS" :key="p.value" :label="p.label" :value="p.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
@@ -107,6 +107,7 @@ import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import { projectVersionApi, requirementApi } from '@/api'
+import { CASE_PRIORITY_OPTIONS } from '@/constants/enums'
 import type { Requirement } from '@/api/types'
 import { useProjectScope } from '@/composables/useProjectScope'
 import { useAppStore } from '@/stores/app'
@@ -178,7 +179,7 @@ const columns: ColumnDef[] = [
 const searchFields = computed<SearchField[]>(() => [
   { prop: 'keyword', label: '标题 / 编号' },
   { prop: 'status', label: '状态', type: 'select', options: requirementStatusOptions },
-  { prop: 'priority', label: '优先级', type: 'select', options: ['P0', 'P1', 'P2', 'P3'].map((p) => ({ label: p, value: p })) },
+  { prop: 'priority', label: '优先级', type: 'select', options: CASE_PRIORITY_OPTIONS.map((p) => ({ label: p.label, value: p.value })) },
   { prop: 'versionId', label: '版本', type: 'select', options: versionOptions.value },
 ])
 

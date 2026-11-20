@@ -83,6 +83,7 @@ WRITE_FIELDS = {
     "name", "category", "targetType", "framework", "language", "appPlatforms",
     "projectId", "moduleId", "envId", "description", "content", "source",
     "runMode", "entryCommand", "timeoutSeconds", "status", "remark", "versionId",
+    "preDbRefs", "postDbRefs", "dbAssertRefs",
 }
 
 #: Markdown 代码块提取：```xml ... ``` 或 ```jmx ... ```
@@ -181,7 +182,29 @@ def _write_payload(data: dict[str, Any]) -> dict[str, Any]:
     if "content" in data:
         content = data.get("content")
         payload["content"] = "" if content is None else str(content)
+    for camel, column in (("preDbRefs", "pre_db_refs"),
+                          ("postDbRefs", "post_db_refs"),
+                          ("dbAssertRefs", "db_assert_refs")):
+        if camel in data:
+            payload[column] = _dump_str_list(data.get(camel))
     return payload
+
+
+def _dump_str_list(raw: Any) -> str:
+    """数据库脚本引用字段：统一存 JSON 字符串数组（["SQL-001"]）。"""
+    from ..repositories.base import dumps, loads
+
+    if raw is None or raw == "":
+        return "[]"
+    if isinstance(raw, str):
+        try:
+            raw = loads(raw)
+        except (TypeError, ValueError):
+            raw = [part.strip() for part in raw.split(",") if part.strip()]
+    if not isinstance(raw, list):
+        raise AppError(ErrorCode.PARAM_ERROR, "数据库脚本引用必须是编号数组")
+    items = [str(item).strip() for item in raw if str(item).strip()]
+    return dumps(items)
 
 
 def _check_framework(category: str, payload: dict[str, Any]) -> None:
@@ -323,8 +346,22 @@ def list_scripts() -> Response:
     repo = AutomationScriptRepository(conn)
     filters = query_filters(FILTERS)
     page = repo.list(filters, keyword_of() or None, page_num=page_num, page_size=page_size)
+    refs_map = repo.scenario_refs(filters.get("project_id"))
+    items = []
+    for row in page.list:
+        item = script_summary(row)
+        refs = refs_map.get(int(row.get("id") or 0), [])
+        item["refs"] = refs
+        item["referenced"] = len(refs) > 0
+        items.append(item)
+    # referenced 是计算字段，从请求串直接读
+    ref_param = str(request.args.get("referenced") or "").strip().lower()
+    if ref_param in ("true", "false"):
+        want = ref_param == "true"
+        items = [item for item in items if bool(item["referenced"]) == want]
     payload = page_payload(page)
-    payload["list"] = [script_summary(row) for row in payload["list"]]
+    payload["list"] = items
+    payload["total"] = len(items)
     # 四个分类的计数要跟列表同一口径，否则切到 A 项目仍显示全库脚本数
     payload["categoryCounts"] = repo.count_by_category(filters.get("project_id"))
     return ok(payload)
@@ -809,7 +846,10 @@ def create_from_output() -> Response:
         payload["run_mode"] = RUN_MODE_JMETER
 
     repo = AutomationScriptRepository(conn)
-    script_no = repo.next_script_no(category)
+    # ai=True 时走 AI_AUTO-W / AI_AUTO-A / AI_AUTO-I / AI_PERF 独立编号序列，
+    # 在列表页一眼可识别 AI 来源脚本
+    ai = bool(data.get("ai"))
+    script_no = repo.next_script_no(category, ai=ai)
     payload["script_no"] = script_no
     script_id = repo.insert(payload)
     nav_badge_service.increase_for(conn, f"automation_{category}")

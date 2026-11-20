@@ -951,6 +951,17 @@ def capture_interface_execution(
     if env_row is not None:
         env_name = str(env_row["name"] or "")
     message = str(detail.get("message") or "")
+    # 方案 A：db: 检查点的查询语句与结果片段进证据日志摘要，失败可回溯查了什么
+    db_queries = detail.get("dbQueries") or []
+    db_lines = []
+    for query in db_queries:
+        head = f"[{query.get('dbType') or 'db'}@{query.get('envName') or ''}] {query.get('statement') or ''}"
+        if query.get("error"):
+            tail = f"→ 失败：{query.get('error')}"
+        else:
+            preview = json.dumps(query.get("rowsPreview") or [], ensure_ascii=False, default=str)
+            tail = f"→ {query.get('rowCount')} 行{'（截断）' if query.get('truncated') else ''}：{preview[:500]}"
+        db_lines.append(f"{head}\n{tail}")
     return capture(conn, ExecutionResult(
         source_type=SOURCE_INTERFACE,
         source_row_id=int(execution_id),
@@ -966,6 +977,7 @@ def capture_interface_execution(
         assertions=_list_of_dicts(detail.get("assertions")),
         request_summary=request_summary_of(detail),
         response_summary=response_summary_of(detail),
+        log_summary=summarize("\n".join(db_lines)) if db_lines else "",
         source_ref={
             "table": "biz_interface_execution", "id": int(execution_id),
             "method": str(request.get("method") or ""), "url": str(request.get("url") or ""),

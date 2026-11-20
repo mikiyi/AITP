@@ -154,6 +154,16 @@ def check_create_defaults(api: Api, project_id: int) -> None:
     check("功能点下挂子节点被拒绝", body.get("code") == ErrorCode.ILLEGAL_OPERATION,
           str(body)[:200])
 
+    # B6 回归锁：有子节点的中间节点不能删（否则整棵子树丢失），叶子才能删
+    _, guard = api.call("DELETE", f"/api/v1/modules/{mid['id']}")
+    check("有子节点的节点删除被拒绝", guard.get("code") == ErrorCode.RESOURCE_REFERENCED,
+          str(guard)[:200])
+    removed = api.data("DELETE", f"/api/v1/modules/{leaf['id']}")
+    check("叶子节点可删除", removed.get("deleted") is True, str(removed)[:200])
+    _, again = api.call("DELETE", f"/api/v1/modules/{leaf['id']}")
+    check("删除不存在的节点返回 404", again.get("code") == ErrorCode.RESOURCE_NOT_FOUND,
+          str(again)[:200])
+
 
 def check_case_tree_contract(api: Api, project_id: int) -> None:
     """用例树与模块树同一出参契约（BUG-43 同类：/test-cases/tree 曾回 raw 行）。"""

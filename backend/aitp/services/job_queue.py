@@ -55,7 +55,7 @@ KIND_LABELS: dict[str, str] = {
     "notification.webhook": "Webhook 通知",
     "validation.run_all": "案例验证全量跑批",
     "exploratory.run": "Web 探索性测试",
-    "scenario.run": "接口场景执行",
+    "scenario.run": "场景自动化执行",
 }
 
 #: 并发上限配置键；默认 2，单用户本机够用又不至于互相拖死

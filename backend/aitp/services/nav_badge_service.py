@@ -23,6 +23,7 @@ SECTIONS: tuple[str, ...] = (
     "automation_api",
     "automation_performance",
     "sql_analyses",
+    "sql_scripts",
     # 知识库待审数不走 sys_nav_badge 累加，而是实时读待审池真实行数
     "knowledge",
 )

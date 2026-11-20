@@ -351,6 +351,15 @@ def main() -> int:
     data = body["data"]
     platforms = {p["key"]: p for p in data["platforms"]}
     check("平台目录含禅道/Jira/TestLink", set(platforms) == {"zentao", "jira", "testlink"})
+    # A4：platform 走白名单，非法值不再落库（对比：以前直接 str() 透传）
+    _, bad = call("POST", f"{V1}/external-imports/config", json={
+        "projectId": project_id, "platform": "not_a_platform", "baseUrl": "http://x.local",
+    })
+    check("非法平台被参数校验拒绝",
+          bad.get("code") == ErrorCode.PARAM_ERROR, str(bad.get("message"))[:200])
+    _, bad_q = call("GET", f"{V1}/external-imports/config?projectId={project_id}&platform=hacker")
+    check("GET 配置非法平台被拒绝",
+          bad_q.get("code") == ErrorCode.PARAM_ERROR, str(bad_q.get("message"))[:200])
     check("内容目录含需求/用例/缺陷", {k["key"] for k in data["kinds"]} == {"requirements", "cases", "bugs"})
     check("平台目录带默认映射", "requirement" in data["defaultMapping"])
     check("Jira 支持三类内容", platforms["jira"]["kinds"] == ["requirements", "cases", "bugs"])

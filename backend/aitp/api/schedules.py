@@ -12,14 +12,24 @@ from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.schedule_repo import TestScheduleRepository
 from ..services import job_queue, test_schedule_service
-from .helpers import body, commit, db, keyword_of, page_args, page_payload, path_int, query_filters, require_project
+from .helpers import body, bool_arg, commit, db, keyword_of, page_args, page_payload, path_int, query_filters, require_project
 
 bp = Blueprint("schedules", __name__)
+
+#: 调度间隔上限（分钟）= 1 天。再长没有意义（等价于「每天跑一次」），再短会被钳到 1 分钟造成调度风暴
+SCHEDULE_MAX_INTERVAL = 1440
+
+
+def _interval_of(raw: Any) -> int:
+    """调度间隔：缺省 60 分钟，钳到 [1, SCHEDULE_MAX_INTERVAL]。"""
+    value = optional_int(raw, "intervalMinutes") or 60
+    return max(1, min(value, SCHEDULE_MAX_INTERVAL))
 
 
 def _public(r: dict[str, Any]) -> dict[str, Any]:
     return {
-        "id": r.get("id"), "projectId": r.get("project_id"), "name": r.get("name"),
+        "id": r.get("id"), "scheduleNo": r.get("schedule_no") or "",
+        "projectId": r.get("project_id"), "name": r.get("name"),
         "targetType": r.get("target_type"), "targetId": r.get("target_id"),
         "intervalMinutes": r.get("interval_minutes"), "enabled": bool(r.get("enabled")),
         "nextRunAt": r.get("next_run_at"), "lastRunAt": r.get("last_run_at"),
@@ -46,13 +56,14 @@ def create_schedule() -> Response:
     name = require_str(data.get("name"), "name", 100)
     target_type = check_choice(str(data.get("targetType") or "scenario"), ("scenario", "script"), "targetType", "scenario") or "scenario"
     target_id = require_int(data.get("targetId"), "targetId")
-    interval = max(1, optional_int(data.get("intervalMinutes"), "intervalMinutes") or 60)
+    interval = _interval_of(data.get("intervalMinutes"))
     now = datetime.now(timezone.utc)
     repo = TestScheduleRepository(conn)
     new_id = repo.insert({
+        "schedule_no": repo.next_schedule_no(),
         "project_id": project_id, "name": name, "target_type": target_type,
         "target_id": target_id, "interval_minutes": interval,
-        "enabled": 1 if data.get("enabled", True) else 0,
+        "enabled": 1 if bool_arg(data.get("enabled"), True) else 0,
         "next_run_at": (now + timedelta(minutes=interval)).isoformat(),
     })
     commit(conn)
@@ -71,9 +82,9 @@ def update_schedule(pk: str) -> Response:
     if "name" in data:
         payload["name"] = require_str(data["name"], "name", 100)
     if "intervalMinutes" in data:
-        payload["interval_minutes"] = max(1, optional_int(data["intervalMinutes"], "intervalMinutes") or 60)
+        payload["interval_minutes"] = _interval_of(data["intervalMinutes"])
     if "enabled" in data:
-        payload["enabled"] = 1 if data["enabled"] else 0
+        payload["enabled"] = 1 if bool_arg(data["enabled"]) else 0
     if "targetType" in data:
         payload["target_type"] = check_choice(str(data["targetType"]), ("scenario", "script"), "targetType", "scenario") or "scenario"
     if "targetId" in data:

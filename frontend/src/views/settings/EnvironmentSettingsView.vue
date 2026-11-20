@@ -17,7 +17,7 @@
       </div>
       <p class="muted settings-block__hint">
         数据库口令加密存在本机系统密钥库（Windows DPAPI / macOS 钥匙串），页面只显示掩码。
-        这些信息<strong>只用于本机的健康监测，不会发给任何大模型</strong>。
+        这些信息用于本机健康监测与<strong>只读查询检查点</strong>（接口 db: 断言、场景数据库步骤），不会发给任何大模型。
       </p>
 
       <el-table v-if="envs.length" :data="envs" border size="small">

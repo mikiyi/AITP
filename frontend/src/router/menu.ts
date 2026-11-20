@@ -11,6 +11,7 @@ import {
   Collection,
   CollectionTag,
   Connection,
+  Coin,
   Cpu,
   DataAnalysis,
   DataLine,
@@ -106,7 +107,7 @@ export type MenuNode = MenuItemNode | MenuGroupNode
  * 齿轮=设置、卡片=首页卡片定制、备忘录=操作日志、锁=访问口令、CPU=AI 设置、
  * 收藏标签=知识库设置、菜单树=模块树、文档加=模板、连接=环境、滑杆=自动化设置、
  * 直方图=性能设置、铃铛=CI 通知、文档勾=断言库、开文件夹=备份、箱子=留存归档、
- * 罗盘=探索设置、行李箱=资产包、上传=外部导入、问号=帮助。
+ * 罗盘=探索设置、行李箱=资产包、上传=外部导入、问号=帮助、数据库=数据库脚本。
  */
 export const MENU_NODES: MenuNode[] = [
   { type: 'item', path: '/', title: '首页', icon: HomeFilled },
@@ -175,10 +176,11 @@ export const MENU_NODES: MenuNode[] = [
     title: '自动化脚本',
     icon: SetUp,
     children: [
-      { path: '/automation/web', title: 'Web 自动化', icon: Monitor },
-      { path: '/automation/app', title: 'App 自动化', icon: Iphone },
-      { path: '/automation/api', title: '接口自动化', icon: Link },
-      { path: '/automation/scenario', title: '接口场景', icon: Operation },
+      { path: '/sql-scripts', title: '数据库脚本', icon: Coin },
+      { path: '/automation/web', title: 'Web 自动化脚本', icon: Monitor },
+      { path: '/automation/app', title: 'App 自动化脚本', icon: Iphone },
+      { path: '/automation/api', title: '接口自动化脚本', icon: Link },
+      { path: '/automation/scenario', title: '场景自动化', icon: Operation },
       { path: '/automation/performance', title: '性能测试', icon: Stopwatch },
     ],
   },

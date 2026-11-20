@@ -275,9 +275,7 @@
         </el-form-item>
         <el-form-item label="优先级">
           <el-select v-model="itemForm.priority" style="width: 100%">
-            <el-option label="P0" value="P0" />
-            <el-option label="P1" value="P1" />
-            <el-option label="P2" value="P2" />
+            <el-option v-for="p in CASE_PRIORITY_OPTIONS" :key="p.value" :label="p.label" :value="p.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="原因">
@@ -339,6 +337,7 @@ import { ElMessage } from 'element-plus'
 import { Check, MagicStick, Plus, Refresh, RefreshLeft } from '@element-plus/icons-vue'
 import { projectVersionApi, regressionApi } from '@/api'
 import { dateTimeText } from '@/utils/format'
+import { CASE_PRIORITY_OPTIONS } from '@/constants/enums'
 import { useAutoQuery } from '@/composables/useAutoQuery'
 import { useProjectScope } from '@/composables/useProjectScope'
 import type { Regression, RegressionItem } from '@/api/types'

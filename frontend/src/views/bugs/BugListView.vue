@@ -64,10 +64,16 @@
         </el-form-item>
         <el-form-item label="严重程度">
           <el-select v-model="form.severity">
-            <el-option v-for="item in ['P0', 'P1', 'P2', 'P3']" :key="item" :label="item" :value="item" />
+            <el-option v-for="item in BUG_SEVERITY_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
         </el-form-item>
-        <el-form-item label="状态">
+        <el-form-item label="优先级">
+          <el-select v-model="form.priority">
+            <el-option v-for="item in BUG_SEVERITY_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
+          </el-select>
+        </el-form-item>
+        <!-- 新建时后端强制 status=open（bugs.py create_bug），表单里选了也不生效，只在编辑态显示 -->
+        <el-form-item v-if="editing" label="状态">
           <el-select v-model="form.status">
             <el-option v-for="item in bugStatusOptions" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
@@ -124,6 +130,7 @@ import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from
 import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
+import { BUG_SEVERITY_OPTIONS } from '@/constants/enums'
 import { bugApi, moduleApi, projectVersionApi } from '@/api'
 import type { Bug, ModuleOption } from '@/api/types'
 import { useProjectScope } from '@/composables/useProjectScope'
@@ -228,7 +235,7 @@ const columns: ColumnDef[] = [
 const searchFields = computed<SearchField[]>(() => [
   { prop: 'keyword', label: '标题 / 编号' },
   { prop: 'status', label: '状态', type: 'select', options: bugStatusOptions },
-  { prop: 'severity', label: '严重度', type: 'select', options: ['P0', 'P1', 'P2', 'P3'].map((p) => ({ label: p, value: p })) },
+  { prop: 'severity', label: '严重度', type: 'select', options: BUG_SEVERITY_OPTIONS.map((s) => ({ label: s.label, value: s.value })) },
   { prop: 'versionId', label: '版本', type: 'select', options: versionOptions.value },
 ])
 
@@ -293,6 +300,7 @@ const form = reactive({
   moduleId: null as number | null,
   versionId: null as number | null,
   severity: 'P2',
+  priority: 'P2',
   status: 'open',
   bugType: 'functional',
   assignee: '',
@@ -314,6 +322,7 @@ function openCreate(): void {
     // 列表正按版本筛选时，新建的缺陷直接挂到该版本下，保存后不会从列表里消失。
     versionId: fq.versionId ? Number(fq.versionId) : null,
     severity: 'P2',
+    priority: 'P2',
     status: 'open',
     bugType: 'functional',
     assignee: '',
@@ -337,6 +346,7 @@ async function openEdit(row: Bug): Promise<void> {
       moduleId: detail.moduleId ?? null,
       versionId: detail.versionId ?? null,
       severity: detail.severity ?? 'P2',
+      priority: detail.priority ?? 'P2',
       status: detail.status ?? 'open',
       bugType: detail.bugType ?? 'functional',
       assignee: detail.assignee ?? '',

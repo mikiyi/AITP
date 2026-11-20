@@ -233,6 +233,16 @@ def check_version_flow(api: Api, article_id: int) -> None:
     search = cast(JsonDict, api.data("GET", "/api/v1/knowledge/search?keyword=并发点击"))
     check("审核通过后可检索", len(search["list"]) >= 1, f"命中={len(search['list'])}")
 
+    # B5 幂等：已生效版本再 approve 一次应被拦（ILLEGAL_OPERATION），正文与版本号不变
+    _, repeat = api.call("POST", f"/api/v1/knowledge/articles/{article_id}/versions/2/review",
+                         {"action": "approve", "reviewer": "yichengren"})
+    check("重复 approve 同一版本被拒绝",
+          repeat.get("code") == ErrorCode.ILLEGAL_OPERATION, str(repeat)[:200])
+    after_repeat = cast(JsonDict, api.data("GET", f"/api/v1/knowledge/articles/{article_id}"))
+    check("重复 approve 不改动正文与版本号",
+          int(after_repeat["currentVersion"]) == 2 and "并发点击" in str(after_repeat["content"]),
+          str(after_repeat.get("currentVersion")))
+
     storage = cast(JsonDict, api.data("GET", "/api/v1/knowledge/storage"))
     root = pathlib.Path(str(storage["storagePath"]))
     rel = str(after_approve.get("filePath") or "")

@@ -244,6 +244,40 @@ def check_from_output(api: Api) -> None:
     check("鸿蒙产出入库默认 Hypium 框架", created.get("framework") == "hypium",
           str(created)[:200])
 
+    # AI 实验室一键入库编号带 AI_ 前缀，与人工创建走独立序列
+    ai_web = api.data("POST", "/api/v1/automation/scripts/from-output", {
+        "output": py_output, "name": "AI入库Web", "category": "web", "ai": True,
+    })
+    check("AI 入库 Web 脚本编号带 AI_AUTO-W 前缀",
+          str(ai_web.get("scriptNo") or "").startswith("AI_AUTO-W-"),
+          str(ai_web.get("scriptNo")))
+    manual_web = api.data("POST", "/api/v1/automation/scripts", {
+        "name": "人工Web脚本", "category": "web", "content": "print(1)",
+    })
+    check("人工创建仍走 AUTO-W 序列，不受 AI 编号影响",
+          str(manual_web.get("scriptNo") or "").startswith("AUTO-W-")
+          and not str(manual_web.get("scriptNo") or "").startswith("AI_"),
+          str(manual_web.get("scriptNo")))
+    ai_api = api.data("POST", "/api/v1/automation/scripts/from-output", {
+        "output": py_output, "name": "AI入库接口", "category": "api", "ai": True,
+    })
+    check("AI 入库接口脚本编号带 AI_AUTO-I 前缀",
+          str(ai_api.get("scriptNo") or "").startswith("AI_AUTO-I-"),
+          str(ai_api.get("scriptNo")))
+    ai_sql = api.data("POST", "/api/v1/sql-scripts", {
+        "name": "AI入库SQL", "content": "SELECT 1", "ai": True,
+    })
+    check("AI 入库数据库脚本编号带 AI_SQL 前缀",
+          str(ai_sql.get("scriptNo") or "").startswith("AI_SQL-"),
+          str(ai_sql.get("scriptNo")))
+    manual_sql = api.data("POST", "/api/v1/sql-scripts", {
+        "name": "人工SQL脚本", "content": "SELECT 2",
+    })
+    check("人工创建数据库脚本仍走 SQL 序列",
+          str(manual_sql.get("scriptNo") or "").startswith("SQL-")
+          and not str(manual_sql.get("scriptNo") or "").startswith("AI_"),
+          str(manual_sql.get("scriptNo")))
+
 
 def check_runtime(api: Api) -> None:
     status = api.data("GET", "/api/v1/automation/runtime")
@@ -349,6 +383,11 @@ def check_run_report(api: Api, workdir: pathlib.Path) -> None:
     text = resp.get_data(as_text=True)
     check("报告解析 JTL 性能摘要",
           "性能摘要" in text and "样本数：3" in text and "失败：1" in text, text[:600])
+    # A1：分位数与 JMeter 聚合报告口径一致（最近秩插值，下标 ceil(p*n/100)-1）
+    # 样本 elapsed=[100,200,300]，n=3，P90/P95/P99 下标均为 2 → 300ms
+    check("报告带 P90/P95/P99 分位数",
+          "P90 300 ms" in text and "P95 300 ms" in text and "P99 300 ms" in text,
+          text[300:900])
 
     _, body = api.call("GET", "/api/v1/automation/runs/999999/report")
     check("不存在的执行报告返回 404 语义",

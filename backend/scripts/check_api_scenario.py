@@ -165,6 +165,9 @@ def main() -> int:
         run2 = api.data("POST", f"/api/v1/api-scenarios/{scn['id']}/run", {})
         check("数据驱动逐条跑场景", run2["recordCount"] == 2 and run2["passed"] is True,
               str(run2["recordCount"]))
+        # B4：每条结果标上第几条数据，前端能定位「第 N 条数据失败」
+        idx_list = [r.get("recordIndex") for r in run2["runs"]]
+        check("数据驱动每条结果带 recordIndex", idx_list == [1, 2], str(idx_list))
 
         # 失败即停
         bad = api.data("POST", "/api/v1/api-scenarios", {

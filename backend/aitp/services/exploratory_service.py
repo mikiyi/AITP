@@ -253,9 +253,12 @@ class McpClient:
         self._id = 0
         self._queue: queue.Queue[str] = queue.Queue()
         try:
+            # MCP 协议是 UTF-8 JSON，必须显式指定 encoding：Windows 上 text=True 默认走 GBK，
+            # 子进程输出含非 ASCII 字节会 UnicodeDecodeError 把读循环线程搞死 → 30s 超时假失败。
             self.proc = subprocess.Popen(
                 argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, text=True, bufsize=1,
+                stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                errors="replace", bufsize=1,
             )
         except (OSError, ValueError) as exc:
             raise McpError(f"MCP 服务启动失败：{exc}") from exc

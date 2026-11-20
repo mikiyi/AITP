@@ -4,7 +4,7 @@ English | [简体中文](README.md)
 
 A personal AI testing workstation — **single-user, local-first, offline-capable** — a quality-control tool built around **prompt engineering and data masking for LLM calls**.
 
-Current version **v2.4.0**: the same value served by `aitp.__version__`, `db/migrator.py::APP_VERSION`,
+Current version **v2.4.3**: the same value served by `aitp.__version__`, `db/migrator.py::APP_VERSION`,
 the `appVersion` field of `GET /api/v1/health` and the `app_version` recorded by each migration.
 
 It folds the AI lab, test cases, defects, log analysis, SQL analysis, regression, reports, knowledge base, task list and workspace configuration into one closed loop of LLM-assisted testing:
@@ -84,7 +84,7 @@ The launcher checks the port first: if AITP is already running it just opens the
 
 ## Feature map
 
-Frontend: 55 routes / 59 page components. Backend: 42 blueprints / 444 endpoints, all under `/api/v1`.
+Frontend: 56 routes / 60 page components. Backend: 43 blueprints / 451 endpoints, all under `/api/v1`.
 
 ### First-launch tour and demo project
 
@@ -143,6 +143,7 @@ Page: **Task list** (`/todos`)
 | Prompt optimization | `prompt_optimize` |
 
 - **Capability cards are driven by the prompt library**
+- **One-click output import**: the SQL data-generation statement can be added as a database script in one click, and automation-script generation adds a web/app/API automation script in one click by produced code type; imports carry an automatic `AI_`-prefixed number into the matching menu and the badge updates in real time
 - **Smart routing**: type one sentence and the best-matching capability is selected automatically
 - **Pre-flight check**: before running, it lists missing items, completeness, primary/auxiliary tasks and execution order
 - **Context assembly**: modules, existing cases, defects and knowledge are recalled per project/feature point and injected into the prompt; tiers are lite / standard / full, defaulting to standard (GAP-27)
@@ -162,11 +163,13 @@ Page: **Task list** (`/todos`)
 | Test cases | CRUD, status transitions, xlsx import/export, bulk execution |
 | Defects | CRUD, state-machine transitions, linked test cases, log attachments, drill-down into original execution evidence |
 | Assertion library | Reusable assertion rules shared per project/feature point, referenced from interface cases as `lib:<code>`, JSON Schema assertions with failure diffs |
+| Database query checkpoints | Interface assertions gain a `db:` target (`db:` compares the first cell, `db:rows:` the row count, `db:json:` the result JSON) and scenarios gain a "database" step; connections come from the execution environment (passwords via the OS secret store), read-only enforced (writes / multi-statements / INTO rejected), timeout and 200-row cap, `{{var}}` parameterization; covers MySQL/PostgreSQL-protocol domestic databases (OceanBase/TiDB/GBase/KingbaseES/Highgo/openGauss/GaussDB/OSCAR), Dameng, ClickHouse, SQLite, MongoDB and Redis with lazy drivers and install hints when missing; query text and results land in the unified evidence |
 | Knowledge base | Pending pool → official library, versioning, review, reference protection, full-text search |
 | Test reports | Generation/adoption, ECharts charts, metric trends, export |
 | Execution and evidence | Interface / automation / manual / regression / **exploratory** runs each write one unified evidence snapshot, drillable from runs, defects and reports |
 | Regression checklist | CRUD, AI-generated regression items, auto items really executed by the server with evidence, manual items require evidence to pass |
-| API scenario | Chained multi-step scenarios where every step reuses the interface assertion engine (no second HTTP or assertion wheel): JSONPath extraction feeds `{{var}}` into the URL / headers / query / body of later steps, a failed step can stop or continue the run, the whole scenario can be driven record by record from a data pool, and every run is kept in history |
+| Scenario automation | No-code multi-step scenarios organised in **Web / App / API** tabs (App native steps are being wired up, currently a placeholder); steps can be interface / browser / database / **automation script**, each reusing the interface assertion engine (an automation-script step references a Web/App/API automation script by number and runs it with the scenario, its run record landing in the unified evidence — reusing the automation engine instead of a second execution wheel): JSONPath extraction feeds `{{var}}` into later steps (database-step query results are extractable too), a failed step can stop or continue the run, the whole scenario can be driven record by record from a data pool, and every run is kept in history. Scenarios carry an SCN number and an enabled/disabled status; the list supports name/number keyword and status filters, and the status can be set in the create/edit form. Naming: scripts = Python code (Web / App / API automation scripts with AUTO-W/AUTO-A/AUTO-I prefixes, PERF for performance, SQL for database scripts; AI one-click imports use the separate **AI_SQL-xxx** sequence for database scripts and **AI_AUTO-W/AI_AUTO-A/AI_AUTO-I/AI_PERF-xxx** for automation scripts, so the source is obvious at a glance), scenarios = no-code orchestration; schedules carry SCH numbers. A script is "in use" only when referenced by an automation step inside a scenario (the hover shows the referencing scenario SCN numbers; schedules and plain execution history do not count): hovering the button shows the referencing numbers as an at-most-10 item enumeration, with a "view more" dialog listing every reference beyond that |
+| AI one-click import | AI-lab output turns into assets directly: the SQL data-generation statement can be added as a database script in one click, and automation-script generation adds a web/app/API automation script in one click according to the produced code type; the import carries an automatic `AI_`-prefixed number into the matching menu and the badge updates in real time |
 | Standalone data pool | One shared test-data set reused by cases and scenarios: unique name per project, parse preview, referenced as `pool:<name>` from case extension fields and scenario data sources, parsed by the same case test-data engine instead of a second fetch path |
 | Execution matrix (GAP-43) | Fan a batch of cases across multiple environments × endpoints (app servers), dispatch once and really run each cell; per-case cross-cell attribution (common pass / common failure / env-specific / endpoint-specific / mixed); one-click defect conversion for common failures with evidence attached; production environments require explicit confirmation to dispatch |
 | Web exploratory testing (GAP-45) | An MCP-driven real browser (started by the `mcpCommand` you configure under "Exploratory testing settings"; `backend/scripts/browser_mcp_server.py`) explores in a read-snapshot → decide → act → observe loop, finding gaps that scripted cases miss; normal steps keep evidence at the configured per-step screenshot count, anomalous steps force 3 screenshots plus a dual-anchor ±N-second log slice, network snapshot, console errors and traceId as an evidence pack; password/token inputs are masked per PII rules; findings go to the pending pool for human review first and only become defects after approval |
@@ -290,8 +293,8 @@ cd frontend && npm run build                                              # fron
 - Any new gate script dropped into `backend/scripts` named `check_*.py` is picked up
   automatically without touching the runner.
 
-Gate inventory (70 entries = 69 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
-scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 69 items actually
+Gate inventory (71 entries = 70 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
+scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 70 items actually
 execute):
 
 | Script | Covers | When it fails, look at |
@@ -301,13 +304,13 @@ execute):
 | `check_ai_thinking.py` | "Disable thinking mode" end to end: `extra_json.thinking=off` -> resolver -> request body of both adapters; nothing is sent when the flag is unset (default semantics unchanged) | `ai/resolver.py::_disable_thinking` and `_body` in `ai/adapters/*` |
 | `check_ai_cost.py` | AI cost accounting: per-profile unit prices and micro-unit conversion, daily/monthly budgets and per-call token soft threshold, over-budget only warns and never blocks (GAP-30) | `backend/aitp/ai/cost.py` and the price fields of `sys_ai_profile` |
 | `check_ai_local_billing.py` | Self-hosted (local) profiles are never billed: write side zeroes out, the unit-price endpoint refuses, cost table and currency are not skewed by leftover values, real runs store NULL cost | `cost.is_local_profile`, plus billing handling in `api/settings.py` and `api/lab.py` |
-| `check_api_scenario.py` | Multi-step API scenarios: sequential runs, JSONPath variable extraction with `{{var}}` handed to later steps, per-step assertions reusing the interface-runner rules, fail-fast, data-driven execution of the whole scenario per record, run history persisted (ships its own `/login` `/order` stub) | `services/api_scenario_service.py` and `api/api_scenarios.py` |
+| `check_api_scenario.py` | Multi-step API scenarios: sequential runs, JSONPath variable extraction with `{{var}}` handed to later steps, per-step assertions reusing the interface-runner rules, fail-fast, data-driven execution of the whole scenario per record, run history persisted, scenario automation steps referencing and running automation scripts (ships its own `/login` `/order` stub) | `services/api_scenario_service.py` and `api/api_scenarios.py` |
 | `check_egress_guard.py` | The outbound-data confirmation looks only at the primary model actually used: local primary stays silent, cloud primary prompts, the candidate chain is still returned in full | `knowledge_assistant_service.egress_plan` and frontend `stores/aiGuard.ts` |
 | `check_assistant_history.py` | Q&A history stored per session: question and answer land in `biz_ai_session` / `biz_ai_message` (capability `knowledge-assistant`), replay carries mode and references, archived timestamps match so "add to knowledge base" never duplicates, foreign or other-module sessions are refused, over-limit replays only the newest and writes no `biz_ai_record` | `knowledge_assistant_service.history/record_qa` and `api/knowledge.py::_persist_qa` |
 | `check_assistant_thinking.py` | Q&A assistant reasoning chain: `reasoningTokens` in the billing payload, `ask-stream` is SSE and ends with an `error` event when no AI profile is usable, reasoning is not persisted by default, opt-in save writes it and replay carries `thinkingText` / id | `knowledge_assistant_service.record_qa/history` and the frontend "visible in this session only" hint |
 | `check_async_races.py` | Async scheduling races (B3): a matrix dispatched twice concurrently still runs once, cancelling a task no longer reports a false success (real state after the queued->running race) | matrix dispatch lock and the cancel branch in `services/job_queue.py` |
 | `check_attachments.py` | Attachments: document import + image watermark removal | attachment endpoints, Pillow, mock server output |
-| `check_automation.py` | Automation script assets and execution engine | execution records and engine log (`data/aitp.log`) |
+| `check_automation.py` | Automation script assets and execution engine: CRUD across four script categories, subprocess execution with traces, result write-back; `from-output` turns AI output into a script asset; AI one-click imports use separate numbers (`AI_AUTO-W/AI_AUTO-A/AI_AUTO-I/AI_PERF` and `AI_SQL` prefixes) without disturbing manual numbering | execution records and engine log (`data/aitp.log`) |
 | `check_automation_writeback.py` | Automation result writeback to cases/rounds (GAP-07) | writeback service and round state machine |
 | `check_backup_schedule.py` | Scheduled backups and retention (GAP-13) | backup service and `data/` retention logic |
 | `check_case_test_data.py` | Case steps/expectations paired line by line + test-data parsing in many formats (inline text/JSON, txt/csv/xlsx/json/sql files, URLs and unknown formats refused), automation consumes `AITP_TEST_DATA`, JMeter points at the parsed `testdata.csv` (BUG-44/45) | the test-data parsing service and case step/data persistence |
@@ -315,6 +318,7 @@ execute):
 | `check_ci_notifications.py` | CI triggers and webhook notifications (GAP-10), self-hosted HTTP collector | token hashing, channel scoping, delivery records |
 | `check_context_assembler.py` | Context assembly: three budget tiers, recall of modules/cases/defects/knowledge per project and feature point, preview and real build share one code path (GAP-27) | `backend/aitp/services/context_assembler.py` tiers and recall |
 | `check_db.py` | Data layer: PRAGMA, FK constraints, seed volume, soft delete, concurrent writes | `backend/aitp/db` migrations and connection config |
+| `check_db_checkpoint.py` | Database query checkpoints (Plan A): read-only gate (writes / multi-statements / INTO rejected), Redis read-only whitelist, Mongo query parsing, real SQLite execution of `db:` / `db:rows:` / `db:json:` assertions with `{{var}}` parameterization, row cap, scenario database steps with assertions / variable extraction, evidence keeps the query text, missing domestic-DB drivers get install hints | `services/db_checkpoint_service.py` and `interface_runner._eval_db_rule` |
 | `check_db_concurrency.py` | Concurrent writes and id allocation: 16 parallel creates never collide on a unique key, reported success count equals rows landed, write-lock statistics (GAP-26) | `backend/aitp/db/write_guard.py` and each repository's id allocation |
 | `check_dedup.py` | Generation dedup rules: normalization, threshold bands, mark vs increment behaviour, payload index alignment (GAP-29) | `backend/aitp/services/dedup_service.py` |
 | `check_env_config.py` | Test environment config: CRUD, secret masking, health probe, unique default | env config endpoints and secret store |
@@ -333,7 +337,7 @@ execute):
 | `check_observability.py` | Observability: traceId across logs and response headers, only failures/slow requests logged (GAP-23) | `backend/aitp/observability` and log format |
 | `check_onboarding.py` | First-run onboarding state (GAP-18) | migration 045 and the onboarding API |
 | `check_output_schema.py` | Output structure validation: JSON Schema for four capabilities, blocking missing fields and type mismatches, retry semantics (GAP-28) | `backend/aitp/ai/output_schema.py` and the capability mapping |
-| `check_p2.py` | P2 closure: schedule CRUD / trigger-now / due `_tick` dispatch, execution metrics, JMeter load model emitting `-Jthreads`, browser steps inside API scenarios (mock MCP) | `api/schedules.py`, `services/test_schedule_service.py::_tick`, `services/automation_service.py::_jmeter_command` |
+| `check_p2.py` | P2 closure: schedule CRUD / trigger-now / due `_tick` dispatch, execution metrics, JMeter load model emitting `-Jthreads`, browser steps inside API scenarios (mock MCP); schedules carry SCH numbers, a script counts as "in use" only when referenced by a scenario automation step with refs returning the scenario SCN numbers (schedule-only references and execution history do not count), scenario disabled status persists while invalid status values are rejected | `api/schedules.py`, `services/test_schedule_service.py::_tick`, `services/automation_service.py::_jmeter_command` |
 | `check_pagination.py` | List pagination and cursor continuation: no endpoint dumps whole tables, `total` matches row count, case tree pages by `afterId` (GAP-25) | `common/pagination.py` and the list endpoints |
 | `check_portability.py` | Cross-platform delivery: preflight, PDF CJK fonts, secret-store fallback, script portability | printed platform-specific checks (never writes the real DB) |
 | `check_prompt_regression.py` | Prompt-effect regression set: offline mock batch plus six-metric baseline (pass rate, retention rate, completeness, duplicate rate, issue count, prompt size) so edits are comparable (GAP-31) | `backend/prompts/regression/` samples and baseline file |
@@ -416,10 +420,10 @@ cd frontend && npx playwright test               # serial, workers=1
 ```
 backend/
   aitp/
-    api/          42 blueprints / 444 endpoints
+    api/          43 blueprints / 451 endpoints
     ai/           resolver, client, masking, adapters, cost, output_schema
     common/       constants, validation, pagination, keystore, security utilities
-    db/           connections and migrations (67 files)
+    db/           connections and migrations (71 files)
     repositories/ parameterized SQL repository layer
     services/     knowledge persistence, report export, backup/restore, execution matrix, retention/archival, exploratory testing, external import
     prompts/      prompt template library
@@ -430,7 +434,7 @@ frontend/
   src/
     api/          unified request layer
     components/   shared components
-    views/        59 page components
+    views/        60 page components
   e2e/            Playwright end-to-end tests (isolated harness)
 data/             runtime data (SQLite, logs, keystore, archives, exploratory screenshots and log slices)
 knowledge/        Markdown knowledge base storage
