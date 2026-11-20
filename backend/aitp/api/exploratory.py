@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from flask import Blueprint, Response, request
+from flask import Blueprint, Response
 
 from ..envelope import ok
 from ..errors import AppError, ErrorCode

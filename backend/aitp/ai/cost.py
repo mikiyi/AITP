@@ -139,19 +139,6 @@ def price_of_profile(row: Mapping[str, Any] | None) -> TokenPrice:
         return TokenPrice()
 
 
-def price_for_profile(conn: sqlite3.Connection, profile_id: int | None) -> TokenPrice:
-    """按档案 id 读单价；没有档案 id（走环境变量的兜底候选）就是未配价。"""
-    if not profile_id:
-        return TokenPrice()
-    row = conn.execute(
-        "SELECT price_input_micros, price_output_micros, price_currency"
-        " FROM sys_ai_profile WHERE id = ?",
-        (int(profile_id),),
-    ).fetchone()
-    if row is None:
-        return TokenPrice()
-    return price_of_profile(dict(row))
-
 
 # ---------------- Token Plan（套餐/订阅额度，迁移 060） ----------------
 
@@ -164,9 +151,6 @@ def normalize_billing_mode(value: Any) -> str:
     text = str(value or "").strip().lower()
     return text if text in SUPPORTED_BILLING_MODES else BILLING_API
 
-
-def is_token_plan_row(row: Mapping[str, Any] | None) -> bool:
-    return normalize_billing_mode((row or {}).get("billing_mode")) == BILLING_TOKEN_PLAN
 
 
 def token_plan_summary(row: Mapping[str, Any] | None) -> dict[str, Any]:

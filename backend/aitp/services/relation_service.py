@@ -15,7 +15,6 @@ from ..repositories.base import BaseRepository
 from ..repositories.bug_repo import BugRepository
 from ..repositories.knowledge_repo import KnowledgeRepository
 from ..repositories.module_repo import ModuleRepository
-from ..repositories.project_repo import ProjectRepository
 from ..repositories.regression_repo import RegressionRepository
 from ..repositories.relation_repo import (
     ENTITY_TYPES,

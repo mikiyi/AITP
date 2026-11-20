@@ -31,14 +31,6 @@ class ExecutionMatrixCellRepository(BaseRepository):
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def get_of_matrix(self, matrix_id: int, cell_id: int) -> RowDict | None:
-        row = self.conn.execute(
-            "SELECT * FROM biz_execution_matrix_cell"
-            " WHERE id = ? AND matrix_id = ? AND is_deleted = 0",
-            (int(cell_id), int(matrix_id)),
-        ).fetchone()
-        return dict(row) if row else None
-
     def reset_for_run(self, matrix_id: int) -> None:
         """重跑前把格子与旧结果一起作废，避免上一轮结论混进本轮对比。"""
         self.conn.execute(
@@ -65,14 +57,6 @@ class ExecutionMatrixResultRepository(BaseRepository):
             "SELECT * FROM biz_execution_matrix_result"
             " WHERE matrix_id = ? AND is_deleted = 0 ORDER BY id ASC",
             (int(matrix_id),),
-        ).fetchall()
-        return [dict(row) for row in rows]
-
-    def list_by_cell(self, cell_id: int) -> list[RowDict]:
-        rows = self.conn.execute(
-            "SELECT * FROM biz_execution_matrix_result"
-            " WHERE cell_id = ? AND is_deleted = 0 ORDER BY id ASC",
-            (int(cell_id),),
         ).fetchall()
         return [dict(row) for row in rows]
 

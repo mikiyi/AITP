@@ -10,14 +10,13 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from pathlib import Path
 from typing import Any, Callable
 
 from ..common.time_utils import utcnow_iso
 from ..errors import AppError, ErrorCode
-from ..repositories.automation_repo import AutomationRunRepository, AutomationScriptRepository
+from ..repositories.automation_repo import AutomationScriptRepository
 from ..repositories.base import dumps, loads
 from ..repositories.bug_repo import BugRepository
 from ..repositories.execution_matrix_repo import (

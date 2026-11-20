@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Any, Iterable
+from typing import Any
 from urllib.parse import quote
 
 from flask import Response, request
@@ -67,9 +67,6 @@ def keyword_of(args: Any = None) -> str:
     return str(src.get("keyword") or "").strip()
 
 
-def int_arg(value: Any, field: str, default: int | None = None) -> int:
-    return require_int(value, field, default)
-
 
 def path_int(pk: Any, field: str = "id") -> int:
     try:
@@ -103,11 +100,6 @@ def audit(
     # 审计写入独立于业务事务，这里单独提交，避免随请求结束被回滚
     conn.commit()
 
-
-def require_found(row: dict[str, Any] | None, message: str = "资源不存在") -> dict[str, Any]:
-    if not row:
-        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, message)
-    return row
 
 
 def scope_arg(args: Any = None, field: str = "projectId") -> int | None:
@@ -198,11 +190,6 @@ def reject_project_move(
     if int(raw) != int(current_project_id or -1):
         raise AppError(ErrorCode.ILLEGAL_OPERATION, f"不支持把{label}改挂到别的项目")
 
-
-def pick(source: dict[str, Any], allowed: Iterable[str]) -> dict[str, Any]:
-    """只取白名单字段，避免把请求体里的任意列名写进数据库。"""
-    allowed_set = set(allowed)
-    return {k: v for k, v in source.items() if k in allowed_set}
 
 
 def attach_version_codes(

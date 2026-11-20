@@ -272,6 +272,38 @@ def delete_script(pk: str) -> Any:
     return ok({"id": target, "deleted": True, "refs": refs})
 
 
+@bp.post("/sql-scripts/<pk>/copy")
+def copy_script(pk: str) -> Any:
+    """复制单条数据库脚本：重新取号（继承 AI_/普通序列）、名称加「副本-」前缀，其余字段一致。"""
+    conn = db()
+    target = path_int(pk)
+    repo = SqlScriptRepository(conn)
+    row = repo.get(target)
+    if row is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "数据库脚本不存在")
+    guard_project_scope(row, scope_arg(), "数据库脚本")
+    src_no = str(row.get("script_no") or "")
+    ai = src_no.startswith("AI_")
+    payload: dict[str, Any] = {
+        "script_no": repo.next_script_no(ai=ai),
+        "name": (f"副本-{row.get('name') or ''}")[:200],
+        "alias": row.get("alias") or "",
+        "content": row.get("content") or "",
+        "variables": row.get("variables") or "",
+        "env_id": row.get("env_id"),
+        "project_id": row.get("project_id"),
+        "description": row.get("description") or "",
+        "status": row.get("status") or "ready",
+    }
+    new_id = repo.insert(payload)
+    commit(conn)
+    new_row = repo.get(new_id) or {}
+    audit(conn, audit_service.AUDIT_ACTION_CREATE, _AUDIT_RESOURCE, new_id,
+          str(new_row.get("name") or ""),
+          {"scriptNo": new_row.get("script_no"), "copyOf": row.get("script_no")})
+    return ok(_public(new_row))
+
+
 @bp.get("/sql-scripts/<pk>/refs")
 def list_refs(pk: str) -> Any:
     conn = db()

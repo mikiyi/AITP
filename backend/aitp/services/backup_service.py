@@ -132,7 +132,7 @@ def save_upload(data: bytes, filename: str) -> dict[str, Any]:
     temp.replace(target)
     try:
         _validate(target)
-    except Exception:
+    except Exception:  # noqa: BLE001
         target.unlink(missing_ok=True)
         raise
     return describe(target)

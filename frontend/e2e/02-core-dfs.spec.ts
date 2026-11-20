@@ -1,8 +1,8 @@
 /** DFS：核心业务页穷尽交互（每页≤20元素），每步断言业务结果。覆盖三个终态/确认修复。 */
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Locator, type Page } from '@playwright/test'
 import { api, data, getSeed, makeBudget, attachHealth, assertHealthy } from './helpers'
 
-const btn = (page: Page, name: string | RegExp) => page.getByRole('button', { name }).first()
+const btn = (scope: Page | Locator, name: string | RegExp) => scope.getByRole('button', { name }).first()
 const dialog = (page: Page) => page.locator('.el-dialog:visible').last()
 
 test('AI 能力页：执行→产出→采纳去重→取消/恢复→落库', async ({ page }) => {

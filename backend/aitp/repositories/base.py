@@ -179,20 +179,6 @@ class BaseRepository:
             if len(chunk) < want:
                 return
 
-    def iter_ids(
-        self,
-        filters: dict[str, Any] | None = None,
-        keyword: str | None = None,
-        *,
-        batch: int = SCAN_PAGE_SIZE,
-        max_rows: int = SCAN_MAX_ROWS,
-    ) -> Iterator[IdBatchList]:
-        """只要主键的批量扫描：读放大远低于 iter_rows，供「按范围选一批 id」用。"""
-        for chunk in self.iter_rows(
-            filters, keyword, batch=batch, max_rows=max_rows, columns="id"
-        ):
-            yield [int(row["id"]) for row in chunk]
-
     def scan_column(
         self,
         column: str,

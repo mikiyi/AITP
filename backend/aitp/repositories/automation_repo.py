@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from typing import Any
 
 from ..common.pagination import MAX_PAGE_SIZE, Page, RowDict, build_page
@@ -232,14 +231,6 @@ class AutomationRunRepository(BaseRepository):
     def list_for_script(self, script_id: int, page_num: int = 1, page_size: int = 20) -> Page:
         """某个脚本的执行历史。"""
         return self.list({"script_id": script_id}, None, page_num=page_num, page_size=page_size)
-
-    def latest_for_script(self, script_id: int) -> RowDict | None:
-        row = self.conn.execute(
-            "SELECT * FROM biz_automation_run WHERE script_id = ? AND is_deleted = 0"
-            " ORDER BY id DESC LIMIT 1",
-            (script_id,),
-        ).fetchone()
-        return dict(row) if row else None
 
     def list_for_test_run(self, test_run_id: int) -> list[RowDict]:
         """某个测试轮次里跑过的自动化脚本，按执行时间正序。"""

@@ -34,13 +34,13 @@ import re
 import shlex
 import sqlite3
 import time
-import urllib.request
 from datetime import date, datetime, time as dtime
 from decimal import Decimal
 from typing import Any
 
 from ..errors import AppError, ErrorCode
 from ..repositories.test_env_repo import DB_DEFAULT_PORTS, DB_TYPE_LABELS, TestEnvRepository
+import urllib.request
 
 MAX_ROWS = 200
 DEFAULT_TIMEOUT = 10
@@ -545,7 +545,7 @@ def _write_sqlite(env: dict[str, Any], statements: list[str],
             else:
                 affected += int(cur.rowcount or 0)
         conn.commit()
-    except Exception:
+    except Exception:  # noqa: BLE001
         conn.rollback()
         raise
     finally:
@@ -573,7 +573,7 @@ def _write_mysql(env: dict[str, Any], db_type: str, password: str,
             else:
                 affected += int(cur.rowcount or 0)
         conn.commit()
-    except Exception:
+    except Exception:  # noqa: BLE001
         conn.rollback()
         raise
     finally:
@@ -599,7 +599,7 @@ def _write_pg(env: dict[str, Any], password: str, statements: list[str],
             else:
                 affected += int(cur.rowcount or 0)
         conn.commit()
-    except Exception:
+    except Exception:  # noqa: BLE001
         conn.rollback()
         raise
     finally:

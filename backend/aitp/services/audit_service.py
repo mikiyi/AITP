@@ -82,7 +82,7 @@ def _current_context() -> tuple[str, str, str]:
         client_ip = request.headers.get("X-Forwarded-For", "") or request.remote_addr or ""
         actor = request.headers.get("X-AITP-Actor", "") or "local"
         return actor, trace_id, client_ip
-    except Exception:
+    except Exception:  # noqa: BLE001
         return "local", "", ""
 
 

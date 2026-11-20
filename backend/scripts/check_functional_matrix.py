@@ -780,7 +780,7 @@ def section_todos(api: Api, ctx: dict[str, int]) -> None:
 
 def section_automation(api: Api, ctx: dict[str, int]) -> None:
     path = f"{V1}/automation/scripts"
-    base = {"name": "脚本边界", "category": "web"}
+    base = {"projectId": ctx["p1"], "name": "脚本边界", "category": "web"}
     probe_required_fields(api, "自动化脚本", path, base, ("name",))
     probe_max_length(api, "自动化脚本", path, dict(base), "name", 200)
     probe_enum(api, "自动化脚本", path, dict(base, category="nope"), "category")
@@ -789,7 +789,7 @@ def section_automation(api: Api, ctx: dict[str, int]) -> None:
     probe_keyword_literal(api, "自动化脚本", path)
     probe_malformed_body(api, "自动化脚本", path)
 
-    script = api.create(path, {"name": "登录流", "category": "web",
+    script = api.create(path, {"projectId": ctx["p1"], "name": "登录流", "category": "web",
                                "content": "print('ok')", "language": "python",
                                "interpreter": "python"})
     run = api.data("POST", f"{V1}/automation/scripts/{script['id']}/run", {})
@@ -803,6 +803,7 @@ def section_automation(api: Api, ctx: dict[str, int]) -> None:
     check("脚本执行超时为负被拒绝或回落到默认",
           timeout[1].get("code") != ErrorCode.INTERNAL_ERROR, str(timeout[1])[:160])
     from_output = api.data("POST", f"{V1}/automation/scripts/from-output", {
+        "projectId": ctx["p1"],
         "category": "api", "output": "```python\nprint(1)\n```", "name": "来自 AI"})
     check("AI 产出转脚本资产成功", bool(from_output.get("id")), str(from_output)[:160])
     api.expect("AI 产出转脚本缺 output 被拒绝", "POST", f"{V1}/automation/scripts/from-output",

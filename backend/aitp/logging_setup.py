@@ -39,7 +39,7 @@ class NonLockingRotatingFileHandler(RotatingFileHandler):
         super().emit(record)
         try:
             self.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -49,7 +49,7 @@ class RedactFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             message = record.getMessage()
-        except Exception:
+        except Exception:  # noqa: BLE001
             return True
         redacted = _SECRET_PATTERN.sub("sk-***", message)
         if redacted != message:
@@ -144,7 +144,7 @@ def _reconfigure_streams() -> None:
         try:
             # TextIO 协议没有 reconfigure，只有具体 TextIOWrapper 才有
             cast(Any, stream).reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 

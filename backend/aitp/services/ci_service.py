@@ -31,10 +31,6 @@ CI_ALLOWED_ROUTES: tuple[tuple[str, re.Pattern[str]], ...] = (
 CI_PREFIX = "/api/v1/ci/"
 
 
-def is_ci_path(path: str) -> bool:
-    """是否落在 CI 前缀下（中间件据此决定是否走令牌边界判定）。"""
-    return path.startswith(CI_PREFIX)
-
 
 def is_ci_route_allowed(method: str, path: str) -> bool:
     """请求是否命中白名单：方法 + 路径都要匹配，避免借前缀越界到别的 CI 路由。"""

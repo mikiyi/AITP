@@ -17,12 +17,6 @@ class PromptOverrideRepository(BaseRepository):
     table = "sys_ai_prompt_override"
     soft_delete_enabled = False
 
-    def get_body(self, code: str) -> str | None:
-        row = self.conn.execute(
-            "SELECT body FROM sys_ai_prompt_override WHERE code = ?", (code,)
-        ).fetchone()
-        return str(row["body"]) if row else None
-
     def list_bodies(self) -> dict[str, str]:
         """全部自定义正文，供注册表一次性装载。"""
         rows = self.conn.execute("SELECT code, body FROM sys_ai_prompt_override").fetchall()

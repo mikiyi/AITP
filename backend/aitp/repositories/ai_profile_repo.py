@@ -71,13 +71,6 @@ class AIProfileRepository(BaseRepository):
         self.update(profile_id, {"api_key_ref": ref, "api_key_masked": masked})
         return masked
 
-    def load_api_key(self, profile_id: int) -> str:
-        ref = self.key_ref(profile_id)
-        try:
-            return get_store().get(ref)
-        except Exception:
-            return ""
-
     @staticmethod
     def to_public(row: RowDict) -> dict[str, Any]:
         """对外输出，绝不暴露密文与明文。"""

@@ -203,28 +203,6 @@ def check_pii() -> None:
     check("普通文本不误伤", detect_sensitive_counts("登录接口返回 200") == {})
 
 
-def check_messages() -> None:
-    system = Message(role="system", content=f"你是测试助手，操作人手机 {PHONE}")
-    user = Message(role="user", content=f"给 {EMAIL} 发验证码", images=["data:image/png;base64,AAA"])
-    masked, info = mask_messages([system, user])
-    check("系统提示词也经过脱敏", PHONE not in masked[0].content and "[手机号已脱敏]" in masked[0].content)
-    check("用户输入经过脱敏", EMAIL not in masked[1].content and "[邮箱已脱敏]" in masked[1].content)
-    check("多模态图片原样保留", masked[1].images == ["data:image/png;base64,AAA"])
-    check("原始消息不被改写", PHONE in system.content and EMAIL in user.content and system.images == [])
-    check("脱敏结果标记已生效", info.applied and info.enabled and info.count == 2)
-    check("类型计数按类型汇总",
-          {item["code"]: item["count"] for item in info.types} == {"phone": 1, "email": 1},
-          str(info.types))
-
-    _, clean = mask_messages([Message(role="user", content="登录接口返回 200")])
-    check("无敏感内容时不标记已脱敏", clean.applied is False and clean.count == 0)
-
-    preview = preview_mask(SAMPLE_TEXT)
-    check("预览只统计不替换", preview.count >= 6 and preview.applied is False, str(preview.as_dict()))
-    check("预览包含中文类型名",
-          {item["label"] for item in preview.types} >= {"手机号", "身份证号", "邮箱"},
-          str(preview.types))
-
 
 # ---------------- 调用链 ----------------
 

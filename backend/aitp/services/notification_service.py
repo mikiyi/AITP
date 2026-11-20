@@ -9,22 +9,14 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-import urllib.error
-import urllib.request
 from typing import Any
 
 from ..common.time_utils import utcnow_iso
-from ..repositories.ci_repo import (
-    NOTIFICATION_FAILED,
-    NOTIFICATION_PENDING,
-    NOTIFICATION_SUCCESS,
-    CiTokenRepository,
-    NotificationChannelRepository,
-    NotificationLogRepository,
-    channel_summary,
-)
+from ..repositories.ci_repo import NOTIFICATION_FAILED, NOTIFICATION_PENDING, NOTIFICATION_SUCCESS, NotificationChannelRepository, NotificationLogRepository, channel_summary
 from ..repositories.test_run_repo import TestRunRepository, run_summary
 from . import job_queue
+import urllib.error
+import urllib.request
 
 EVENT_RUN_COMPLETED = "run.completed"
 EVENT_GATE_BLOCKED = "gate.failed"

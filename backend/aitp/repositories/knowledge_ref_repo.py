@@ -85,11 +85,6 @@ class KnowledgeRefRepository(BaseRepository):
             })
         return result
 
-    def count_by_article(self, article_id: int) -> int:
-        return int(self.conn.execute(
-            "SELECT COUNT(*) FROM biz_knowledge_ref WHERE article_id = ?", (article_id,)
-        ).fetchone()[0])
-
     def referenced_articles(self, ref_type: str, ref_id: int) -> list[int]:
         rows = self.conn.execute(
             "SELECT article_id FROM biz_knowledge_ref WHERE ref_type = ? AND ref_id = ?",

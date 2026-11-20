@@ -250,9 +250,6 @@ def toggle_done(conn: sqlite3.Connection, pk: int) -> dict[str, Any]:
     return decorate(conn, updated or {})
 
 
-def set_status(conn: sqlite3.Connection, pk: int, status: str) -> dict[str, Any]:
-    return update_todo(conn, pk, {"status": check_choice(status, TODO_STATUSES, "status")})
-
 
 def remove_todo(conn: sqlite3.Connection, pk: int) -> dict[str, Any]:
     """软删任务，子任务一并软删；返回被删掉的 id 列表。"""

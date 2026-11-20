@@ -221,18 +221,6 @@ def write_stats() -> dict[str, Any]:
     return snapshot
 
 
-def reset_write_stats() -> None:
-    """清空计数：只给门禁脚本用，让每条断言从干净的计数开始。"""
-    with _STATS._lock:  # noqa: SLF001 - 同模块内部的状态复位
-        _STATS.commits = 0
-        _STATS.waits = 0
-        _STATS.slow_waits = 0
-        _STATS.busy_errors = 0
-        _STATS.busy_retries = 0
-        _STATS.timeouts = 0
-        _STATS.total_wait_ms = 0.0
-        _STATS.max_wait_ms = 0.0
-
 
 def run_serialized(
     db_path: Path | str | sqlite3.Connection,

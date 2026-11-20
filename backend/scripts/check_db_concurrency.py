@@ -32,12 +32,11 @@ import socket
 import sqlite3
 import subprocess
 import sys
-import threading
 import time
-import urllib.error
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, cast
+import urllib.error
+import urllib.request
 
 # TextIO 协议没有 reconfigure，只有具体 TextIOWrapper 才有
 cast(Any, sys.stdout).reconfigure(encoding="utf-8", errors="replace")

@@ -366,6 +366,11 @@ import type {
 import { caseTypeText } from '@/utils/format'
 import { CASE_PRIORITY_OPTIONS } from '@/constants/enums'
 import { useProjectScope } from '@/composables/useProjectScope'
+import {
+  useProjectExtraQuery,
+  useProjectModuleOptions,
+  useProjectVersionOptions,
+} from '@/composables/useProjectOptions'
 import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
@@ -470,31 +475,9 @@ const EXTRA_FIELDS: Record<string, ExtraField[]> = {
 }
 
 /** 列表列渲染用的功能点名称，跟随本页当前项目。 */
-const moduleOptions = ref<ModuleOption[]>([])
-
-const extraQuery = computed(() => ({
-  projectId: appStore.currentProjectId ?? undefined,
-}))
-
-/** 当前项目下的版本清单，供版本下拉筛选。 */
-const versionOptions = ref<Array<{ label: string; value: number }>>([])
-
-async function loadVersionOptions(): Promise<void> {
-  const pid = appStore.currentProjectId
-  if (!pid) {
-    versionOptions.value = []
-    return
-  }
-  try {
-    const result = await projectVersionApi.list(pid)
-    versionOptions.value = result.list.map((v) => ({
-      label: v.versionCode,
-      value: v.id as number,
-    }))
-  } catch {
-    versionOptions.value = []
-  }
-}
+const extraQuery = useProjectExtraQuery()
+const { moduleOptions, loadModuleOptions } = useProjectModuleOptions()
+const { versionOptions, loadVersionOptions } = useProjectVersionOptions()
 
 /**
  * 功能点筛选面板（原「用例树」独立页并入这里）。
@@ -1274,22 +1257,9 @@ function openCoverage(): void {
   void loadCoverage()
 }
 
-async function loadOptions(): Promise<void> {
-  const projectId = appStore.currentProjectId
-  if (!projectId) {
-    moduleOptions.value = []
-    return
-  }
-  try {
-    moduleOptions.value = await moduleApi.options(projectId, true)
-  } catch {
-    moduleOptions.value = []
-  }
-}
-
 useProjectScope({
   load: () => {
-    void loadOptions()
+    void loadModuleOptions()
     void loadVersionOptions()
     void loadModuleNav()
   },

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from flask import Flask, Response, jsonify
+from flask import Flask, Response
 from werkzeug.exceptions import HTTPException
 
 from .envelope import fail

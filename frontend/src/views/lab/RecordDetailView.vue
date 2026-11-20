@@ -240,7 +240,7 @@ import { ArrowLeft } from '@element-plus/icons-vue'
 import MarkdownView from '@/components/MarkdownView.vue'
 import { recordApi } from '@/api'
 import type { AiRecord } from '@/api/types'
-import { dateTimeText } from '@/utils/format'
+import { dateTimeText, riskLevelTagType as riskTagType, riskLevelText as riskText } from '@/utils/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -283,18 +283,6 @@ function stepStatusType(status: string): 'success' | 'danger' | 'warning' | 'inf
   if (status === 'running') {
     return 'warning'
   }
-  return 'info'
-}
-
-function riskText(level: string): string {
-  if (level === 'high') return '高风险'
-  if (level === 'low') return '低风险'
-  return '无风险'
-}
-
-function riskTagType(level: string): 'danger' | 'warning' | 'info' {
-  if (level === 'high') return 'danger'
-  if (level === 'low') return 'warning'
   return 'info'
 }
 

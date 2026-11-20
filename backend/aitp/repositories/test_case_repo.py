@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from ..common.enums import CASE_PREFIX
 from ..common.pagination import Page, RowDict, RowList
-from .base import BaseRepository, dumps, loads
+from .base import BaseRepository, loads
 from .numbering import next_case_no
 
 
@@ -214,5 +213,3 @@ class TestCaseRepository(BaseRepository):
             grouped.setdefault(int(row["case_id"]), []).append(dict(row))
         return grouped
 
-    def set_steps(self, pk: int, steps: list[dict[str, Any]]) -> bool:
-        return self.update(pk, {"steps_json": dumps(steps)})

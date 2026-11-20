@@ -1,7 +1,9 @@
-"""严格类型门禁：mypy --strict 扫全后端 + 真实执行前端 vue-tsc --noEmit。
+"""严格类型门禁：mypy --strict 扫全后端 + 真实执行前端 vue-tsc --noEmit + e2e tsc。
 
 mypy 缺失或类型报错一律 FAIL。前端部分在 frontend/package.json 存在时，
 用 node 直接执行 node_modules/vue-tsc 的 bin 跑 `vue-tsc --noEmit`；
+随后用 node_modules/typescript 的 tsc 按 frontend/tsconfig.e2e.json
+检查 playwright 端到端用例（结构体、使用统一类型）。
 前端工程缺失、无 node 或依赖未安装时打印 [SKIP] 原因并默认返回 0，
 CI 可用 --require-frontend 让缺前端依赖时直接 FAIL。
 
@@ -88,13 +90,52 @@ def check_vue_tsc(require_frontend: bool) -> int:
     return 0
 
 
+def check_e2e_tsc(require_frontend: bool) -> int:
+    """真实执行 Playwright 端到端用例的 tsc 类型检查。"""
+    def skip(reason: str) -> int:
+        print(f"[SKIP] 前端 e2e tsc：{reason}", flush=True)
+        if require_frontend:
+            print("[FAIL] --require-frontend：缺前端依赖即视为门禁失败", flush=True)
+            return 1
+        return 0
+
+    config = FRONTEND / "tsconfig.e2e.json"
+    if not config.exists():
+        return skip(f"未找到 {config.relative_to(ROOT)}")
+    tsc_bin = FRONTEND / "node_modules" / "typescript" / "bin" / "tsc"
+    if not tsc_bin.exists():
+        return skip("前端依赖未安装（先执行：cd frontend && npm install）")
+    node = shutil.which("node")
+    if node is None:
+        return skip("环境无 node，无法执行 tsc")
+
+    cmd = [node, str(tsc_bin), "-p", "tsconfig.e2e.json", "--noEmit"]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", cwd=str(FRONTEND), timeout=900)
+    except subprocess.TimeoutExpired:
+        print("[FAIL] 前端 e2e tsc 超时（>900s）", flush=True)
+        return 1
+    output = (proc.stdout or "") + (proc.stderr or "")
+    lines = [line for line in output.splitlines() if line.strip()]
+    if proc.returncode != 0:
+        for line in lines:
+            print(line, flush=True)
+        print(f"\n[FAIL] e2e tsc（tsconfig.e2e.json）存在类型错误（退出码 {proc.returncode}）",
+              flush=True)
+        return 1
+    print("[PASS] 前端 e2e tsc -p tsconfig.e2e.json 零类型错误", flush=True)
+    return 0
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="mypy --strict + 真实 vue-tsc 类型门禁")
+    parser = argparse.ArgumentParser(description="mypy --strict + vue-tsc + e2e tsc 类型门禁")
     parser.add_argument("--require-frontend", action="store_true",
                         help="缺前端工程/依赖或无 node 时直接 FAIL（供 CI 使用）")
     args = parser.parse_args()
     rc = check_mypy()
     rc |= check_vue_tsc(bool(args.require_frontend))
+    rc |= check_e2e_tsc(bool(args.require_frontend))
     return rc
 
 

@@ -258,17 +258,6 @@ class TodoRepository(BaseRepository):
             for row in rows
         ]
 
-    def is_done_tree(self, pk: int) -> bool:
-        """子任务是否全部收口，用于父任务进度回推。"""
-        row = self.conn.execute(
-            "SELECT COUNT(*) AS total,"
-            " SUM(CASE WHEN status IN ('done','cancelled') THEN 1 ELSE 0 END) AS closed"
-            " FROM biz_todo WHERE parent_id = ? AND is_deleted = 0",
-            (pk,),
-        ).fetchone()
-        total = int(row["total"] or 0)
-        return total > 0 and int(row["closed"] or 0) == total
-
     def child_progress(self, pk: int) -> tuple[int, int]:
         row = self.conn.execute(
             "SELECT COUNT(*) AS total,"

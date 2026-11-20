@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test'
 import { api, data, getSeed, attachHealth, assertHealthy } from './helpers'
 
 test('跨项目直达详情 URL 不泄露别项目数据', async ({ page }) => {
-  const seed = await getSeed()
+  await getSeed()
   const other = data(await api('POST', '/projects', {
     code: `E2E-SCOPE-${Date.now()}`, name: 'E2E 跨项目项目',
   }))

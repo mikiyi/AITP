@@ -894,7 +894,7 @@ def create_backup() -> Response:
     conn = db()
     try:
         info = backup_service.create(conn)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         _notify_backup_failure(conn, str(exc))
         raise
     audit(conn, audit_service.AUDIT_ACTION_BACKUP, audit_service.RESOURCE_DB_BACKUP, None,
@@ -908,7 +908,7 @@ def create_bundle_backup() -> Response:
     conn = db()
     try:
         info = backup_service.create_bundle(conn)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         _notify_backup_failure(conn, str(exc))
         raise
     audit(conn, audit_service.AUDIT_ACTION_BACKUP, audit_service.RESOURCE_DB_BACKUP, None,

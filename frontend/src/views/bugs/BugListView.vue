@@ -134,6 +134,11 @@ import { BUG_SEVERITY_OPTIONS } from '@/constants/enums'
 import { bugApi, moduleApi, projectVersionApi } from '@/api'
 import type { Bug, ModuleOption } from '@/api/types'
 import { useProjectScope } from '@/composables/useProjectScope'
+import {
+  useProjectExtraQuery,
+  useProjectModuleOptions,
+  useProjectVersionOptions,
+} from '@/composables/useProjectOptions'
 import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
@@ -194,31 +199,9 @@ const bugTypeOptions = [
   { label: '其他', value: 'other' },
 ]
 
-const moduleOptions = ref<ModuleOption[]>([])
-
-const extraQuery = computed(() => ({
-  projectId: appStore.currentProjectId ?? undefined,
-}))
-
-/** 当前项目下的版本清单，供版本下拉筛选。 */
-const versionOptions = ref<Array<{ label: string; value: number }>>([])
-
-async function loadVersionOptions(): Promise<void> {
-  const pid = appStore.currentProjectId
-  if (!pid) {
-    versionOptions.value = []
-    return
-  }
-  try {
-    const result = await projectVersionApi.list(pid)
-    versionOptions.value = result.list.map((v) => ({
-      label: v.versionCode,
-      value: v.id as number,
-    }))
-  } catch {
-    versionOptions.value = []
-  }
-}
+const extraQuery = useProjectExtraQuery()
+const { moduleOptions, loadModuleOptions } = useProjectModuleOptions()
+const { versionOptions, loadVersionOptions } = useProjectVersionOptions()
 
 const columns: ColumnDef[] = [
   { prop: 'bugNo', label: '编号', width: 100 },
@@ -444,22 +427,9 @@ async function batchRemove(rows: Record<string, any>[]): Promise<void> {
   }
 }
 
-async function loadOptions(): Promise<void> {
-  const projectId = appStore.currentProjectId
-  if (!projectId) {
-    moduleOptions.value = []
-    return
-  }
-  try {
-    moduleOptions.value = await moduleApi.options(projectId, true)
-  } catch {
-    moduleOptions.value = []
-  }
-}
-
 useProjectScope({
   load: () => {
-    void loadOptions()
+    void loadModuleOptions()
     void loadVersionOptions()
   },
   // 旧项目的版本筛选在新项目里不存在，留着会把列表筛成空。

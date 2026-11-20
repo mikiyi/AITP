@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import threading
-import time
 from contextlib import contextmanager
 from typing import Any, Callable, Iterator
 
@@ -131,5 +130,5 @@ def _host_of(url: str) -> str:
 
         parsed = urlparse(url)
         return f"{parsed.hostname}:{parsed.port}" if parsed.port else (parsed.hostname or url)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return url

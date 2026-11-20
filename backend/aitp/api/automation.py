@@ -19,25 +19,7 @@ from ..common.automation_frameworks import default_for, framework_codes, normali
 from ..common.validators import check_choice, optional_str, require_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
-from ..repositories.automation_repo import (
-    CATEGORY_API,
-    CATEGORY_APP,
-    CATEGORY_LABEL,
-    CATEGORY_PERFORMANCE,
-    CATEGORY_SUFFIX,
-    CATEGORY_WEB,
-    MATCH_MODE_CASE_NO,
-    MATCH_MODES,
-    RUN_MODES,
-    RUN_MODE_JMETER,
-    SCRIPT_CATEGORIES,
-    SCRIPT_STATUSES,
-    SCRIPT_STATUS_DISABLED,
-    AutomationRunRepository,
-    AutomationScriptRepository,
-    run_summary,
-    script_summary,
-)
+from ..repositories.automation_repo import CATEGORY_API, CATEGORY_APP, CATEGORY_LABEL, CATEGORY_PERFORMANCE, CATEGORY_SUFFIX, CATEGORY_WEB, MATCH_MODE_CASE_NO, MATCH_MODES, RUN_MODE_JMETER, SCRIPT_CATEGORIES, SCRIPT_STATUSES, SCRIPT_STATUS_DISABLED, AutomationRunRepository, AutomationScriptRepository, run_summary, script_summary
 from ..repositories.script_asset_repo import AutomationScriptVersionRepository, UiElementRepository
 from ..services import nav_badge_service
 from ..services import (
@@ -280,10 +262,11 @@ def _check_test_run(conn: sqlite3.Connection, value: Any) -> int | None:
 
 @bp.get("/categories")
 def list_categories() -> Response:
-    """四类脚本的目录说明与数量统计，前端用它渲染四个二级菜单。"""
+    """四类脚本的目录说明与数量统计，前端用它渲染四个二级菜单；统计按当前项目收敛。"""
     conn = db()
-    script_counts = AutomationScriptRepository(conn).count_by_category()
-    run_stats = AutomationRunRepository(conn).stats_by_category()
+    project_id = scope_arg()
+    script_counts = AutomationScriptRepository(conn).count_by_category(project_id)
+    run_stats = AutomationRunRepository(conn).stats_by_category(project_id)
     items = []
     for category in SCRIPT_CATEGORIES:
         items.append({
@@ -387,9 +370,9 @@ def create_script() -> Response:
     data = body()
     category = _category_of(data)
     name = require_str(data.get("name"), "name", 200)
+    project_id = require_project(conn, require_int(data.get("projectId"), "projectId"))
     payload = _write_payload(data)
-    if payload.get("project_id"):
-        require_project(conn, int(payload["project_id"]))
+    payload["project_id"] = project_id
     _check_framework(category, payload)
     _check_refs(conn, payload)
     _check_env(conn, payload)
@@ -461,6 +444,59 @@ def delete_script(pk: str) -> Response:
     audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_AUTOMATION_SCRIPT,
           target, str(row.get("name") or ""), {"scriptNo": row.get("script_no")})
     return ok({"id": target, "deleted": True})
+
+
+@bp.post("/scripts/<pk>/copy")
+def copy_script(pk: str) -> Response:
+    """复制单条自动化脚本：重新取号、名称加「副本-」前缀并重算文件名，其余配置字段一致。
+
+    运行态字段（last_run_status / last_run_at）不复制；被复制的源脚本必须与当前项目同属。
+    """
+    conn = db()
+    target = path_int(pk)
+    repo = AutomationScriptRepository(conn)
+    row = repo.get(target)
+    if row is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "脚本不存在")
+    guard_project_scope(row, scope_arg(), "自动化脚本")
+    category = str(row.get("category") or "web")
+    name = (f"副本-{row.get('name') or ''}")[:200]
+    src_no = str(row.get("script_no") or "")
+    ai = src_no.startswith("AI_")
+    payload: dict[str, Any] = {
+        "script_no": repo.next_script_no(category, ai=ai),
+        "name": name,
+        "category": category,
+        "target_type": row.get("target_type") or "",
+        "framework": row.get("framework") or "",
+        "language": row.get("language") or "",
+        "app_platforms": row.get("app_platforms") or "",
+        "project_id": row.get("project_id"),
+        "module_id": row.get("module_id"),
+        "description": row.get("description") or "",
+        "file_name": _file_name_of(category, name),
+        "content": row.get("content") or "",
+        "source": row.get("source") or "manual",
+        "run_mode": row.get("run_mode") or "script",
+        "entry_command": row.get("entry_command") or "",
+        "timeout_seconds": row.get("timeout_seconds"),
+        "status": row.get("status") or "ready",
+        "remark": row.get("remark") or "",
+        "version_id": row.get("version_id"),
+        "case_match_mode": row.get("case_match_mode") or MATCH_MODE_CASE_NO,
+        "case_match_value": row.get("case_match_value") or "",
+        "pre_db_refs": row.get("pre_db_refs") or "[]",
+        "post_db_refs": row.get("post_db_refs") or "[]",
+        "db_assert_refs": row.get("db_assert_refs") or "[]",
+    }
+    new_id = repo.insert(payload)
+    commit(conn)
+    new_row = repo.get(new_id) or {}
+    audit(conn, audit_service.AUDIT_ACTION_CREATE, audit_service.RESOURCE_AUTOMATION_SCRIPT,
+          new_id, str(new_row.get("name") or ""),
+          {"scriptNo": new_row.get("script_no"), "category": category,
+           "copyOf": row.get("script_no")})
+    return ok(script_summary(new_row))
 
 
 # ---------------- P1 #7 脚本版本 / 差异 / 评审 ----------------
@@ -829,8 +865,8 @@ def create_from_output() -> Response:
         raise AppError(ErrorCode.PARAM_ERROR, "产出里没有可入库的代码内容")
 
     payload = _write_payload(data)
-    if payload.get("project_id"):
-        require_project(conn, int(payload["project_id"]))
+    project_id = require_project(conn, require_int(data.get("projectId"), "projectId"))
+    payload["project_id"] = project_id
     if not str(payload.get("framework") or "").strip():
         # AI 产出未带框架时按类别落默认框架，避免列表「框架」列空着
         payload["framework"] = default_for(category, normalize_platforms(payload.get("app_platforms")))

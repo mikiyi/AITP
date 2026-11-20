@@ -12,7 +12,7 @@ from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.base import dumps, loads
 from ..repositories.test_plan_repo import PLAN_STATUSES, TestPlanRepository, plan_summary
-from ..repositories.test_run_repo import TestRunRepository, run_summary
+from ..repositories.test_run_repo import run_summary
 from ..services import audit_service, test_run_service
 from ..services import test_round_service
 from .helpers import (

@@ -9,9 +9,6 @@ def utcnow_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
-def localnow_iso() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
 
 def parse_iso(value: str) -> datetime | None:
     text = (value or "").strip()

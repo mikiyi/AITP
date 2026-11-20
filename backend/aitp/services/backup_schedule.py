@@ -372,7 +372,7 @@ def run_due_once(db_path: Path, *, now: datetime | None = None) -> dict[str, Any
         conn.commit()
         try:
             task = _submit(conn, trigger="schedule", now=current)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             _record(
                 conn,
                 status=STATUS_FAILED,
@@ -395,7 +395,7 @@ def submit_now(conn: sqlite3.Connection, *, now: datetime | None = None) -> dict
     conn.commit()
     try:
         return _submit(conn, trigger="manual", now=current)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         _set(conn, CONFIG_LAST_STATUS, STATUS_FAILED)
         _set(conn, CONFIG_LAST_MESSAGE, f"手动备份任务提交失败：{exc}")
         conn.commit()
@@ -478,7 +478,7 @@ def run_auto_backup(
             "retentionRemoved": removed,
             "nextRunAt": _fmt(next_run),
         }
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         conn.rollback()
         message = f"自动备份失败：{type(exc).__name__}: {exc}"
         _record(

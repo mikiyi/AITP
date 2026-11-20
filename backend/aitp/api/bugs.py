@@ -7,7 +7,7 @@ from typing import Any
 from flask import Blueprint, Response, request
 
 from ..common.enums import BUG_RELATION, BUG_SEVERITY, BUG_STATUS, BUG_TYPE
-from ..common.validators import check_choice, optional_int, optional_str, require_int, require_str
+from ..common.validators import check_choice, optional_str, require_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.base import dumps, loads

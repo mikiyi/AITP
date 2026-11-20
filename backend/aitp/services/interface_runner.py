@@ -20,9 +20,6 @@ import re
 import socket
 import sqlite3
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from typing import Any, Callable
 
 from ..common.time_utils import utcnow_iso
@@ -44,6 +41,10 @@ from . import (
     execution_protocol,
     test_run_service,
 )
+
+import urllib.error
+import urllib.parse
+import urllib.request
 
 DEFAULT_TIMEOUT = 10
 MAX_TIMEOUT = 60
@@ -1350,22 +1351,3 @@ def execution_summary(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def latest_execution(
-    conn: sqlite3.Connection, *, run_case_id: int | None = None,
-    case_id: int | None = None,
-) -> dict[str, Any] | None:
-    if run_case_id is not None:
-        row = conn.execute(
-            "SELECT * FROM biz_interface_execution WHERE run_case_id = ?"
-            " ORDER BY id DESC LIMIT 1",
-            (run_case_id,),
-        ).fetchone()
-    elif case_id is not None:
-        row = conn.execute(
-            "SELECT * FROM biz_interface_execution WHERE case_id = ?"
-            " ORDER BY id DESC LIMIT 1",
-            (case_id,),
-        ).fetchone()
-    else:
-        return None
-    return execution_summary(dict(row)) if row else None

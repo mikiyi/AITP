@@ -369,9 +369,6 @@ LAB_CAPABILITIES: tuple[str, ...] = (
 LAB_EXTENDED_CAPABILITIES: tuple[str, ...] = ()
 
 
-def is_known(capability: str) -> bool:
-    return capability in CAPABILITIES
-
 
 def label_of(capability: str) -> str:
     spec = CAPABILITIES.get(capability)

@@ -133,7 +133,7 @@ def main() -> int:
         idle_script = api.data("POST", "/api/v1/automation/scripts", {
             "projectId": pid, "name": "无引用脚本", "category": "web", "content": "print(1)",
         })
-        api.data("POST", "/api/v1/api-scenarios", {
+        src_scn = api.data("POST", "/api/v1/api-scenarios", {
             "projectId": pid, "name": "引用自动化脚本的场景", "scenarioType": "web",
             "steps": [
                 {"name": "接口步", "type": "interface",
@@ -141,6 +141,8 @@ def main() -> int:
                 {"name": "脚本步", "type": "automation", "scriptNo": used_script["scriptNo"]},
             ],
         })
+        # 复制场景同样带着 automation 步骤，必须一起计入被引用编号库
+        copy_scn = api.data("POST", f"/api/v1/api-scenarios/{src_scn['id']}/copy", {})
         # 反向对照：只建脚本调度不应再点亮「已被引用」
         api.data("POST", "/api/v1/schedules", {
             "projectId": pid, "name": "脚本调度", "targetType": "script",
@@ -149,9 +151,14 @@ def main() -> int:
         scripts = api.data("GET", f"/api/v1/automation/scripts?projectId={pid}&category=web")["list"]
         used_item = next(s for s in scripts if s["id"] == used_script["id"])
         idle_item = next(s for s in scripts if s["id"] == idle_script["id"])
+        used_ref_nos = {str(r.get("refNo") or "") for r in used_item.get("refs") or []}
         check("被场景 automation 步骤引用的脚本判为已被引用且 refs 带 SCN 编号",
               used_item["referenced"] is True
-              and any(str(r.get("refNo") or "").startswith("SCN-") for r in used_item.get("refs") or []),
+              and any(no.startswith("SCN-") for no in used_ref_nos),
+              str(used_item.get("refs"))[:200])
+        check("复制出来的场景也计入被引用编号库",
+              str(src_scn["scenarioNo"]) in used_ref_nos
+              and str(copy_scn["scenarioNo"]) in used_ref_nos,
               str(used_item.get("refs"))[:200])
         check("只有调度引用的脚本未被引用（调度与执行记录都不算）",
               idle_item["referenced"] is False and not idle_item.get("refs"),

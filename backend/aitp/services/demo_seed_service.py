@@ -146,7 +146,7 @@ def _clear_demo_rows(conn: sqlite3.Connection, project_ids: list[int]) -> list[s
         _del(f"DELETE FROM biz_project_version WHERE project_id IN ({marks})", project_ids)  # noqa: S608
         _del(f"DELETE FROM biz_project WHERE id IN ({marks})", project_ids)  # noqa: S608
         conn.commit()
-    except Exception:
+    except Exception:  # noqa: BLE001
         conn.rollback()
         raise
     finally:
@@ -218,7 +218,7 @@ def _drop_stale_mirror_files(conn: sqlite3.Connection, stale: list[str]) -> None
     for relative in stale:
         try:
             target = knowledge_storage.safe_join(root, relative)
-        except Exception:
+        except Exception:  # noqa: BLE001
             continue
         if target.exists():
             target.unlink()

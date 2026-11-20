@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import pathlib
 import shutil
@@ -38,6 +37,7 @@ from aitp.errors import AppError, ErrorCode  # noqa: E402
 from aitp.services import db_checkpoint_service as dbs  # noqa: E402
 from flask import Flask  # noqa: E402
 from werkzeug.test import TestResponse  # noqa: E402
+import importlib.util
 
 JsonDict = dict[str, Any]
 _passed = 0

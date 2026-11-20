@@ -691,7 +691,7 @@ def run_organize(conn: sqlite3.Connection, task: dict[str, Any],
             "taskId": task_id,
         })
         return summary
-    except Exception:
+    except Exception:  # noqa: BLE001
         # 整理过程整体事务化；失败要把状态退回「待自动整理」，否则按钮永远卡在执行中
         conn.rollback()
         _reset_state(conn, ORGANIZE_PENDING)

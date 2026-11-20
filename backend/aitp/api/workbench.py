@@ -18,10 +18,7 @@ from ..repositories.bug_repo import BugRepository
 from ..repositories.case_execution_repo import CaseExecutionRepository
 from ..repositories.knowledge_draft_repo import KnowledgeDraftRepository
 from ..repositories.knowledge_repo import KnowledgeRepository
-from ..repositories.module_repo import ModuleRepository
 from ..repositories.project_repo import ProjectRepository
-from ..repositories.report_repo import ReportRepository
-from ..repositories.requirement_repo import RequirementRepository
 from ..repositories.test_case_repo import TestCaseRepository
 from ..repositories.workbench_entry_repo import (
     ENTRY_PUBLISHED,

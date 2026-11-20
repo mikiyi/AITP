@@ -145,11 +145,6 @@ def update_settings(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str,
     return get_settings(conn)
 
 
-def _due_rows(conn: sqlite3.Connection, data_type: str, cutoff: str) -> list[dict[str, Any]]:
-    """到期且未被引用的行 + 被引用跳过的行，分别在 preview/cleanup 里计数。"""
-    rows, _ = _due_rows_with_protected(conn, data_type, cutoff)
-    return rows
-
 
 def _due_rows_with_protected(
     conn: sqlite3.Connection, data_type: str, cutoff: str

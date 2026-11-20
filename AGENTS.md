@@ -11,9 +11,9 @@
 最小验证集（按改动范围选择，但 E2E 冒烟必跑；在项目 venv 内执行）：
 
 ```bash
-# 1) 类型（前后端）
-cd frontend && npx vue-tsc --noEmit
-python -m mypy --config-file mypy.ini backend/aitp backend/scripts
+# 1) 类型（前后端 + e2e 用例）
+cd frontend && npx vue-tsc --noEmit && npx tsc -p tsconfig.e2e.json --noEmit
+cd .. && python -m mypy --config-file mypy.ini backend/aitp backend/scripts
 
 # 2) 确定性门禁（不烧模型额度；check_ai_live 已被 runner 排除）
 python backend/scripts/run_all_checks.py

@@ -51,7 +51,8 @@
         </template>
         <template #actions="{ row }">
           <el-button link type="primary" @click.stop="openEdit(row)">编辑</el-button>
-          <el-button link type="success" @click.stop="run(row)">执行</el-button>
+          <el-button link type="warning" @click.stop="copy(row)">复制</el-button>
+          <el-button link type="success" :loading="running" :disabled="running" @click.stop="run(row)">执行</el-button>
           <el-button link type="danger" @click.stop="remove(row)">删除</el-button>
         </template>
       </BaseProTable>
@@ -120,6 +121,11 @@
           />
           <p class="muted" style="font-size: 12px; margin-top: 6px">
             断言场景走只读路径；执行前预处理 / 执行后处理走写路径（支持 MySQL/PostgreSQL 协议族、达梦、SQLite；非关系库写路径开发中）。
+          </p>
+          <p class="env-hint">
+            变量用法：SQL 里用 <code class="text-mono" v-pre>{{变量名}}</code> 引用，例：
+            <code class="text-mono" v-pre>select * from orders where id = {{orderId}} and status = '{{status}}'</code>；
+            在下方「变量」区逐行定义默认值（变量名 + 默认值），执行时可由调用方传值覆盖。
           </p>
         </el-form-item>
         <el-form-item label="变量">
@@ -203,7 +209,7 @@ const columns: ColumnDef[] = [
   { prop: 'envName', label: '绑定环境', width: 130 },
   { prop: 'referenced', label: '是否被引用', width: 110, align: 'center', slot: 'referenced' },
   { prop: 'status', label: '状态', width: 80, slot: 'status' },
-  { prop: 'actions', label: '操作', width: 180, slot: 'actions' },
+  { prop: 'actions', label: '操作', width: 230, slot: 'actions' },
 ]
 
 const searchFields: SearchField[] = [
@@ -243,9 +249,10 @@ const fetcher = async (params: Record<string, unknown>) => {
 
 async function reload(): Promise<void> {
   loading.value = true
+  // 先刷列表，环境下拉随后补齐，保存/删除后表格能更快看到结果
+  tableRef.value?.load()
   try {
     await loadEnvs()
-    tableRef.value?.load()
   } finally {
     loading.value = false
   }
@@ -307,9 +314,13 @@ async function save(): Promise<void> {
     ElMessage.warning('请填写脚本名称')
     return
   }
-  const cleanVars = form.variables.filter((v) => v.name.trim())
-  if (cleanVars.some((v) => !v.name.trim())) return
-  const names = cleanVars.map((v) => v.name.trim())
+  const blankNameIndex = form.variables.findIndex((v) => !v.name.trim())
+  if (blankNameIndex >= 0) {
+    ElMessage.warning(`第 ${blankNameIndex + 1} 个变量缺少变量名（不需要可点「移除」）`)
+    return
+  }
+  const cleanVars = form.variables.map((v) => ({ name: v.name.trim(), value: v.value }))
+  const names = cleanVars.map((v) => v.name)
   if (new Set(names).size !== names.length) {
     ElMessage.warning('变量名不能重复')
     return
@@ -361,6 +372,22 @@ async function remove(row: SqlScript): Promise<void> {
   }
 }
 
+const copying = ref(false)
+
+async function copy(row: SqlScript): Promise<void> {
+  if (copying.value) return
+  copying.value = true
+  try {
+    const copyRow = await sqlScriptApi.copy(row.id)
+    ElMessage.success(`已复制：${copyRow.scriptNo}（${copyRow.name}）`)
+    await reload()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '复制失败')
+  } finally {
+    copying.value = false
+  }
+}
+
 async function batchRemove(rows: SqlScript[]): Promise<void> {
   try {
     await ElMessageBox.confirm(`确认删除 ${rows.length} 条数据库脚本？`, '批量删除', { type: 'warning' })
@@ -384,6 +411,9 @@ const lastResult = ref<SqlScriptResult | null>(null)
 const running = ref(false)
 
 async function run(row: SqlScript): Promise<void> {
+  if (running.value) {
+    return
+  }
   if (!row.envId) {
     ElMessage.warning('脚本未绑定执行环境，无法执行')
     return
@@ -442,5 +472,11 @@ onMounted(reload)
   color: var(--el-color-danger);
   white-space: pre-wrap;
   word-break: break-all;
+}
+.env-hint {
+  width: 100%;
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 </style>

@@ -7,12 +7,12 @@ TestLink 自身不管理缺陷（缺陷在 Jira/Mantis 等外部跟踪器），�
 
 from __future__ import annotations
 
-import xmlrpc.client
 from typing import Any
 
 import httpx
 
 from ...errors import AppError, ErrorCode
+import xmlrpc.client
 
 DEFAULT_PATHS: dict[str, str] = {"xmlrpc": "/lib/api/xmlrpc.php"}
 

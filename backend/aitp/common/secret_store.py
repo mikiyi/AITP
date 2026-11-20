@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import ctypes
-import ctypes.util
 import json
 import os
 import platform
@@ -24,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from .security import decrypt, encrypt, get_or_create_secret_key
+import ctypes.util
 
 # ctypes.WinDLL / get_last_error 只存在于 Windows：反射取出来，macOS / Linux 上的
 # mypy --strict 才不会把它们判成「模块无此属性」；调用点都由 sys.platform 把关。
@@ -48,7 +48,7 @@ def atomic_write_bytes(path: Path, data: bytes, mode: int = 0o600) -> None:
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
-    except BaseException:
+    except BaseException:  # noqa: BLE001
         try:
             tmp.unlink()
         except OSError:

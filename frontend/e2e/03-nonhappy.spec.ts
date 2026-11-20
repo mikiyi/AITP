@@ -1,8 +1,8 @@
 /** 非快乐路径：刷新/后退、空数据、超大量、表单边界、生产确认统一（BUG-3）。 */
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Locator, type Page } from '@playwright/test'
 import { api, data, getSeed, attachHealth, assertHealthy } from './helpers'
 
-const btn = (page: Page, name: string | RegExp) => page.getByRole('button', { name }).first()
+const btn = (scope: Page | Locator, name: string | RegExp) => scope.getByRole('button', { name }).first()
 
 test('刷新与浏览器后退不丢状态/不白屏', async ({ page }) => {
   const seed = await getSeed()
@@ -17,7 +17,7 @@ test('刷新与浏览器后退不丢状态/不白屏', async ({ page }) => {
 })
 
 test('空数据项目显示空态而非报错', async ({ page }) => {
-  const p = data(await api('POST', '/projects', { code: `EMPTY${Date.now()}`, name: '空项目' }))
+  data(await api('POST', '/projects', { code: `EMPTY${Date.now()}`, name: '空项目' }))
   const h = attachHealth(page)
   await page.goto('/test-cases')
   // 切到空项目

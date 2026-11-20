@@ -146,9 +146,6 @@ class ExecutionResult:
             "executedAt": self.executed_at,
         }
 
-    def failed_assertions(self) -> list[dict[str, Any]]:
-        return [item for item in self.assertions if not item.get("passed")]
-
 
 # --------------------------------------------------------------------- 工具
 

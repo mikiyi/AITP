@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 from typing import Any, cast
 
-from flask import Flask, Response, abort, current_app, send_file, send_from_directory
+from flask import Flask, Response, abort, send_file, send_from_directory
 from flask.json.provider import DefaultJSONProvider
 
 from .common.path_safety import is_blocked_name, normalize_relative_path, safe_join
@@ -54,10 +54,6 @@ def _strip_cors_headers(response: Response) -> Response:
     return response
 
 
-def _has_index(static_dir: Path) -> bool:
-    index_file = safe_join(static_dir, "index.html")
-    return index_file is not None and index_file.is_file()
-
 
 def _warm_up_http_client() -> None:
     """预热共享 httpx 客户端。
@@ -70,7 +66,7 @@ def _warm_up_http_client() -> None:
             from .ai.adapters.base import shared_client
 
             shared_client()
-        except Exception as exc:  # pragma: no cover - 预热失败不影响启动
+        except Exception as exc:  # pragma: no cover - 预热失败不影响启动  # noqa: BLE001
             app.logger.warning("http client warm-up failed: %s", exc)  # type: ignore[name-defined]
 
     threading.Thread(target=_run, name="aitp-http-warmup", daemon=True).start()
@@ -273,7 +269,7 @@ def _auto_reindex_knowledge(cfg: AppConfig) -> None:
             return
         result = knowledge_storage.reindex(conn)
         conn.commit()
-    except Exception as exc:  # 索引失败不阻断启动
+    except Exception as exc:  # 索引失败不阻断启动  # noqa: BLE001
         log_deploy_event("reindex", "知识库索引重建失败", error=str(exc))
         return
     finally:

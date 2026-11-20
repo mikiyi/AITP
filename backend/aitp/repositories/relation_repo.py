@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..common.pagination import Page, RowDict, RowList
+from ..common.pagination import Page, RowList
 from .base import BaseRepository
 
 #: 可关联的实体类型
@@ -73,14 +73,6 @@ class EntityRelationRepository(BaseRepository):
                     keyword: str | None = None,
                     page_num: int = 1, page_size: int = 20) -> Page:
         return self.list(filters, keyword, page_num=page_num, page_size=page_size)
-
-    def count_by_type(self, entity_type: str) -> int:
-        row = self.conn.execute(
-            "SELECT COUNT(*) FROM biz_entity_relation WHERE is_deleted = 0"
-            " AND (source_type = ? OR target_type = ?)",
-            (entity_type, entity_type),
-        ).fetchone()
-        return int(row[0])
 
 
 def relation_summary(row: dict[str, Any]) -> dict[str, Any]:

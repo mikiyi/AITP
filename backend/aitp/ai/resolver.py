@@ -95,7 +95,7 @@ def _load_profiles() -> list[dict[str, Any]]:
         return []
     try:
         profiles = _PROFILE_LOADER() or []
-    except Exception:
+    except Exception:  # noqa: BLE001
         return []
     return sort_profiles(profiles)
 
@@ -184,7 +184,7 @@ def _load_secret(ref: str) -> str:
         from ..common.secret_store import get_store
 
         return get_store().get(ref)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return ""
 
 

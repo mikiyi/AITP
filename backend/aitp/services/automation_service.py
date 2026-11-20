@@ -1200,20 +1200,6 @@ def jmeter_exists(conn: sqlite3.Connection) -> bool:
     return bool(command) and Path(command).is_file()
 
 
-def clear_run_artifacts(db_path: Path, keep: int = 50) -> int:
-    """清理历史执行目录，只保留最近 keep 个；返回删除数量。"""
-    runs_dir = automation_root(db_path) / "runs"
-    entries = sorted(
-        (p for p in runs_dir.iterdir() if p.is_dir()),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    removed = 0
-    for old in entries[keep:]:
-        shutil.rmtree(old, ignore_errors=True)
-        removed += 1
-    return removed
-
 
 def require_executable(conn: sqlite3.Connection, category: str, framework: str = "") -> None:
     """执行前的前置检查，不满足直接给可读提示。"""

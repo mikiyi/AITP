@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-from flask import Blueprint, Response, request
+from flask import Blueprint, Response
 
 from ..common.validators import optional_int, require_int, require_str
 from ..envelope import ok

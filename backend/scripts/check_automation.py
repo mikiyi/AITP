@@ -132,6 +132,7 @@ def check_categories(api: Api) -> None:
 
 def check_crud(api: Api) -> None:
     created = api.data("POST", "/api/v1/automation/scripts", {
+        "projectId": api.scope_project_id,
         "name": "登录冒烟",
         "category": "web",
         "framework": "selenium",
@@ -156,6 +157,14 @@ def check_crud(api: Api) -> None:
           str(listed)[:200])
     check("类别统计回填", listed["categoryCounts"]["web"] >= 1, str(listed.get("categoryCounts")))
 
+    # 目录统计必须按项目收敛：另一个项目看不到本项目的脚本数
+    other = api.data("POST", "/api/v1/projects", {"code": "AUTOG2", "name": "统计隔离项目"})
+    other_items = api.data("GET", f"/api/v1/automation/categories?projectId={other['id']}")
+    own_items = api.data("GET", f"/api/v1/automation/categories?projectId={api.scope_project_id}")
+    own_web = next(item for item in own_items if item["category"] == "web")
+    check("目录统计按项目隔离", all(item["scriptCount"] == 0 for item in other_items)
+          and own_web["scriptCount"] >= 1, str(other_items)[:200])
+
     resp, body = api.call("DELETE", f"/api/v1/automation/scripts/{script_id}")
     check("删除脚本成功", body.get("code") == ErrorCode.SUCCESS, str(body))
     resp, body = api.call("GET", f"/api/v1/automation/scripts/{script_id}")
@@ -164,6 +173,7 @@ def check_crud(api: Api) -> None:
 
 def check_python_execution(api: Api) -> None:
     created = api.data("POST", "/api/v1/automation/scripts", {
+        "projectId": api.scope_project_id,
         "name": "执行成功用例", "category": "api", "content": PY_OK,
     })
     script_id = int(created["id"])
@@ -180,6 +190,7 @@ def check_python_execution(api: Api) -> None:
           detail.get("lastRunStatus") == "success", str(detail)[:200])
 
     failed_script = api.data("POST", "/api/v1/automation/scripts", {
+        "projectId": api.scope_project_id,
         "name": "执行失败用例", "category": "web", "content": PY_FAIL,
     })
     result = api.data("POST", f"/api/v1/automation/scripts/{failed_script['id']}/run", {})
@@ -188,6 +199,7 @@ def check_python_execution(api: Api) -> None:
     check("失败脚本带回错误输出", "boom" in str(result.get("stderr") or ""), str(result)[:300])
 
     slow_script = api.data("POST", "/api/v1/automation/scripts", {
+        "projectId": api.scope_project_id,
         "name": "超时用例", "category": "web", "content": PY_SLEEP,
     })
     result = api.data("POST", f"/api/v1/automation/scripts/{slow_script['id']}/run",
@@ -198,6 +210,7 @@ def check_python_execution(api: Api) -> None:
 
 def check_jmeter_guard(api: Api) -> None:
     script = api.data("POST", "/api/v1/automation/scripts", {
+        "projectId": api.scope_project_id,
         "name": "登录压测", "category": "performance",
         "content": "<jmeterTestPlan/>",
     })
@@ -220,6 +233,7 @@ def check_from_output(api: Api) -> None:
 ```
 """
     created = api.data("POST", "/api/v1/automation/scripts/from-output", {
+        "projectId": api.scope_project_id,
         "output": output, "name": "一键入库压测", "category": "performance",
     })
     check("从产出提取 xml 代码块", "<jmeterTestPlan" in str(created.get("content") or ""),
@@ -230,6 +244,7 @@ def check_from_output(api: Api) -> None:
 
     py_output = "说明文字\n\n```python\nprint('from-ai')\n```\n"
     created = api.data("POST", "/api/v1/automation/scripts/from-output", {
+        "projectId": api.scope_project_id,
         "output": py_output, "name": "一键入库用例", "category": "web",
     })
     check("从产出提取 python 代码块", "from-ai" in str(created.get("content") or ""),
@@ -238,6 +253,7 @@ def check_from_output(api: Api) -> None:
           str(created)[:200])
 
     created = api.data("POST", "/api/v1/automation/scripts/from-output", {
+        "projectId": api.scope_project_id,
         "output": py_output, "name": "一键入库鸿蒙", "category": "app",
         "appPlatforms": "hos",
     })
@@ -246,12 +262,14 @@ def check_from_output(api: Api) -> None:
 
     # AI 实验室一键入库编号带 AI_ 前缀，与人工创建走独立序列
     ai_web = api.data("POST", "/api/v1/automation/scripts/from-output", {
+        "projectId": api.scope_project_id,
         "output": py_output, "name": "AI入库Web", "category": "web", "ai": True,
     })
     check("AI 入库 Web 脚本编号带 AI_AUTO-W 前缀",
           str(ai_web.get("scriptNo") or "").startswith("AI_AUTO-W-"),
           str(ai_web.get("scriptNo")))
     manual_web = api.data("POST", "/api/v1/automation/scripts", {
+        "projectId": api.scope_project_id,
         "name": "人工Web脚本", "category": "web", "content": "print(1)",
     })
     check("人工创建仍走 AUTO-W 序列，不受 AI 编号影响",
@@ -259,6 +277,7 @@ def check_from_output(api: Api) -> None:
           and not str(manual_web.get("scriptNo") or "").startswith("AI_"),
           str(manual_web.get("scriptNo")))
     ai_api = api.data("POST", "/api/v1/automation/scripts/from-output", {
+        "projectId": api.scope_project_id,
         "output": py_output, "name": "AI入库接口", "category": "api", "ai": True,
     })
     check("AI 入库接口脚本编号带 AI_AUTO-I 前缀",
@@ -277,6 +296,79 @@ def check_from_output(api: Api) -> None:
           str(manual_sql.get("scriptNo") or "").startswith("SQL-")
           and not str(manual_sql.get("scriptNo") or "").startswith("AI_"),
           str(manual_sql.get("scriptNo")))
+
+
+def check_copy(api: Api) -> None:
+    """单条复制：新编号唯一且符合序列规则、名称加「副本-」前缀、其余字段一致。"""
+    # 自动化脚本复制
+    src = api.data("POST", "/api/v1/automation/scripts", {
+        "projectId": api.scope_project_id,
+        "name": "复制源脚本", "category": "web", "content": "print('copy-me')",
+        "framework": "playwright", "description": "复制源描述",
+    })
+    copied = api.data("POST", f"/api/v1/automation/scripts/{src['id']}/copy", {})
+    check("自动化脚本复制后编号是新的 AUTO-W 序列",
+          str(copied.get("scriptNo") or "").startswith("AUTO-W-")
+          and str(copied.get("scriptNo") or "") != str(src.get("scriptNo") or ""),
+          str(copied.get("scriptNo")))
+    check("自动化脚本复制名称带副本-前缀",
+          str(copied.get("name") or "").startswith("副本-"), str(copied.get("name")))
+    check("自动化脚本复制其余字段一致（正文/框架/描述）",
+          copied.get("content") == src.get("content")
+          and copied.get("framework") == src.get("framework")
+          and copied.get("description") == src.get("description"),
+          str(copied)[:200])
+    check("自动化脚本复制不继承运行态字段",
+          not copied.get("lastRunStatus") and not copied.get("lastRunAt"),
+          f"lastRunStatus={copied.get('lastRunStatus')} lastRunAt={copied.get('lastRunAt')}")
+
+    # AI 来源脚本复制：编号继续走 AI_ 序列
+    ai_src = api.data("POST", "/api/v1/automation/scripts/from-output", {
+        "projectId": api.scope_project_id,
+        "output": "```python\nprint('ai-copy')\n```\n", "name": "AI复制源", "category": "api",
+        "ai": True,
+    })
+    ai_copied = api.data("POST", f"/api/v1/automation/scripts/{ai_src['id']}/copy", {})
+    check("AI 来源脚本复制编号仍带 AI_AUTO-I 前缀",
+          str(ai_copied.get("scriptNo") or "").startswith("AI_AUTO-I-"),
+          str(ai_copied.get("scriptNo")))
+
+    # 数据库脚本复制
+    sql_src = api.data("POST", "/api/v1/sql-scripts", {
+        "name": "SQL复制源", "content": "SELECT 1", "alias": "copy-alias",
+        "description": "SQL复制描述",
+    })
+    sql_copied = api.data("POST", f"/api/v1/sql-scripts/{sql_src['id']}/copy", {})
+    check("数据库脚本复制后编号是新的 SQL 序列",
+          str(sql_copied.get("scriptNo") or "").startswith("SQL-")
+          and str(sql_copied.get("scriptNo") or "") != str(sql_src.get("scriptNo") or ""),
+          str(sql_copied.get("scriptNo")))
+    check("数据库脚本复制名称带副本-前缀",
+          str(sql_copied.get("name") or "").startswith("副本-"), str(sql_copied.get("name")))
+    check("数据库脚本复制其余字段一致（正文/别称/描述）",
+          sql_copied.get("content") == sql_src.get("content")
+          and sql_copied.get("alias") == sql_src.get("alias")
+          and sql_copied.get("description") == sql_src.get("description"),
+          str(sql_copied)[:200])
+
+    # 场景复制
+    scene_src = api.data("POST", "/api/v1/api-scenarios", {
+        "name": "场景复制源", "projectId": api.scope_project_id,
+        "scenarioType": "api",
+        "steps": [{"name": "登录", "type": "interface",
+                   "extra": {"接口URL": "/login", "方法": "POST"}}],
+    })
+    scene_copied = api.data("POST", f"/api/v1/api-scenarios/{scene_src['id']}/copy", {})
+    check("场景复制后编号是新的 SCN 序列",
+          str(scene_copied.get("scenarioNo") or "").startswith("SCN-")
+          and str(scene_copied.get("scenarioNo") or "") != str(scene_src.get("scenarioNo") or ""),
+          str(scene_copied.get("scenarioNo")))
+    check("场景复制名称带副本-前缀",
+          str(scene_copied.get("name") or "").startswith("副本-"), str(scene_copied.get("name")))
+    check("场景复制步骤与环境一致",
+          scene_copied.get("steps") == scene_src.get("steps")
+          and scene_copied.get("envId") == scene_src.get("envId"),
+          str(scene_copied)[:200])
 
 
 def check_runtime(api: Api) -> None:
@@ -334,6 +426,7 @@ def check_frameworks(api: Api) -> None:
     check("Web 脚本拒绝鸿蒙框架",
           body.get("code") != ErrorCode.SUCCESS, str(body)[:200])
     created = api.data("POST", "/api/v1/automation/scripts", {
+        "projectId": api.scope_project_id,
         "name": "鸿蒙脚本用例", "category": "app", "framework": "hypium",
         "appPlatforms": "hos", "content": "print(1)\n",
     })
@@ -354,6 +447,7 @@ def check_runs_list(api: Api) -> None:
 def check_run_report(api: Api, workdir: pathlib.Path) -> None:
     """执行报告导出：Markdown 下载、概要/输出齐全，性能附 JTL 摘要。"""
     created = api.data("POST", "/api/v1/automation/scripts", {
+        "projectId": api.scope_project_id,
         "name": "报告用例", "category": "api", "framework": "unittest", "content": PY_OK,
     })
     result = api.data("POST", f"/api/v1/automation/scripts/{created['id']}/run", {})
@@ -398,6 +492,7 @@ def check_security(api: Api) -> None:
     """附加参数不得产生 shell 语义；脚本正文不得出现在命令行里。"""
     marker = "SECRET-MARKER-CONTENT"
     created = api.data("POST", "/api/v1/automation/scripts", {
+        "projectId": api.scope_project_id,
         "name": "安全用例", "category": "web",
         "content": f"print('{marker}')\n",
         "entryCommand": "&& echo injected",
@@ -425,6 +520,7 @@ def main() -> int:
         check_python_execution(api)
         check_jmeter_guard(api)
         check_from_output(api)
+        check_copy(api)
         check_runtime(api)
         check_frameworks(api)
         check_runs_list(api)

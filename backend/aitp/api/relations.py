@@ -11,7 +11,6 @@ from flask import Blueprint, Response, request
 
 from ..common.validators import require_int
 from ..envelope import ok
-from ..errors import AppError, ErrorCode
 from ..repositories.relation_repo import (
     ENTITY_TYPES,
     RELATION_TYPES,

@@ -167,11 +167,6 @@ def revoke_all() -> None:
         _sessions.clear()
 
 
-def active_sessions() -> int:
-    with _lock:
-        _purge_expired(time.time())
-        return len(_sessions)
-
 
 # ---------------- 失败限流 ----------------
 

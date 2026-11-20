@@ -70,9 +70,10 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="220">
+        <el-table-column label="操作" width="290">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button link type="warning" @click="copy(row)">复制</el-button>
             <el-button link type="success" :loading="runningId === row.id" @click="run(row)">执行</el-button>
             <el-button link type="danger" @click="remove(row)">删除</el-button>
           </template>
@@ -101,6 +102,13 @@
           <el-input v-model="form.dataSource" type="textarea" :rows="2"
                     placeholder="可选：内联数据、本地 txt/Excel/Json/SQL 路径，或 pool:<数据池名称>；有记录集则逐条跑整个场景" />
         </el-form-item>
+        <p class="env-hint">
+          变量用法：在某步的「提取变量」里填 JSONPath（如 <code class="text-mono" v-pre>data.id</code>）并命名
+          <code class="text-mono" v-pre>orderId</code>，后续步骤用 <code class="text-mono" v-pre>{{orderId}}</code> 引用；例：URL
+          <code class="text-mono" v-pre>{{baseUrl}}/orders/{{orderId}}</code>、请求体
+          <code class="text-mono" v-pre>{"id": "{{orderId}}"}</code>、断言
+          <code class="text-mono" v-pre>json:$.id = {{orderId}}</code>。
+        </p>
         <el-form-item label="步骤">
           <div class="scenario-steps">
             <div v-for="(step, i) in form.steps" :key="i" class="scenario-step">
@@ -510,12 +518,29 @@ async function remove(row: ApiScenario): Promise<void> {
   await reload()
 }
 
+const copying = ref(false)
+
+async function copy(row: ApiScenario): Promise<void> {
+  if (copying.value) return
+  copying.value = true
+  try {
+    const copyRow = await apiScenarioApi.copy(row.id)
+    ElMessage.success(`已复制：${copyRow.scenarioNo}（${copyRow.name}）`)
+    await reload()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '复制失败')
+  } finally {
+    copying.value = false
+  }
+}
+
 onMounted(reload)
 watch(() => appStore.currentProjectId, () => reload())
 </script>
 
 <style scoped>
 .page-hint { margin: 0 0 12px; font-size: 12px; }
+.env-hint { width: 100%; margin: 0 0 12px 90px; font-size: 12px; color: var(--el-text-color-secondary); line-height: 1.7; }
 .scenario-filter { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
 .scenario-steps { width: 100%; display: flex; flex-direction: column; gap: 10px; }
 .scenario-step { border: 1px solid var(--aitp-border); border-radius: 8px; padding: 8px; }

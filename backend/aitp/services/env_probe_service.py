@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import socket
 import time
-import urllib.error
-import urllib.request
 from typing import Any
 
 from ..repositories.test_env_repo import DB_DEFAULT_PORTS
 from . import server_metrics_service
+import urllib.error
+import urllib.request
 
 #: 单项探测的超时秒数；本机探测不该久等
 PROBE_TIMEOUT = 5.0

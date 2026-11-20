@@ -1,8 +1,8 @@
 /** 批量发起测试轮次 + 数据池引用拦截：界面动作必须落到真实业务记录。 */
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Locator, type Page } from '@playwright/test'
 import { api, data, getSeed, attachHealth, assertHealthy } from './helpers'
 
-const btn = (page: Page, name: string | RegExp) => page.getByRole('button', { name }).first()
+const btn = (scope: Page | Locator, name: string | RegExp) => scope.getByRole('button', { name }).first()
 const dialog = (page: Page) => page.locator('.el-dialog:visible').last()
 
 test('用例批量勾选发起轮次：取消不落库，确认后快照条数一致', async ({ page }) => {

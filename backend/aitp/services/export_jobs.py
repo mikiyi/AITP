@@ -125,9 +125,6 @@ def spec_of(resource: str) -> ExportSpec:
     return spec
 
 
-def registered_resources() -> tuple[str, ...]:
-    return tuple(_SPECS)
-
 
 def guard_sync_rows(total: int, submit_path: str) -> None:
     """直连导出的行数闸门：超过扫描上限就让用户改走后台任务，别把请求挂死。"""
@@ -301,7 +298,7 @@ def run_export(
             written = total
             batches = 1
             path.write_bytes(spec.workbook(conn, filters, keyword))
-    except Exception:
+    except Exception:  # noqa: BLE001
         # 半截文件不留，否则用户下载到的是坏文件
         path.unlink(missing_ok=True)
         raise

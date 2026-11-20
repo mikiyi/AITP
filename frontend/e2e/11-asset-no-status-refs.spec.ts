@@ -1,8 +1,8 @@
 /** 资产编号 / 场景状态筛选 / 已被引用悬停浮显引用编号：界面动作必须落到真实业务记录。 */
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Locator, type Page } from '@playwright/test'
 import { api, data, getSeed, attachHealth, assertHealthy } from './helpers'
 
-const btn = (page: Page, name: string | RegExp) => page.getByRole('button', { name }).first()
+const btn = (scope: Page | Locator, name: string | RegExp) => scope.getByRole('button', { name }).first()
 const dialog = (page: Page) => page.locator('.el-dialog:visible').last()
 const rows = (page: Page) => page.locator('.base-pro-table__body .el-table__row')
 const option = (page: Page, text: string) =>
@@ -148,6 +148,33 @@ test('已被引用悬停浮显场景编号，超过 10 个走查看更多弹框'
   assertHealthy(h)
 })
 
+test('复制出来的场景也计入被引用编号库', async ({ page }) => {
+  const seed = await getSeed()
+  const ts = Date.now()
+  const script = data(await api('POST', '/automation/scripts', {
+    projectId: seed.projectId, name: `E2E复制引用脚本${ts}`, category: 'web', content: 'print("ok")',
+  }))
+  const src = data(await api('POST', '/api-scenarios', {
+    projectId: seed.projectId, name: `E2E复制引用场景${ts}`, scenarioType: 'web',
+    steps: [{ name: '脚本步', type: 'automation', scriptNo: script.scriptNo }],
+  }))
+  const copy = data(await api('POST', `/api-scenarios/${src.id}/copy?projectId=${seed.projectId}`, {}))
+  expect(copy.scenarioNo, '副本应有独立 SCN 编号').not.toBe(src.scenarioNo)
+
+  const h = attachHealth(page)
+  await page.goto('/automation/web')
+  await rows(page).first().waitFor({ state: 'visible' })
+  const row = rows(page).filter({ hasText: `E2E复制引用脚本${ts}` }).first()
+  await expect(row).toContainText('已被引用')
+  await row.locator('.ref-refs__tag').hover()
+  const tip = page.locator('.ref-refs__tip')
+  await expect(tip).toBeVisible()
+  const tipText = await tip.innerText()
+  expect(tipText, '原场景要计入引用库').toContain(src.scenarioNo)
+  expect(tipText, '复制出来的场景也要计入引用库').toContain(copy.scenarioNo)
+  assertHealthy(h)
+})
+
 test('场景 automation 步骤保存 scriptNo，缺编号被拒绝', async () => {
   const seed = await getSeed()
   const ts = Date.now()
@@ -169,4 +196,123 @@ test('场景 automation 步骤保存 scriptNo，缺编号被拒绝', async () =>
     steps: [{ name: '空脚本步', type: 'automation' }],
   })
   expect(bad.code, '缺脚本编号应返回业务错误码').not.toBe(200000)
+})
+
+test('自动化脚本单条复制：新编号唯一、名称带副本前缀、其余字段一致', async ({ page }) => {
+  const seed = await getSeed()
+  const ts = Date.now()
+  const src = data(await api('POST', '/automation/scripts', {
+    projectId: seed.projectId, name: `E2E复制源${ts}`, category: 'web',
+    content: 'print("copy-e2e")', framework: 'playwright', description: 'E2E复制描述',
+  }))
+
+  const h = attachHealth(page)
+  await page.goto('/automation/web')
+  await rows(page).first().waitFor({ state: 'visible' })
+  const srcRow = rows(page).filter({ hasText: `E2E复制源${ts}` }).first()
+  await srcRow.getByRole('button', { name: '复制' }).click()
+  await expect(page.locator('.el-message--success').last()).toContainText('已复制')
+
+  const copied = data(await api('GET', `/automation/scripts?projectId=${seed.projectId}&keyword=${encodeURIComponent(`E2E复制源${ts}`)}&pageSize=50`))
+  const hit = (copied.list as { scriptNo: string; name: string; content: string; framework: string }[])
+    .find((s) => s.name.startsWith('副本-') && s.name.includes(`E2E复制源${ts}`))
+  expect(hit, '复制出的脚本应出现在列表').toBeTruthy()
+  expect(hit!.scriptNo, '复制脚本编号是新 AUTO-W 号').toMatch(/^AUTO-W-\d+$/)
+  expect(hit!.scriptNo).not.toBe(src.scriptNo)
+  expect(hit!.content, '正文与源一致').toBe(src.content)
+  expect(hit!.framework, '框架与源一致').toBe(src.framework)
+
+  // 列表页能看到副本行
+  await expect(rows(page).filter({ hasText: `副本-E2E复制源${ts}` }).first()).toBeVisible()
+  assertHealthy(h)
+})
+
+test('数据库脚本与场景单条复制同样生效', async ({ page }) => {
+  const seed = await getSeed()
+  const ts = Date.now()
+  const sql = data(await api('POST', '/sql-scripts', {
+    projectId: seed.projectId, name: `E2E复制SQL${ts}`, content: 'SELECT 1', alias: 'e2e-copy-alias',
+  }))
+  const scn = data(await api('POST', '/api-scenarios', {
+    projectId: seed.projectId, name: `E2E复制场景${ts}`, scenarioType: 'api',
+    steps: [{ name: 's1', type: 'interface', extra: { 请求方式: 'GET', 接口URL: '/api/v1/projects' } }],
+  }))
+
+  const h = attachHealth(page)
+
+  // 数据库脚本页复制
+  await page.goto('/sql-scripts')
+  await rows(page).first().waitFor({ state: 'visible' })
+  const sqlRow = rows(page).filter({ hasText: `E2E复制SQL${ts}` }).first()
+  await sqlRow.getByRole('button', { name: '复制' }).click()
+  await expect(page.locator('.el-message--success').last()).toContainText('已复制')
+  const sqlCopied = data(await api('GET', `/sql-scripts?projectId=${seed.projectId}&keyword=${encodeURIComponent(`E2E复制SQL${ts}`)}&pageSize=50`))
+  const sqlHit = (sqlCopied.list as { scriptNo: string; name: string; content: string; alias: string }[])
+    .find((s) => s.name.startsWith('副本-') && s.name.includes(`E2E复制SQL${ts}`))
+  expect(sqlHit, '复制出的数据库脚本应出现在列表').toBeTruthy()
+  expect(sqlHit!.scriptNo, '复制数据库脚本编号是新 SQL 号').toMatch(/^SQL-\d+$/)
+  expect(sqlHit!.scriptNo).not.toBe(sql.scriptNo)
+  expect(sqlHit!.content, 'SQL 正文与源一致').toBe(sql.content)
+
+  // 场景页复制
+  await page.goto('/automation/scenario')
+  const scenarioRows = page.locator('.panel .el-table__row')
+  await scenarioRows.first().waitFor({ state: 'visible' })
+  const scnRow = scenarioRows.filter({ hasText: `E2E复制场景${ts}` }).first()
+  await scnRow.getByRole('button', { name: '复制' }).click()
+  await expect(page.locator('.el-message--success').last()).toContainText('已复制')
+  const scnCopied = data(await api('GET', `/api-scenarios?projectId=${seed.projectId}&keyword=${encodeURIComponent(`E2E复制场景${ts}`)}&pageSize=50`))
+  const scnHit = (scnCopied.list as { scenarioNo: string; name: string; steps: { type: string }[] }[])
+    .find((s) => s.name.startsWith('副本-') && s.name.includes(`E2E复制场景${ts}`))
+  expect(scnHit, '复制出的场景应出现在列表').toBeTruthy()
+  expect(scnHit!.scenarioNo, '复制场景编号是新 SCN 号').toMatch(/^SCN-\d+$/)
+  expect(scnHit!.scenarioNo).not.toBe(scn.scenarioNo)
+  expect(scnHit!.steps.length, '场景步骤与源一致').toBe(scn.steps.length)
+  assertHealthy(h)
+})
+test('新建自动化脚本默认带框架正文且归属当前项目', async ({ page }) => {
+  const seed = await getSeed()
+  const ts = Date.now()
+  const name = `E2E默认值脚本${ts}`
+  const h = attachHealth(page)
+  await page.goto('/automation/web')
+  await expect(page.locator('.base-pro-table')).toBeVisible()
+  await btn(page, '新建脚本').click()
+  const dlg = dialog(page)
+  await expect(dlg, '新建脚本弹框应打开').toBeVisible()
+  const frameworkSelect = dlg.locator('.el-form-item').filter({ hasText: '框架' }).locator('.el-select').first()
+  await expect(frameworkSelect, '框架下拉应渲染').toBeVisible()
+  const frameworkText = (await frameworkSelect.innerText()).trim()
+  expect(frameworkText.length, '新建应默认选中一个框架').toBeGreaterThan(0)
+  const content = await dlg.locator('textarea').last().inputValue()
+  expect(content.length, '新建应带起步正文').toBeGreaterThan(0)
+  await dlg.getByPlaceholder('例如：登录主流程冒烟').fill(name)
+  await btn(dlg, '保存').click()
+  await expect(dlg).toBeHidden()
+  await expect(rows(page).filter({ hasText: name }), '保存后应出现在当前项目列表').toHaveCount(1)
+  const listed = data(await api('GET', `/automation/scripts?projectId=${seed.projectId}&pageSize=100`))
+  const hit = (listed.list as { name: string; projectId?: number }[]).find((s) => s.name === name)
+  expect(hit, '脚本应归属当前项目，不允许无项目游离').toBeTruthy()
+  assertHealthy(h)
+})
+
+test('定时调度目标从场景/脚本下拉选择', async ({ page }) => {
+  const seed = await getSeed()
+  const ts = Date.now()
+  const script = data(await api('POST', '/automation/scripts', {
+    projectId: seed.projectId, name: `E2E调度目标脚本${ts}`, category: 'web', content: 'print(1)',
+  }))
+  const h = attachHealth(page)
+  await page.goto('/automation/web')
+  await expect(page.locator('.base-pro-table')).toBeVisible()
+  await btn(page, '定时').click()
+  const dlg = dialog(page)
+  await dlg.locator('.el-select').first().click()
+  await option(page, '脚本').click()
+  await dlg.locator('.el-select').nth(1).click()
+  const dropdown = page.locator('.el-select-dropdown:visible').last()
+  await expect(dropdown).toContainText(script.scriptNo)
+  await expect(dropdown, '目标下拉要带名称，不能只给内部 ID').toContainText(`E2E调度目标脚本${ts}`)
+  await page.keyboard.press('Escape')
+  assertHealthy(h)
 })

@@ -108,7 +108,7 @@ def _key_path() -> Path | None:
         from flask import current_app
 
         raw = current_app.config.get("AITP_SECRET_KEY_PATH")
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
     return Path(raw) if raw else None
 

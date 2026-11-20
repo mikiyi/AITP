@@ -43,7 +43,7 @@ def run_execution_matrix(
     except job_queue.TaskCancelled:
         execution_matrix_service.mark_cancelled(conn, matrix_id)
         raise
-    except Exception:
+    except Exception:  # noqa: BLE001
         conn.rollback()
         row = execution_matrix_service.get_matrix(conn, matrix_id)
         if str(row.get("status") or "") == execution_matrix_service.MATRIX_RUNNING:

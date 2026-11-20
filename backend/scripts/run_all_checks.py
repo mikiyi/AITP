@@ -36,9 +36,9 @@ import subprocess
 import sys
 import tempfile
 import time
+from typing import Any, cast
 import urllib.error
 import urllib.request
-from typing import Any, cast
 
 # TextIO 协议没有 reconfigure，只有具体 TextIOWrapper 才有
 cast(Any, sys.stdout).reconfigure(encoding="utf-8", errors="replace")

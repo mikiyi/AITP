@@ -2274,13 +2274,17 @@ async function importToAutomation(category: AutomationCategory): Promise<void> {
     ElMessage.warning('暂无产出')
     return
   }
+  if (!appStore.currentProjectId) {
+    ElMessage.warning('请先选择项目，再加入自动化脚本')
+    return
+  }
   importingScript.value = true
   try {
     const script = await automationApi.createFromOutput({
       output: output.value,
       category,
       name: scriptNameOf(category),
-      projectId: appStore.currentProjectId ?? undefined,
+      projectId: appStore.currentProjectId,
       moduleId: moduleId.value ?? undefined,
       description: values.scenario ?? '',
       framework: category === 'performance' ? 'jmeter' : values.framework ?? '',

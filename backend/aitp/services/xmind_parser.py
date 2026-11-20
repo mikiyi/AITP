@@ -151,6 +151,3 @@ def tree_to_outline_text(nodes: list[Node]) -> str:
     return "\n".join(lines)
 
 
-def subtree_to_outline_text(node: Node) -> str:
-    """单个节点及其后代的缩进大纲文本。"""
-    return tree_to_outline_text([node])

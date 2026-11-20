@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ..common.pagination import RowDict, RowList
+from ..common.pagination import RowDict
 from ..common.security import content_checksum
 from ..common.time_utils import local_stamp, utcnow_iso
 from ..errors import AppError, ErrorCode

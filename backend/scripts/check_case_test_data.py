@@ -194,6 +194,7 @@ def check_execution_consumption(api: Api, workdir: pathlib.Path, project_id: int
         "extra": {"测试数据": '[{"user":"u1","pwd":"p1"},{"user":"u2","pwd":"p2"}]'},
     })
     script = api.data("POST", "/api/v1/automation/scripts", {
+        "projectId": project_id,
         "name": "消费测试数据", "category": "web",
         "caseMatchMode": "case_no", "caseMatchValue": case["caseNo"],
         "content": (

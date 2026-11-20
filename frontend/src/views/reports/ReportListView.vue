@@ -143,6 +143,7 @@ import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import { projectVersionApi, reportApi } from '@/api'
 import type { Report } from '@/api/types'
 import { useProjectScope } from '@/composables/useProjectScope'
+import { useProjectExtraQuery, useProjectVersionOptions } from '@/composables/useProjectOptions'
 import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
@@ -188,23 +189,9 @@ const columns: ColumnDef[] = [
   { prop: 'id', label: '操作', width: 210, slot: 'actions' },
 ]
 
-const extraQuery = computed(() => ({
-  projectId: appStore.currentProjectId ?? undefined,
-}))
+const extraQuery = useProjectExtraQuery()
 
-const versionOptions = ref<Array<{ label: string; value: number }>>([])
-
-async function loadVersionOptions(): Promise<void> {
-  const pid = appStore.currentProjectId
-  if (!pid) { versionOptions.value = []; return }
-  try {
-    const result = await projectVersionApi.list(pid)
-    versionOptions.value = result.list.map((v) => ({
-      label: v.versionCode,
-      value: v.id as number,
-    }))
-  } catch { versionOptions.value = [] }
-}
+const { versionOptions, loadVersionOptions } = useProjectVersionOptions()
 
 useProjectScope({
   load: () => void loadVersionOptions(),

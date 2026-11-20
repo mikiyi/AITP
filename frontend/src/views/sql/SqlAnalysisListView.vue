@@ -124,15 +124,14 @@ import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import { projectVersionApi, sqlAnalysisApi } from '@/api'
 import type { SqlAnalysis } from '@/api/types'
 import { useProjectScope } from '@/composables/useProjectScope'
+import { useProjectExtraQuery, useProjectVersionOptions } from '@/composables/useProjectOptions'
 import { useAppStore } from '@/stores/app'
 
 const appStore = useAppStore()
 const tableRef = ref<TableExpose | null>(null)
 
 /** 列表只展示本页当前项目的分析。 */
-const extraQuery = computed(() => ({
-  projectId: appStore.currentProjectId ?? undefined,
-}))
+const extraQuery = useProjectExtraQuery()
 
 const columns: ColumnDef[] = [
   { prop: 'sqlNo', label: '编号', width: 110 },
@@ -160,19 +159,7 @@ const searchFields = computed<SearchField[]>(() => [
   { prop: 'versionId', label: '版本', type: 'select', options: versionOptions.value },
 ])
 
-const versionOptions = ref<Array<{ label: string; value: number }>>([])
-
-async function loadVersionOptions(): Promise<void> {
-  const pid = appStore.currentProjectId
-  if (!pid) { versionOptions.value = []; return }
-  try {
-    const result = await projectVersionApi.list(pid)
-    versionOptions.value = result.list.map((v) => ({
-      label: v.versionCode,
-      value: v.id as number,
-    }))
-  } catch { versionOptions.value = [] }
-}
+const { versionOptions, loadVersionOptions } = useProjectVersionOptions()
 
 useProjectScope({
   load: () => void loadVersionOptions(),

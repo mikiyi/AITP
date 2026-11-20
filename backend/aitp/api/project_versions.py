@@ -14,7 +14,6 @@ from ..common.enums import PROJECT_VERSION_STATUS
 from ..common.validators import check_choice, optional_int, optional_str, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
-from ..repositories.project_repo import ProjectRepository
 from ..repositories.project_version_repo import ProjectVersionRepository
 from ..services import audit_service
 from .helpers import (

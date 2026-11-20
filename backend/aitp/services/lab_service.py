@@ -37,8 +37,8 @@ from ..ai.output_schema import (
 )
 from ..ai.resolver import resolve_candidates
 from ..ai.safety import build_safety_prompt, mark_review_required, needs_human_review
-from ..ai.types import ChatResult, Message, ResolvedAIConfig, StreamEvent
-from ..common.constants import DEGRADE_EMPTY_OUTPUT, EGRESS_NONE, EGRESS_THIRD_PARTY
+from ..ai.types import Message, ResolvedAIConfig, StreamEvent
+from ..common.constants import DEGRADE_EMPTY_OUTPUT, EGRESS_NONE
 from ..errors import AppError, ErrorCode
 from ..db.connection import get_db
 from ..prompts.registry import get_registry
@@ -240,18 +240,6 @@ def _egress_of(config: ResolvedAIConfig) -> tuple[str, str]:
         return egress, ""
     return egress, EGRESS_WARNING
 
-
-def _finalize_output(text: str, spec: CapabilitySpec) -> tuple[str, Any]:
-    """JSON 能力解析输出；解析失败时返回原文。
-
-    保留给非校验链路（如路由/问答）复用；能力执行走 `_apply_schema`。
-    """
-    if spec.output_format != OUTPUT_JSON:
-        return text, None
-    parsed = extract_json(text)
-    if parsed is None:
-        return text, None
-    return text, parsed
 
 
 def _apply_schema(spec: CapabilitySpec, text: str) -> tuple[str, Any, SchemaReport]:
@@ -1443,7 +1431,7 @@ def route_text(
         capability_routes = normalize_capability_routes(payload.get("routes") or [], top_k)
         if capability_routes:
             source = "ai"
-    except Exception:
+    except Exception:  # noqa: BLE001
         capability_routes = []
     # 关键词命中始终参与排序，避免本地小模型固定回复把真正相关的能力挤掉
     keyword_routes = score_capabilities(text, max(top_k, 6))
@@ -1466,7 +1454,7 @@ def route_text(
             module_routes = normalize_module_routes(payload.get("routes") or [], top_k)
             if module_routes:
                 source = "ai"
-        except Exception:
+        except Exception:  # noqa: BLE001
             module_routes = []
         if not module_routes:
             module_routes = score_modules(text, options, top_k)

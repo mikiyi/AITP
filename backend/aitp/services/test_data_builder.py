@@ -343,7 +343,7 @@ def _payload_image(fmt: FileFormat, target: int) -> BuiltFile:
     buffer = io.BytesIO()
     try:
         image.save(buffer, format=pillow_format)
-    except Exception:
+    except Exception:  # noqa: BLE001
         # Pillow 没有该格式的写出插件，退化成签名填充，仍保证扩展名与大小可控
         built = _payload_bytes(fmt, target)
         note = built.note

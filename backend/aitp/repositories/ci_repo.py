@@ -33,13 +33,6 @@ class CiTokenRepository(BaseRepository):
         ).fetchone()
         return dict(row) if row else None
 
-    def find_by_hash(self, token_hash: str) -> RowDict | None:
-        row = self.conn.execute(
-            "SELECT * FROM sys_ci_token WHERE token_hash = ? AND enabled = 1 LIMIT 1",
-            (token_hash,),
-        ).fetchone()
-        return dict(row) if row else None
-
     def find_by_token_hash(self, token_hash: str) -> RowDict | None:
         """按哈希定位（不看启用/吊销/过期），用于诊断拒绝原因。"""
         row = self.conn.execute(

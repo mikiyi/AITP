@@ -27,9 +27,6 @@ import json
 import os
 import pathlib
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 import uuid
 from typing import Any, cast
 
@@ -40,6 +37,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from aitp.errors import ErrorCode  # noqa: E402
+import urllib.error
+import urllib.parse
+import urllib.request
 
 BASE_URL = os.environ.get("AITP_BASE_URL", "http://127.0.0.1:8760").rstrip("/")
 TOKEN = os.environ.get("AITP_ACCESS_TOKEN", "").strip()

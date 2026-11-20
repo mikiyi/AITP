@@ -906,7 +906,7 @@ def _cjk_font() -> tuple[str, bool, str]:
                 pdfmetrics.registerFont(TTFont(_FONT_NAME, str(path), subfontIndex=0))
             else:
                 pdfmetrics.registerFont(TTFont(_FONT_NAME, str(path)))
-        except Exception:  # 字体损坏、CFF 轮廓或格式不支持时继续尝试下一个
+        except Exception:  # 字体损坏、CFF 轮廓或格式不支持时继续尝试下一个  # noqa: BLE001
             continue
         pdfmetrics.registerFontFamily(
             _FONT_NAME, normal=_FONT_NAME, bold=_FONT_NAME, italic=_FONT_NAME, boldItalic=_FONT_NAME

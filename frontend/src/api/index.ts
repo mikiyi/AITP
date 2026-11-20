@@ -434,6 +434,7 @@ export const apiScenarioApi = {
   create: (body: Record<string, unknown>) => post<ApiScenario>('/api-scenarios', body),
   update: (id: number, body: Record<string, unknown>) => put<ApiScenario>(`/api-scenarios/${id}`, body),
   remove: (id: number) => del(`/api-scenarios/${id}`),
+  copy: (id: number) => post<ApiScenario>(`/api-scenarios/${id}/copy`, {}),
   run: (id: number, body: Record<string, unknown> = {}) =>
     post<ApiScenarioRunResult>(`/api-scenarios/${id}/run`, body),
   runs: (id: number, query: Record<string, unknown> = {}) =>
@@ -840,8 +841,9 @@ export const searchApi = {
 
 /** 自动化脚本资产：web / app / api / performance 四类共用一套接口。 */
 export const automationApi = {
-  /** 四类目录的说明与统计。 */
-  categories: () => get<AutomationCategoryInfo[]>('/automation/categories'),
+  /** 四类目录的说明与统计（按项目收敛）。 */
+  categories: (query: Record<string, unknown> = {}) =>
+    get<AutomationCategoryInfo[]>('/automation/categories', query as never),
   /** 运行时体检：解释器与 JMeter 是否可用。 */
   runtime: () => get<AutomationRuntime>('/automation/runtime'),
   /** 本机解释器体检：每个 Python 装了哪些框架依赖。 */
@@ -865,6 +867,7 @@ export const automationApi = {
   update: (id: number, body: Record<string, unknown>) =>
     put<AutomationScript>(`/automation/scripts/${id}`, body),
   remove: (id: number) => del(`/automation/scripts/${id}`),
+  copy: (id: number) => post<AutomationScript>(`/automation/scripts/${id}/copy`, {}),
   /** P1 #7 版本/差异/评审 */
   versions: (id: number) => get<{ list: { id: number; versionNo: number; changeNote: string; reviewStatus: string; createdAt: string }[] }>(`/automation/scripts/${id}/versions`),
   diff: (id: number, base: string, target: string) => get<{ diff: string[] }>(`/automation/scripts/${id}/diff`, { base, target }),
@@ -915,6 +918,7 @@ export const sqlScriptApi = {
   update: (id: number, body: Record<string, unknown>) =>
     put<SqlScript>(`/sql-scripts/${id}`, body),
   remove: (id: number) => del<{ deleted: boolean; refs: { kind: string; id: number; name: string }[] }>(`/sql-scripts/${id}`),
+  copy: (id: number) => post<SqlScript>(`/sql-scripts/${id}/copy`, {}),
   refs: (id: number) =>
     get<{ refs: { kind: string; id: number; name: string }[] }>(`/sql-scripts/${id}/refs`),
   execute: (id: number, body: { allowWrite?: boolean; variables?: Record<string, string>; timeoutSeconds?: number }) =>

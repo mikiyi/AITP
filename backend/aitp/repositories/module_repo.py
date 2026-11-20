@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 from ..common.pagination import RowDict, RowList
 from ..errors import AppError, ErrorCode
@@ -323,9 +323,3 @@ class ModuleCapabilityRepository(BaseRepository):
             "config_json": dumps(config) if config else None,
         })
 
-    def remove_binding(self, module_id: int, capability: str) -> bool:
-        cursor = self.conn.execute(
-            "DELETE FROM biz_module_ai_capability WHERE module_id = ? AND capability = ?",
-            (module_id, capability),
-        )
-        return cursor.rowcount > 0

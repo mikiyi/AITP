@@ -39,19 +39,6 @@ export function testpointToMindNodes(parsed: unknown): MindNode[] {
   return [{ title: root.name ?? root.title ?? '测试点', children }]
 }
 
-/** 取节点的子树文本（含自身），用于「按节点生成用例」。 */
-export function subtreeText(node: MindNode): string {
-  const lines: string[] = []
-  const walk = (item: MindNode, depth: number): void => {
-    lines.push('  '.repeat(depth) + item.title)
-    for (const child of item.children ?? []) {
-      walk(child, depth + 1)
-    }
-  }
-  walk(node, 0)
-  return lines.join('\n')
-}
-
 /** 按标题路径在树里定位节点。 */
 export function findNodeByPath(nodes: MindNode[], path: string[]): MindNode | null {
   if (!path.length) {

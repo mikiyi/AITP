@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, cast
+from typing import Any
 
-from ..common.pagination import RowDict, RowList
-from ..common.security import content_checksum
+from ..common.pagination import RowList
 from ..db.fts import hybrid_search
 from ..errors import AppError, ErrorCode
 from .base import BaseRepository
@@ -90,12 +89,6 @@ class KnowledgeRepository(BaseRepository):
             params = (int(project_id),)
         return int(self.conn.execute(sql, params).fetchone()[0])
 
-    def count_by_status(self, review_status: str) -> int:
-        return int(self.conn.execute(
-            "SELECT COUNT(*) FROM biz_knowledge_article WHERE is_deleted = 0 AND review_status = ?",
-            (review_status,),
-        ).fetchone()[0])
-
     # ---- 撤销 / 删除 ----
     def revoke(self, pk: int, operator: str = "") -> dict[str, Any]:
         """撤销正式条目。被下游引用时禁止撤销。"""
@@ -134,13 +127,3 @@ class KnowledgeRepository(BaseRepository):
         return self.soft_delete(pk)
 
     # ---- 正文 ----
-    def update_content(self, pk: int, title: str, content: str, **fields: Any) -> bool:
-        payload = {
-            "title": title,
-            "content": content,
-            "content_checksum": content_checksum(content),
-        }
-        for key in ("summary", "category", "tags", "module_id"):
-            if key in fields:
-                payload[key] = fields[key]
-        return self.update(pk, payload)

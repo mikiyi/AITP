@@ -15,10 +15,13 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 from ..errors import AppError, ErrorCode
+
+logger = logging.getLogger(__name__)
 
 MAX_FILE_BYTES = 8 * 1024 * 1024
 MAX_ROWS = 2000
@@ -165,8 +168,9 @@ def resolve(value: str) -> dict[str, Any]:
     if text.startswith(("[", "{")):
         try:
             return _from_json(text, "inline-json", "")
-        except AppError:
-            pass
+        except AppError as exc:
+            # 内联内容可能是 JSON 数组也可能是普通文本：解析失败按文本行回退，留痕便于排查
+            logger.debug("inline json parse failed, fallback to text rows: %s", exc)
     return _from_rows(_text_rows(text), "inline-text", "")
 
 

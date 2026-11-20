@@ -174,7 +174,7 @@ class TestEnvRepository(BaseRepository):
         """只在服务端探测时取用，任何接口都不回显明文。"""
         try:
             return get_store().get(self.password_ref(env_id))
-        except Exception:
+        except Exception:  # noqa: BLE001
             return ""
 
     def app_servers_public(self, env_id: int, row: RowDict | None = None) -> list[dict[str, Any]]:

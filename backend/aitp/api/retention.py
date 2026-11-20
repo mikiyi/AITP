@@ -12,7 +12,7 @@ from typing import Any
 
 from flask import Blueprint, Response, request
 
-from ..common.validators import check_choice, optional_int, optional_str
+from ..common.validators import check_choice
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.archive_repo import ArchiveBundleRepository

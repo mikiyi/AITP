@@ -13,10 +13,9 @@ from typing import Any
 
 from flask import Blueprint, Response, request
 
-from ..common.validators import check_choice, optional_int, optional_str, require_int, require_str
+from ..common.validators import check_choice, optional_str, require_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
-from ..repositories.project_repo import ProjectRepository
 from ..repositories.sql_analysis_repo import (
     RISK_LEVELS,
     SqlAnalysisRepository,

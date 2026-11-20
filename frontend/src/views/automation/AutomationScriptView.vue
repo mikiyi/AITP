@@ -49,7 +49,7 @@
         query-prefix="auto_"
       >
         <template #batch="{ rows }">
-          <el-button type="primary" size="small" @click="batchExecute(rows)">批量后台执行</el-button>
+          <el-button type="primary" size="small" :loading="batchBusy" @click="batchExecute(rows)">批量后台执行</el-button>
         </template>
         <template #name="{ row }">
           <div class="auto-name">
@@ -80,8 +80,9 @@
         </template>
         <template #actions="{ row }">
           <el-button link type="primary" @click.stop="openEdit(row)">编辑</el-button>
-          <el-button link type="success" @click.stop="execute(row)">执行</el-button>
-          <el-button link type="primary" @click.stop="executeAsync(row)">后台</el-button>
+          <el-button link type="warning" @click.stop="copyScript(row)">复制</el-button>
+          <el-button link type="success" :loading="executingId === row.id" :disabled="executingId !== null && executingId !== row.id" @click.stop="execute(row)">执行</el-button>
+          <el-button link type="primary" :disabled="executingId !== null" @click.stop="executeAsync(row)">后台</el-button>
           <el-button link type="success" @click.stop="openKnowledge(row)">加入知识库</el-button>
           <el-button link type="info" @click.stop="openHistory(row)">历史</el-button>
           <el-button link type="warning" @click.stop="openVersions(row)">版本</el-button>
@@ -183,6 +184,13 @@
         </el-form-item>
         <el-form-item label="说明">
           <el-input v-model="form.description" type="textarea" :rows="2" maxlength="500" />
+        </el-form-item>
+        <el-form-item v-if="editingId" label="变更说明">
+          <el-input
+            v-model="form.changeNote"
+            placeholder="本次正文改了什么，评审版本时对照用（可不填）"
+            maxlength="200"
+          />
         </el-form-item>
         <el-form-item :label="category === 'performance' ? 'JMeter 脚本' : '脚本正文'">
           <el-input
@@ -478,11 +486,18 @@
     <el-dialog v-model="scheduleVisible" title="定时调度" width="860px" top="5vh">
       <div class="element-form">
         <el-input v-model="scheduleForm.name" placeholder="调度名" style="width: 140px" />
-        <el-select v-model="scheduleForm.targetType" style="width: 100px">
+        <el-select v-model="scheduleForm.targetType" style="width: 100px" @change="onScheduleTypeChange">
           <el-option label="场景" value="scenario" />
           <el-option label="脚本" value="script" />
         </el-select>
-        <el-input-number v-model="scheduleForm.targetId" :min="1" placeholder="目标ID" style="width: 110px" />
+        <el-select
+          v-model="scheduleForm.targetId"
+          filterable
+          :placeholder="scheduleForm.targetType === 'scenario' ? '选择场景（编号 名称）' : '选择脚本（编号 名称）'"
+          style="width: 260px"
+        >
+          <el-option v-for="item in scheduleTargetOptions" :key="item.id" :label="item.label" :value="item.id" />
+        </el-select>
         <el-input-number v-model="scheduleForm.intervalMinutes" :min="1" style="width: 110px" />
         <span class="muted">分钟</span>
         <el-button type="primary" @click="saveSchedule">添加</el-button>
@@ -490,8 +505,8 @@
       <el-table :data="schedules" size="small" border max-height="300">
         <el-table-column prop="scheduleNo" label="编号" width="100" />
         <el-table-column prop="name" label="名称" min-width="120" />
-        <el-table-column label="目标" width="110">
-          <template #default="{ row }">{{ row.targetType === 'scenario' ? '场景' : '脚本' }}#{{ row.targetId }}</template>
+        <el-table-column label="目标" width="200" show-overflow-tooltip>
+          <template #default="{ row }">{{ scheduleTargetText(row) }}</template>
         </el-table-column>
         <el-table-column prop="intervalMinutes" label="间隔(分)" width="80" />
         <el-table-column label="启用" width="70">
@@ -499,7 +514,9 @@
             <el-switch :model-value="row.enabled" @change="(v: boolean) => toggleSchedule(row, v)" />
           </template>
         </el-table-column>
-        <el-table-column prop="nextRunAt" label="下次运行" min-width="150" show-overflow-tooltip />
+        <el-table-column label="下次运行" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">{{ dateTimeText(row.nextRunAt) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="120">
           <template #default="{ row }">
             <el-button link type="primary" @click="triggerSchedule(row)">立即</el-button>
@@ -534,10 +551,11 @@ import MetricCard from '@/components/MetricCard.vue'
 import ReferenceRefs from '@/components/ReferenceRefs.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
 import ProdConfirmDialog from '@/components/ProdConfirmDialog.vue'
-import { automationApi, sqlScriptApi, testEnvApi, schedulesApi } from '@/api'
+import { automationApi, apiScenarioApi, sqlScriptApi, testEnvApi, schedulesApi } from '@/api'
 import { useAppStore } from '@/stores/app'
 import { dateTimeText } from '@/utils/format'
 import type {
+  ApiScenario,
   AutomationCategory,
   AutomationCategoryInfo,
   AutomationInterpreters,
@@ -599,9 +617,29 @@ const frameworkChoices = computed(() =>
   (runtime.value?.frameworks ?? []).filter((item) => item.targets.includes(category.value)),
 )
 
-const frameworkOptions = computed(() =>
-  frameworkChoices.value.map((item) => ({ label: item.label, value: item.code })),
-)
+/** 运行时体检未返回时的框架中文名兜底，避免下拉短暂露出代码。 */
+const FRAMEWORK_LABELS: Record<string, string> = {
+  selenium: 'Selenium',
+  playwright: 'Playwright',
+  pytest: 'Pytest',
+  requests: 'Requests',
+  unittest: 'Unittest',
+  appium: 'Appium（iOS / Android）',
+  uiautomator2: 'UiAutomator2（Android）',
+  hypium: 'Hypium（鸿蒙 HOS）',
+  jmeter: 'JMeter',
+}
+
+const frameworkOptions = computed(() => {
+  const list = frameworkChoices.value.map((item) => ({ label: item.label, value: item.code }))
+  if (list.length) {
+    return list
+  }
+  return (FRAMEWORK_PREFERENCE[category.value] ?? []).map((code) => ({
+    label: FRAMEWORK_LABELS[code] ?? code,
+    value: code,
+  }))
+})
 
 const selectedFramework = computed(() =>
   frameworkChoices.value.find((item) => item.code === form.framework) ?? null,
@@ -745,7 +783,7 @@ const columns: ColumnDef[] = [
   { prop: 'status', label: '状态', width: 90, slot: 'status' },
   { prop: 'lastRunStatus', label: '最近执行', width: 110, slot: 'lastRunStatus' },
   { prop: 'lastRunAt', label: '最近执行时间', width: 170, slot: 'lastRunAt' },
-  { prop: 'actions', label: '操作', width: 380, slot: 'actions' },
+  { prop: 'actions', label: '操作', width: 440, slot: 'actions' },
 ]
 
 const searchFields = computed<SearchField[]>(() => [
@@ -797,10 +835,16 @@ async function confirmProdEnv(row: AutomationScript): Promise<boolean> {
   return (await prodDialog.value?.open(`脚本绑定的是生产环境「${env.name}」，确认执行？`)) ?? false
 }
 
+const executingId = ref<number | null>(null)
+
 async function execute(row: AutomationScript): Promise<void> {
+  if (executingId.value !== null) {
+    return
+  }
   if (!(await confirmProdEnv(row))) {
     return
   }
+  executingId.value = row.id
   try {
     const result = await automationApi.run(row.id)
     lastRun.value = await automationApi.runDetail(result.id).catch(() => result)
@@ -814,10 +858,17 @@ async function execute(row: AutomationScript): Promise<void> {
     tableRef.value?.reload()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '执行失败')
+  } finally {
+    executingId.value = null
   }
 }
 
+const batchBusy = ref(false)
+
 async function batchExecute(rows: Record<string, unknown>[]): Promise<void> {
+  if (batchBusy.value) {
+    return
+  }
   const scripts = rows as unknown as AutomationScript[]
   if (!scripts.length) {
     return
@@ -833,6 +884,7 @@ async function batchExecute(rows: Record<string, unknown>[]): Promise<void> {
       return
     }
   }
+  batchBusy.value = true
   try {
     const result = await automationApi.batchRun(scripts.map((row) => Number(row.id)))
     ElMessage.success(
@@ -841,19 +893,27 @@ async function batchExecute(rows: Record<string, unknown>[]): Promise<void> {
     tableRef.value?.clearSelection()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '批量执行失败')
+  } finally {
+    batchBusy.value = false
   }
 }
 
 async function executeAsync(row: AutomationScript): Promise<void> {
+  if (executingId.value !== null) {
+    return
+  }
   if (!(await confirmProdEnv(row))) {
     return
   }
+  executingId.value = row.id
   try {
     const result = await automationApi.runAsync(row.id)
     ElMessage.success(`已加入任务队列（#${result.task.id}），可到「任务队列」查看进度`)
     tableRef.value?.reload()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加入队列失败')
+  } finally {
+    executingId.value = null
   }
 }
 
@@ -873,10 +933,51 @@ const form = reactive({
   caseMatchValue: '',
   description: '',
   content: '',
+  changeNote: '',
   preDbRefs: [] as string[],
   postDbRefs: [] as string[],
   dbAssertRefs: [] as string[],
 })
+
+/** 新建时的起步正文：保存即可执行，避免空脚本；性能脚本给最小可运行的 JMeter 计划。 */
+const STARTER_CONTENT: Record<string, string> = {
+  web: '# AITP Web 自动化脚本示例（保存后可直接执行）\n# 需要浏览器操作时，把上方框架切到 Selenium / Playwright 再写用例\nprint("hello from AITP")\n',
+  app: '# AITP App 自动化脚本示例（保存后可直接执行）\n# 真机/模拟器步骤需要先启动 Appium 服务（见页面顶部提示）\nprint("hello from AITP")\n',
+  api: '# AITP 接口自动化脚本示例（保存后可直接执行）\nprint("hello from AITP")\n',
+  performance: `<?xml version="1.0" encoding="UTF-8"?>
+<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
+  <hashTree>
+    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="AITP 性能脚本" enabled="true">
+      <boolProp name="TestPlan.functional_mode">false</boolProp>
+      <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" testname="用户定义的变量" enabled="true">
+        <collectionProp name="Arguments.arguments"/>
+      </elementProp>
+    </TestPlan>
+    <hashTree/>
+  </hashTree>
+</jmeterTestPlan>
+`,
+}
+
+/** 新建时的框架默认值：优先选本机可用的常用框架，避免用户漏选后建出不可运行的脚本。 */
+const FRAMEWORK_PREFERENCE: Record<string, string[]> = {
+  web: ['selenium', 'playwright', 'pytest'],
+  app: ['pytest', 'appium', 'uiautomator2', 'hypium'],
+  api: ['requests', 'pytest', 'unittest'],
+  performance: ['jmeter'],
+}
+
+function defaultFramework(): string {
+  const available = frameworkChoices.value.map((item) => item.code)
+  const preferred = FRAMEWORK_PREFERENCE[category.value] ?? []
+  for (const code of preferred) {
+    if (available.includes(code)) {
+      return code
+    }
+  }
+  // 运行时体检还没回来时也别让框架空着：按类别给静态兜底
+  return available[0] ?? preferred[0] ?? ''
+}
 
 const sqlScriptOptions = ref<SqlScript[]>([])
 
@@ -892,7 +993,7 @@ async function loadSqlScripts(): Promise<void> {
 function openCreate(): void {
   editingId.value = null
   form.name = ''
-  form.framework = ''
+  form.framework = defaultFramework()
   form.runMode = 'script'
   form.entryCommand = ''
   form.timeoutSeconds = runtime.value?.pythonTimeout ?? 300
@@ -900,12 +1001,22 @@ function openCreate(): void {
   form.caseMatchMode = 'case_no'
   form.caseMatchValue = ''
   form.description = ''
-  form.content = ''
+  form.content = STARTER_CONTENT[category.value] ?? ''
+  form.changeNote = ''
   form.preDbRefs = []
   form.postDbRefs = []
   form.dbAssertRefs = []
   void loadSqlScripts()
   editorVisible.value = true
+  if (!runtime.value) {
+    // 弹框立即打开；运行时体检在后台补，回来后框架中文名与可用项自然补齐
+    void automationApi.runtime().then((info) => {
+      runtime.value = info
+      if (!form.framework) {
+        form.framework = defaultFramework()
+      }
+    }).catch(() => undefined)
+  }
 }
 
 async function openEdit(row: AutomationScript): Promise<void> {
@@ -922,6 +1033,7 @@ async function openEdit(row: AutomationScript): Promise<void> {
     form.caseMatchValue = detail.caseMatchValue ?? ''
     form.description = detail.description
     form.content = detail.content
+    form.changeNote = ''
     form.preDbRefs = detail.preDbRefs ?? []
     form.postDbRefs = detail.postDbRefs ?? []
     form.dbAssertRefs = detail.dbAssertRefs ?? []
@@ -940,6 +1052,7 @@ async function saveScript(): Promise<void> {
   saving.value = true
   try {
     const body: Record<string, unknown> = {
+      projectId: appStore.currentProjectId ?? undefined,
       name: form.name.trim(),
       category: category.value,
       framework: form.framework,
@@ -951,6 +1064,7 @@ async function saveScript(): Promise<void> {
       caseMatchValue: form.caseMatchValue.trim(),
       description: form.description,
       content: form.content,
+      changeNote: form.changeNote.trim(),
       preDbRefs: form.preDbRefs,
       postDbRefs: form.postDbRefs,
       dbAssertRefs: form.dbAssertRefs,
@@ -959,6 +1073,10 @@ async function saveScript(): Promise<void> {
       await automationApi.update(editingId.value, body)
       ElMessage.success('已保存')
     } else {
+      if (!appStore.currentProjectId) {
+        ElMessage.warning('请先选择项目')
+        return
+      }
       await automationApi.create(body)
       ElMessage.success('已创建')
     }
@@ -983,6 +1101,22 @@ async function removeScript(row: AutomationScript): Promise<void> {
     await reloadAll()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '删除失败')
+  }
+}
+
+const copying = ref(false)
+
+async function copyScript(row: AutomationScript): Promise<void> {
+  if (copying.value) return
+  copying.value = true
+  try {
+    const copyRow = await automationApi.copy(row.id)
+    ElMessage.success(`已复制：${copyRow.scriptNo}（${copyRow.name}）`)
+    await reloadAll()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '复制失败')
+  } finally {
+    copying.value = false
   }
 }
 
@@ -1074,7 +1208,46 @@ async function removeElement(row: { id: number }): Promise<void> {
 // ---- P2 定时调度 ----
 const scheduleVisible = ref(false)
 const schedules = ref<Record<string, any>[]>([])
-const scheduleForm = reactive({ name: '', targetType: 'scenario', targetId: 1, intervalMinutes: 60 })
+const scheduleForm = reactive({
+  name: '',
+  targetType: 'scenario' as 'scenario' | 'script',
+  targetId: null as number | null,
+  intervalMinutes: 60,
+})
+const scheduleScenarios = ref<ApiScenario[]>([])
+const scheduleScripts = ref<AutomationScript[]>([])
+
+const scheduleTargetOptions = computed(() =>
+  (scheduleForm.targetType === 'scenario' ? scheduleScenarios.value : scheduleScripts.value).map(
+    (item) => {
+      const record = item as unknown as Record<string, unknown>
+      const no = String(record.scenarioNo ?? record.scriptNo ?? '')
+      return { id: Number(item.id), label: `${no} ${item.name}`.trim() }
+    },
+  ),
+)
+
+function scheduleTargetText(row: Record<string, any>): string {
+  const kind = row.targetType === 'scenario' ? '场景' : '脚本'
+  const id = Number(row.targetId)
+  const source = (row.targetType === 'scenario' ? scheduleScenarios.value : scheduleScripts.value) as unknown as Record<string, any>[]
+  const hit = source.find((item) => Number(item.id) === id)
+  const no = String(hit?.scenarioNo ?? hit?.scriptNo ?? '')
+  return no ? `${kind} ${no} ${hit?.name ?? ''}`.trim() : `${kind}#${id}`
+}
+
+function onScheduleTypeChange(): void {
+  scheduleForm.targetId = null
+}
+
+async function loadScheduleTargets(): Promise<void> {
+  const [scenarioPage, scriptPage] = await Promise.all([
+    apiScenarioApi.list({ projectId: appStore.currentProjectId, pageSize: 200 }),
+    automationApi.list({ projectId: appStore.currentProjectId, pageSize: 200 }),
+  ])
+  scheduleScenarios.value = scenarioPage.list ?? []
+  scheduleScripts.value = scriptPage.list ?? []
+}
 
 async function loadSchedules(): Promise<void> {
   schedules.value = (await schedulesApi.list({ projectId: appStore.currentProjectId, pageSize: 100 })).list ?? []
@@ -1082,18 +1255,27 @@ async function loadSchedules(): Promise<void> {
 
 async function openSchedules(): Promise<void> {
   try {
-    await loadSchedules()
+    await Promise.all([loadSchedules(), loadScheduleTargets()])
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载调度失败')
     return
   }
+  Object.assign(scheduleForm, { name: '', targetType: 'scenario', targetId: null, intervalMinutes: 60 })
   scheduleVisible.value = true
 }
 
 async function saveSchedule(): Promise<void> {
   if (!scheduleForm.name.trim()) { ElMessage.warning('调度名必填'); return }
-  await schedulesApi.create({ projectId: appStore.currentProjectId, ...scheduleForm })
+  if (scheduleForm.targetId == null) { ElMessage.warning('请选择调度目标'); return }
+  await schedulesApi.create({
+    projectId: appStore.currentProjectId,
+    name: scheduleForm.name.trim(),
+    targetType: scheduleForm.targetType,
+    targetId: scheduleForm.targetId,
+    intervalMinutes: scheduleForm.intervalMinutes,
+  })
   ElMessage.success('已添加')
+  scheduleForm.name = ''
   await loadSchedules()
 }
 
@@ -1227,8 +1409,12 @@ function mappedByText(mappedBy: string): string {
 }
 
 async function reloadAll(): Promise<void> {
+  // 先刷列表：保存/删除后用户最先看到的是表格，统计与体检信息随后补齐
+  tableRef.value?.reload()
   try {
-    categories.value = await automationApi.categories()
+    categories.value = await automationApi.categories(
+      appStore.currentProjectId ? { projectId: appStore.currentProjectId } : {},
+    )
     runtime.value = await automationApi.runtime()
   } catch {
     // 体检信息拿不到不阻塞主流程，表格自己会提示加载失败
@@ -1243,7 +1429,6 @@ async function reloadAll(): Promise<void> {
   } catch {
     envs.value = []
   }
-  tableRef.value?.reload()
 }
 
 let activatedOnce = false
@@ -1263,6 +1448,14 @@ watch(category, () => {
   tableRef.value?.clearSelection()
   void reloadAll()
 })
+// 切项目后列表、统计、元素与调度目标都要按新项目重取
+watch(
+  () => appStore.currentProjectId,
+  () => {
+    tableRef.value?.clearSelection()
+    void reloadAll()
+  },
+)
 </script>
 
 <style scoped>

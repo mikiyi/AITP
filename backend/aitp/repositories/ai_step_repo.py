@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..common.pagination import RowDict, RowList
+from ..common.pagination import RowList
 from .base import BaseRepository
 
 #: 步骤状态
@@ -45,13 +45,6 @@ class AIStepRepository(BaseRepository):
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def mark_running(self, pk: int, input_summary: str = "") -> bool:
-        return self.update(pk, {
-            "status": STEP_RUNNING,
-            "input_summary": input_summary,
-            "started_at": _now(),
-        })
-
     def mark_success(
         self,
         pk: int,
@@ -77,13 +70,6 @@ class AIStepRepository(BaseRepository):
         if error_code is not None:
             payload["error_code"] = error_code
         return self.update(pk, payload)
-
-    def mark_skipped(self, pk: int, reason: str) -> bool:
-        return self.update(pk, {
-            "status": STEP_SKIPPED,
-            "error_message": reason,
-            "completed_at": _now(),
-        })
 
 
 def _now() -> str:

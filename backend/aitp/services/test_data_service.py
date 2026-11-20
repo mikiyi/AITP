@@ -216,7 +216,7 @@ def generate_files(
                 "note": built.note,
                 "relPath": f"{batch_no}/{name}",
             })
-    except BaseException:
+    except BaseException:  # noqa: BLE001
         # 中途失败不留下半截批次：文件、明细行和批次一起回滚
         shutil.rmtree(batch_dir, ignore_errors=True)
         file_repo.delete_by_batch(batch_id)

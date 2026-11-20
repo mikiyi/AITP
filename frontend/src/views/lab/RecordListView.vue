@@ -132,17 +132,7 @@ function onLoaded(payload: PagePayload<AiRecord>): void {
   stats.rejected = counts?.rejected ?? 0
 }
 
-function riskText(level: string): string {
-  if (level === 'high') return '高风险'
-  if (level === 'low') return '低风险'
-  return '无风险'
-}
-
-function riskTagType(level: string): 'danger' | 'warning' | 'info' {
-  if (level === 'high') return 'danger'
-  if (level === 'low') return 'warning'
-  return 'info'
-}
+import { riskLevelTagType as riskTagType, riskLevelText as riskText } from '@/utils/format'
 
 function reviewText(row: AiRecord): string {
   if (row.reviewStatus === 'approved') return '已采纳'

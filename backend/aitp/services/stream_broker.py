@@ -181,11 +181,6 @@ def _evict_locked() -> None:
         _BUFFERS.pop(task_id, None)
 
 
-def buffered_task_ids() -> list[int]:
-    """当前有缓冲的任务号（门禁断言用，也方便排查「谁还挂着」）。"""
-    with _LOCK:
-        return sorted(_BUFFERS)
-
 
 def shutdown(wait: bool = False) -> None:
     """关闭线程池并清空缓冲：门禁脚本收尾用，避免留下还在跑模型调用的线程。"""
@@ -199,21 +194,3 @@ def shutdown(wait: bool = False) -> None:
         _BUFFERS.clear()
 
 
-def stream_stats() -> dict[str, Any]:
-    """在途/已结束的流式任务计数，给健康检查与门禁断言用。"""
-    with _LOCK:
-        _evict_locked()
-        running = sum(1 for buffer in _BUFFERS.values() if buffer.finished_at is None)
-        finished = sum(1 for buffer in _BUFFERS.values() if buffer.finished_at is not None)
-        frames = sum(len(buffer.frames) for buffer in _BUFFERS.values())
-    with _POOL_LOCK:
-        created = _POOL is not None
-    return {
-        "running": running,
-        "finishedBuffered": finished,
-        "bufferedFrames": frames,
-        "workers": STREAM_WORKERS,
-        "maxActive": MAX_ACTIVE_STREAMS,
-        "intervalMs": POLL_INTERVAL_MS,
-        "poolCreated": created,
-    }

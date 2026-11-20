@@ -110,34 +110,16 @@ import { projectVersionApi, requirementApi } from '@/api'
 import { CASE_PRIORITY_OPTIONS } from '@/constants/enums'
 import type { Requirement } from '@/api/types'
 import { useProjectScope } from '@/composables/useProjectScope'
+import { useProjectExtraQuery, useProjectVersionOptions } from '@/composables/useProjectOptions'
 import { useAppStore } from '@/stores/app'
 
 const appStore = useAppStore()
 
 /** 列表只展示本页当前项目的需求。 */
-const extraQuery = computed(() => ({
-  projectId: appStore.currentProjectId ?? undefined,
-}))
+const extraQuery = useProjectExtraQuery()
 
 /** 列表筛选用的版本清单，跟随本页当前项目。 */
-const versionOptions = ref<Array<{ label: string; value: number }>>([])
-
-async function loadVersionOptions(): Promise<void> {
-  const pid = appStore.currentProjectId
-  if (!pid) {
-    versionOptions.value = []
-    return
-  }
-  try {
-    const result = await projectVersionApi.list(pid)
-    versionOptions.value = result.list.map((v) => ({
-      label: v.versionCode,
-      value: v.id as number,
-    }))
-  } catch {
-    versionOptions.value = []
-  }
-}
+const { versionOptions, loadVersionOptions } = useProjectVersionOptions()
 
 const knowledgeVisible = ref(false)
 const knowledgePayload = reactive({

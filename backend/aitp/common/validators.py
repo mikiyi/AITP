@@ -73,10 +73,6 @@ def parse_page_args(args: Mapping[str, Any]) -> tuple[int, int]:
     return page_num, page_size
 
 
-def parse_order(order: str | None, default: str = "desc") -> str:
-    value = (order or default).lower()
-    return value if value in SORT_ORDERS else default
-
 
 def check_choice(value: str | None, allowed: Iterable[str], field: str, default: str | None = None) -> str | None:
     if value in (None, ""):
@@ -91,15 +87,3 @@ def check_choice(value: str | None, allowed: Iterable[str], field: str, default:
     return text
 
 
-def check_choices(value: str | None, allowed: Iterable[str], field: str) -> list[str]:
-    if value in (None, ""):
-        return []
-    items = [v.strip() for v in str(value).split(",") if v.strip()]
-    allowed_set = set(allowed)
-    for item in items:
-        if item not in allowed_set:
-            raise AppError(
-                ErrorCode.PARAM_ERROR,
-                f"参数 {field} 取值非法：{item}，可选值：{', '.join(sorted(allowed_set))}",
-            )
-    return items

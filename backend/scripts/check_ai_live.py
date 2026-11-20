@@ -18,8 +18,6 @@ import json
 import os
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any, cast
 
@@ -28,6 +26,8 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from aitp.ai.capability_codes import LAB_CAPABILITIES  # noqa: E402
 from aitp.errors import ErrorCode  # noqa: E402
+import urllib.error
+import urllib.request
 
 JsonDict = dict[str, Any]
 

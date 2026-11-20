@@ -11,8 +11,8 @@ import json
 import pathlib
 import sys
 import time
-import urllib.request
 from typing import Any, Callable
+import urllib.request
 
 BASE = "http://127.0.0.1:8760/api/v1"
 ROOT = pathlib.Path(__file__).resolve().parents[2]

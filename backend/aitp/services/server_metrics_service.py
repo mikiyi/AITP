@@ -22,12 +22,12 @@ import shutil
 import sys
 import threading
 import time
-import urllib.error
-import urllib.request
 from typing import Any
 from urllib.parse import urlsplit
 
 from ..common.time_utils import utcnow_iso
+import urllib.error
+import urllib.request
 
 #: 远程指标接口超时；探测不该被监控地址拖住
 METRICS_TIMEOUT = 2.5

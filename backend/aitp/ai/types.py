@@ -180,8 +180,5 @@ def _data_url_payload(url: str) -> str:
     return payload
 
 
-def messages_to_dicts(messages: list[Message]) -> list[dict[str, Any]]:
-    return [m.as_dict() for m in messages]
-
 
 StreamIterator = Iterator[StreamEvent]

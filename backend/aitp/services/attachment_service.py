@@ -144,15 +144,6 @@ def extension_of(file_name: str) -> str:
     return Path(file_name or "").suffix.lower()
 
 
-def classify(file_name: str) -> str:
-    """返回 document / image / 空串（不支持）。"""
-    ext = extension_of(file_name)
-    if ext in IMAGE_EXTENSIONS:
-        return "image"
-    if ext in DOCUMENT_EXTENSIONS:
-        return "document"
-    return ""
-
 
 def is_image(file_name: str) -> bool:
     return extension_of(file_name) in IMAGE_EXTENSIONS

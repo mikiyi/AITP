@@ -42,11 +42,6 @@ function readSession(key: string): ThinkingRecord | null {
   }
 }
 
-export function getThinking(key: string): ThinkingRecord | null {
-  if (sensitiveMode) return memory.get(key) ?? null
-  return readSession(key)
-}
-
 function trimSession(): void {
   try {
     const keys = Object.keys(sessionStorage).filter((k) => k.startsWith(PREFIX))
@@ -80,15 +75,6 @@ export function setThinking(key: string, rec: ThinkingRecord): void {
     trimSession()
   } catch {
     /* 超配额：放弃本条缓存，不影响问答主流程 */
-  }
-}
-
-export function removeThinking(key: string): void {
-  memory.delete(key)
-  try {
-    sessionStorage.removeItem(PREFIX + key)
-  } catch {
-    /* ignore */
   }
 }
 

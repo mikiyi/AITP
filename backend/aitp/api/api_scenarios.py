@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -211,6 +210,35 @@ def delete_scenario(pk: str) -> Response:
     repo.soft_delete(target)
     commit(conn)
     return ok({"deleted": True})
+
+
+@bp.post("/<pk>/copy")
+def copy_scenario(pk: str) -> Response:
+    """复制单条场景：重新取 SCN 编号、名称加「副本-」前缀，步骤/环境/数据源/类型一致。"""
+    conn = db()
+    target = path_int(pk)
+    repo = ApiScenarioRepository(conn)
+    row = repo.get(target)
+    if row is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "场景不存在")
+    guard_project_scope(row, scope_arg(), "接口场景")
+    new_id = repo.insert({
+        "scenario_no": repo.next_scenario_no(),
+        "project_id": row.get("project_id"),
+        "name": (f"副本-{row.get('name') or ''}")[:200],
+        "scenario_type": row.get("scenario_type") or "api",
+        "description": row.get("description") or "",
+        "env_id": row.get("env_id"),
+        "data_source": row.get("data_source") or "",
+        "steps_json": row.get("steps_json") or "[]",
+        "status": row.get("status") or "ready",
+    })
+    commit(conn)
+    new_row = repo.get(new_id) or {}
+    audit(conn, audit_service.AUDIT_ACTION_CREATE, "api_scenario", new_id,
+          str(new_row.get("name") or ""),
+          {"scenarioNo": new_row.get("scenario_no"), "copyOf": row.get("scenario_no")})
+    return ok(_public(new_row))
 
 
 @bp.post("/<pk>/run")

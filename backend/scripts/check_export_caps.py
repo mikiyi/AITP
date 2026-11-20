@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import pathlib
 import re
 import sys
@@ -26,6 +25,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 from aitp.ai import capability_codes  # noqa: E402
 from aitp.errors import AppError  # noqa: E402
 from aitp.services import output_exporter  # noqa: E402
+import importlib.util
 
 HELP_TS = ROOT / "frontend" / "src" / "views" / "settings" / "productHelpContent.ts"
 

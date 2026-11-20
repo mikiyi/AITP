@@ -11,7 +11,7 @@ from typing import Any, Iterable
 
 from ..common.pagination import RowDict, RowList
 from ..common.time_utils import utcnow_iso
-from .base import BaseRepository, dumps, loads
+from .base import BaseRepository, loads
 from .numbering import begin_claim
 
 RUN_PENDING = "pending"
@@ -109,19 +109,6 @@ class TestRunRepository(BaseRepository):
             payload["started_at"] = (row or {}).get("started_at") or utcnow_iso()
         self.update(pk, payload)
         return stats
-
-    def latest_completed(self, project_id: int, version_id: int | None = None) -> RowDict | None:
-        sql = (
-            "SELECT * FROM biz_test_run WHERE project_id = ? AND is_deleted = 0"
-            " AND status = 'completed'"
-        )
-        params: list[Any] = [project_id]
-        if version_id is not None:
-            sql += " AND version_id = ?"
-            params.append(version_id)
-        sql += " ORDER BY finished_at DESC, id DESC LIMIT 1"
-        row = self.conn.execute(sql, params).fetchone()
-        return dict(row) if row else None
 
 
 class TestRunCaseRepository(BaseRepository):

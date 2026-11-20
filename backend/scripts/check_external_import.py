@@ -25,7 +25,6 @@ import sqlite3
 import sys
 import tempfile
 import threading
-import xmlrpc.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -41,6 +40,7 @@ from aitp.db.migrator import init_db  # noqa: E402
 from aitp.errors import ErrorCode  # noqa: E402
 from aitp.services.external_import.mapping import apply_mapping, get_path  # noqa: E402
 from aitp.services.external_import.zentao import default_mapping  # noqa: E402
+import xmlrpc.client
 
 V1 = "/api/v1"
 _passed = 0

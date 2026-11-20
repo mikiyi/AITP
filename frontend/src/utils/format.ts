@@ -49,3 +49,17 @@ export function dateTimeText(value: unknown): string {
     `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
   )
 }
+
+/** 风险等级文案：high / low / 其它（无风险）。 */
+export function riskLevelText(level: string): string {
+  if (level === 'high') return '高风险'
+  if (level === 'low') return '低风险'
+  return '无风险'
+}
+
+/** 风险等级对应的标签色。 */
+export function riskLevelTagType(level: string): 'danger' | 'warning' | 'info' {
+  if (level === 'high') return 'danger'
+  if (level === 'low') return 'warning'
+  return 'info'
+}
