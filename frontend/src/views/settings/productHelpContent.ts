@@ -8,7 +8,7 @@
  * - 主题：frontend/src/stores/theme.ts（10 套）
  * - 问答模式：backend/aitp/api/knowledge.py 的 ASSISTANT_MODES = kb / llm / hybrid
  * - 后台任务种类：backend/aitp/services/job_queue.py 的 KIND_LABELS（11 类）
- * - 规模数字：55 路由 / 59 视图、42 蓝图 444 接口、67 个迁移、406 种测试文件格式、70 个门禁脚本
+ * - 规模数字：56 路由 / 60 视图、43 蓝图 454 接口、71 个迁移、406 种测试文件格式、71 个 check 脚本（一键跑 71 项）
  * 页面里的按钮名、弹窗名、列名一律按界面原文写，方便读者照着走通。
  */
 
@@ -103,14 +103,14 @@ export const RUNTIME_FACTS: string[] = [
 
 /** 产品规模：能在代码里数出来的数字，不写「业界领先」。 */
 export const PRODUCT_STATS = [
-  { label: '页面路由 / 组件', value: '55 / 59', note: '侧栏每个入口都对应独立页面' },
-  { label: '后端接口', value: '444 个 / 42 蓝图', note: '统一挂在 /api/v1 下' },
+  { label: '页面路由 / 组件', value: '56 / 60', note: '侧栏每个入口都对应独立页面' },
+  { label: '后端接口', value: '454 个 / 43 蓝图', note: '统一挂在 /api/v1 下' },
   { label: 'AI 能力', value: '20 项（20 张卡片）', note: '知识库问答统一走问答助手面板' },
   { label: '提示词模板', value: '24 份', note: '能力卡片与变量清单的来源' },
   { label: '测试文件格式', value: '406 种', note: '本地构造，不调模型' },
-  { label: '数据库迁移', value: '67 次', note: '启动时按序自动执行' },
+  { label: '数据库迁移', value: '71 次', note: '启动时按序自动执行' },
   { label: '内置主题', value: '10 套', note: '含黑 / 科技 / 工业 3 套深色' },
-  { label: '门禁脚本', value: '71 个', note: '类型、接口、隔离矩阵、安全回归与冒烟；一键跑 70 项' },
+  { label: '门禁脚本', value: '72 个', note: '71 个 check 脚本 + API 冒烟；一键跑 71 项（check_ai_live 除外）' },
 ]
 
 /** 与常见方案的差异：只讲边界，不编对比数据。 */
@@ -207,12 +207,12 @@ export const FEATURE_GROUPS: FeatureGroup[] = [
   {
     group: '自动化脚本',
     entries: [
-      { entry: '数据库脚本', path: '/sql-scripts', desc: 'SQL 造数/查询脚本台账（编号 SQL-xxx，AI 一键入库走 AI_SQL-xxx 独立序列）；执行留 stdout/stderr/退出码，可按编号被场景自动化「自动化脚本」步骤引用；带 AI_ 前缀的入库产物角标实时更新。' },
-      { entry: 'Web 自动化脚本', path: '/automation/web', desc: '写 Python 代码的 Web 自动化脚本台账（Selenium/Playwright）；执行留 stdout/stderr/退出码/产物，结果按用例编号或标签回写轮次；生产环境执行需勾选确认。' },
-      { entry: 'App 自动化脚本', path: '/automation/app', desc: '写 Python 代码的 App 自动化脚本台账（Appium/Hypium/UiAutomator2）；依赖 Appium Server/adb/hdc，设置页可做解释器与框架体检，未通过执行被拦下。' },
-      { entry: '接口自动化脚本', path: '/automation/api', desc: '写 Python 代码的接口自动化脚本台账（pytest/requests/unittest）；junit.xml 按用例编号回写，解析不了按退出码兜底并保留原文；断言可引用断言库。' },
-      { entry: '场景自动化', path: '/automation/scenario', desc: '无代码编排的多步骤串联场景，页内分三个页签：Web 场景（navigate/click/type 驱动真实浏览器）、App 场景（App 原生步骤接入中，暂为占位提示）、接口场景（GET/POST/PUT/PATCH/DELETE，URL 支持 {{baseUrl}} 相对路径与 {{var}} 变量）。步骤也可选「数据库」（只读查询检查点：SQL / Mongo JSON / Redis 命令，结果 JSON 可用 json:$/len:/schema: 断言）或「自动化脚本」（按脚本编号引 Web/App/接口自动化脚本并随场景同步执行，执行记录进统一证据）。场景可绑执行环境与测试数据（内联、本地 txt/Excel/Json/SQL 路径或 `pool:<数据池名称>`，带记录集则逐条跑整个场景）；点「执行」投递后台任务，历史逐步留请求/响应与结论。区分口诀：脚本=写代码，场景=无代码编排。' },
-      { entry: '性能测试', path: '/automation/performance', desc: 'JMeter 脚本台账（.jmx）无界面执行；设置页配置 JMeter 根目录与启动参数，未配置执行被拦下；执行报告带 P90/P95/P99 分位与可视化 HTML 报告。' },
+      { entry: '数据库脚本', path: '/sql-scripts', desc: 'SQL 造数/查询脚本台账（编号 SQL-xxx，AI 一键入库走 AI_SQL-xxx 独立序列）；执行留 stdout/stderr/退出码，可按编号被场景自动化「自动化脚本」步骤引用；带 AI_ 前缀的入库产物角标实时更新。列表支持名称/编号/别名检索与引用、状态筛选；表单内置 {{变量名}} 用法提示（例：select * from orders where id = {{orderId}}）并校验变量空名；执行按钮带 loading 防重。' },
+      { entry: 'Web 自动化脚本', path: '/automation/web', desc: '写 Python 代码的 Web 自动化脚本台账（Selenium/Playwright）；执行留 stdout/stderr/退出码/产物，结果按用例编号或标签回写轮次；生产环境执行需勾选确认。列表可按名称/编号、框架、引用与状态筛选；新建脚本自动归属当前项目并带默认框架与起步正文；编辑可填变更说明进版本快照；「已被应用」悬停显示引用场景编号；定时调度目标从场景/脚本下拉选择；执行与批量执行带 loading 防重。' },
+      { entry: 'App 自动化脚本', path: '/automation/app', desc: '写 Python 代码的 App 自动化脚本台账（Appium/Hypium/UiAutomator2）；依赖 Appium Server/adb/hdc，设置页可做解释器与框架体检，未通过执行被拦下。页面交互与 Web 自动化一致（编号、筛选、默认框架/正文、引用浮显、定时调度）。' },
+      { entry: '接口自动化脚本', path: '/automation/api', desc: '写 Python 代码的接口自动化脚本台账（pytest/requests/unittest）；junit.xml 按用例编号回写，解析不了按退出码兜底并保留原文；断言可引用断言库。页面交互与 Web 自动化一致（编号、筛选、默认框架/正文、引用浮显、定时调度）。' },
+      { entry: '场景自动化', path: '/automation/scenario', desc: '无代码编排的多步骤串联场景，页内分三个页签：Web 场景（navigate/click/type 驱动真实浏览器）、App 场景（App 原生步骤接入中，暂为占位提示）、接口场景（GET/POST/PUT/PATCH/DELETE，URL 支持 {{baseUrl}} 相对路径与 {{var}} 变量）。步骤也可选「数据库」（只读查询检查点：SQL / Mongo JSON / Redis 命令，结果 JSON 可用 json:$/len:/schema: 断言）或「自动化脚本」（按脚本编号引 Web/App/接口自动化脚本并随场景同步执行，执行记录进统一证据）。场景可绑执行环境与测试数据（内联、本地 txt/Excel/Json/SQL 路径或 `pool:<数据池名称>`，带记录集则逐条跑整个场景）；点「执行」投递后台任务，历史逐步留请求/响应与结论。列表支持名称/编号与状态筛选，新建/编辑可设启用/停用；步骤与测试数据表单内置变量用法提示（提取变量 → {{var}} 引用示例）；复制场景同样计入脚本引用库；执行按钮防重。区分口诀：脚本=写代码，场景=无代码编排。' },
+      { entry: '性能测试', path: '/automation/performance', desc: 'JMeter 脚本台账（.jmx）无界面执行；设置页配置 JMeter 根目录与启动参数，未配置执行被拦下；执行报告带 P90/P95/P99 分位与可视化 HTML 报告。新建默认带 JMeter 框架与最小可运行计划，列表支持编号检索与状态/引用筛选，定时调度目标从场景/脚本下拉选择。' },
     ],
   },
   {

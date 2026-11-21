@@ -84,7 +84,7 @@ stop.bat          :: Windows
 
 ## 功能地图
 
-前端 56 条路由 / 60 个页面组件，后端 43 个蓝图 / 451 个接口统一挂在 `/api/v1` 下。
+前端 56 条路由 / 60 个页面组件，后端 43 个蓝图 / 454 个接口统一挂在 `/api/v1` 下。
 
 ### 首启引导与示例项目
 
@@ -290,7 +290,7 @@ cd frontend && npm run build                                              # 前�
 - `check_ai_live` 被 runner 永久排除：它打真实商汤模型接口、烧额度且非确定性，需要时单独手工跑。
 - 新增门禁脚本只要放进 `backend/scripts` 且命名 `check_*.py`，runner 自动纳入，无需改 runner。
 
-门禁清单（71 个脚本 = 70 个 `check_*.py` + `smoke_api.py`，与 `backend/scripts` 下真实脚本一一对应；其中 `check_ai_live` 不进 runner，实际执行 70 项）：
+门禁清单（72 个脚本 = 71 个 `check_*.py` + `smoke_api.py`，与 `backend/scripts` 下真实脚本一一对应；其中 `check_ai_live` 不进 runner，实际执行 71 项）：
 
 | 脚本 | 含义 | 失败怎么查 |
 | --- | --- | --- |
@@ -388,6 +388,7 @@ cd frontend && npm run build                                              # 前�
 ## 端到端测试（E2E）
 
 基于 Playwright 的全流程端到端测试，位于 `frontend/e2e/`，配置 `frontend/playwright.config.ts`。
+当前 **11 个 spec / 30 条用例**，串行执行；用例代码与前端共用 strict 类型检查（`tsconfig.e2e.json`）。
 工装自动拉起**隔离环境**（独立后端 8762 + 临时库、mock 模型 18790/18791、vite 5199），
 绝不触碰正式 8760 与 `data/aitp.db`；teardown 树杀进程并删临时目录。
 
@@ -413,7 +414,7 @@ cd frontend && npx playwright test               # 串行 workers=1
 ```
 backend/
   aitp/
-    api/          43 个蓝图 / 451 个接口
+    api/          43 个蓝图 / 454 个接口
     ai/           resolver、client、masking、adapters、cost、output_schema
     common/       常量、校验、分页、密钥库、安全工具
     db/           连接与迁移（71 份）

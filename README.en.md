@@ -84,7 +84,7 @@ The launcher checks the port first: if AITP is already running it just opens the
 
 ## Feature map
 
-Frontend: 56 routes / 60 page components. Backend: 43 blueprints / 451 endpoints, all under `/api/v1`.
+Frontend: 56 routes / 60 page components. Backend: 43 blueprints / 454 endpoints, all under `/api/v1`.
 
 ### First-launch tour and demo project
 
@@ -293,8 +293,8 @@ cd frontend && npm run build                                              # fron
 - Any new gate script dropped into `backend/scripts` named `check_*.py` is picked up
   automatically without touching the runner.
 
-Gate inventory (71 entries = 70 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
-scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 70 items actually
+Gate inventory (72 entries = 71 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
+scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 71 items actually
 execute):
 
 | Script | Covers | When it fails, look at |
@@ -395,6 +395,7 @@ run as the source of truth. On CI `check_isolation_matrix` is excluded via `--sk
 ## End-to-end tests (E2E)
 
 Playwright-based full-flow E2E tests live in `frontend/e2e/`, configured by `frontend/playwright.config.ts`.
+Currently **11 specs / 30 cases**, run serially; spec code shares the strict type check with the frontend (`tsconfig.e2e.json`).
 The harness boots an **isolated environment** (separate backend on 8762 + temp DB, mock model on
 18790/18791, vite on 5199) and never touches the live 8760 service or `data/aitp.db`; teardown kills the
 process tree and removes the temp directory.
@@ -421,7 +422,7 @@ cd frontend && npx playwright test               # serial, workers=1
 ```
 backend/
   aitp/
-    api/          43 blueprints / 451 endpoints
+    api/          43 blueprints / 454 endpoints
     ai/           resolver, client, masking, adapters, cost, output_schema
     common/       constants, validation, pagination, keystore, security utilities
     db/           connections and migrations (71 files)
