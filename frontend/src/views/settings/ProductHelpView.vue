@@ -25,6 +25,27 @@
             </div>
             <p class="muted doc-p">中间随时可以把待办推进度挂进「任务清单」，长耗时操作交给「任务队列」。</p>
 
+            <h3 class="doc-h3">闭环转起来之后：资产复利飞轮</h3>
+            <p class="doc-p">
+              这条链转完一圈，资产会自己「滚雪球」——产出入库、入库被执行、执行沉淀知识，下一轮生成时相关的资产又被装配进提示词。你用得越多，AI 越懂你的项目：
+            </p>
+            <div class="chain">
+              <template v-for="(step, index) in FLYWHEEL_STEPS" :key="step.node">
+                <span class="chain__node">{{ step.node }}</span>
+                <span v-if="index < FLYWHEEL_STEPS.length - 1" class="chain__arrow">→</span>
+              </template>
+              <span class="chain__arrow">↺</span>
+            </div>
+            <table class="doc-table">
+              <tbody>
+                <tr v-for="step in FLYWHEEL_STEPS" :key="step.node">
+                  <td class="col-fly">{{ step.node }}</td>
+                  <td>{{ step.desc }}</td>
+                  <td class="cell-where">{{ step.where }}</td>
+                </tr>
+              </tbody>
+            </table>
+
             <h3 class="doc-h3">产品规模（可在代码里数出来的数字）</h3>
             <table class="doc-table stats-table">
               <tbody>
@@ -354,6 +375,7 @@ import {
   AUDIENCE,
   DEMO_CASES,
   FEATURE_GROUPS,
+  FLYWHEEL_STEPS,
   HIGHLIGHT_GROUPS,
   LIFECYCLE,
   LOOP_NODES,
@@ -525,6 +547,11 @@ const demoScenes = computed(() => {
 
 .col-stage {
   width: 76px;
+}
+
+/* 飞轮环节列：节点名最长 7 字，比 PAIN_POINTS 的两字环节宽 */
+.col-fly {
+  width: 132px;
 }
 
 .col-entries {

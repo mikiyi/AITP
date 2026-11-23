@@ -4,15 +4,39 @@ English | [简体中文](README.md)
 
 A personal AI testing workstation — **single-user, local-first, offline-capable** — a quality-control tool built around **prompt engineering and data masking for LLM calls**.
 
-Current version **v2.4.5**: the same value served by `aitp.__version__`, `db/migrator.py::APP_VERSION`,
+Current version **v2.5.0**: the same value served by `aitp.__version__`, `db/migrator.py::APP_VERSION`,
 the `appVersion` field of `GET /api/v1/health` and the `app_version` recorded by each migration.
 
 It folds the AI lab, test cases, defects, log analysis, SQL analysis, regression, reports, knowledge base, task list and workspace configuration into one closed loop of LLM-assisted testing:
 **requirement → test point → test case → execution → defect → regression → report → knowledge retention**, with todos moving the progress along at every step.
 
+Once this loop turns, assets snowball on their own — the more you use it, the better the AI knows your project:
+
+**AI output → adopted as assets → executed with evidence → distilled into knowledge → fed back into the next generation → …**
+
+On day one the AI knows nothing about your project and its drafts can be generic; after a while things change:
+
+1. **Cases and scripts the AI produced** are adopted into your asset library with one click, managed alongside hand-built ones;
+2. **Adopted assets get executed** — API cases and automation are really run, manual cases get recorded results — what passed and what failed is on the record;
+3. **Pitfalls and verified conclusions** go "add to knowledge" and, after review, become project knowledge;
+4. **On the next generation run** related cases, defects and knowledge are automatically loaded into the prompt — the AI knows where the feature points live, what defects hit before, and which pitfalls you stepped in.
+
+The library gets sharper with use, and every output fits your project better — that is the asset flywheel.
+
 - All data lives in a local SQLite file (`data/aitp.db`), bound to this machine only — never exposed to the LAN or the internet.
 - AI settings are read from local environment variables, from in-app configuration, and from local models (Ollama).
 - When there is no cloud model, the model is unavailable, or the network is down, AITP degrades to local rules automatically and never blocks the main workflow.
+
+## v2.5.0 changes (phase four: turning assets into a flywheel)
+
+- **AI fix suggestions**: a failed interface assertion can now produce an asset-change suggestion (diagnosis, new assertion / new expectation, field-level diff) into a "fix suggestions" review pool; only after human approval does it rewrite the case and leave an audit trail. AI advises, never writes directly; without a model it returns a mechanical diff only
+- **Semantic knowledge search**: with a local Ollama embedding model configured, recall upgrades from keyword-only to a keyword + vector RRF hybrid used by both the Q&A assistant and context assembly; without it, keyword search still works, and cloud embeddings stay off by default with masking before any outbound call
+- **Execution media evidence**: browser runs can optionally capture video / Trace into local `data/exec-media/`, played inline on the evidence page with one-click Trace download; 50MB per video and 20MB per Trace, over-limit degrades to screenshots only
+- **Login-state reuse**: saves browser auth state (storageState) per project + environment + role, prechecks cookie / JWT expiry before running, reuses when valid and reports clearly when expired; archives stay on this machine and never enter backups or exports
+- **Offline testing knowledge pack**: four built-in local dictionaries (adversarial strings, boundary-value templates, SFDIPOT heuristics, probing payloads) inject keyword-matched snippets into prompts with zero LLM calls, offline and free
+- **Case mindmap view**: the case page toggles to a read-only mindmap with the feature tree as skeleton and cases as leaves; the view state lives in the URL and survives refresh
+- **Requirement batch split import**: upload or paste a requirement document on the requirements page; AI splits it into independently verifiable requirements with suggested module paths. Tick the rows to adopt them as drafts. The same document is recognised by content fingerprint, already-adopted rows are skipped, and a missing model never blocks manual entry
+- **Quality engineering**: seven new gates (fix suggestions / vector search / execution media / auth sessions / heuristics pack / mindmap / requirement import) and five E2E specs (13–17); version bumped to v2.5.0
 
 ## v2.4.5 changes
 
@@ -98,7 +122,7 @@ The launcher checks the port first: if AITP is already running it just opens the
 
 ## Feature map
 
-Frontend: 56 routes / 60 page components. Backend: 43 blueprints / 458 endpoints, all under `/api/v1`.
+Frontend: 57 routes / 62 page components. Backend: 44 blueprints / 476 endpoints, all under `/api/v1`.
 
 ### First-launch tour and demo project
 
@@ -131,7 +155,7 @@ Page: **Task list** (`/todos`)
 
 ### AI lab
 
-20 capabilities. Knowledge-base Q&A runs through the "Knowledge Base → Q&A assistant" chat panel:
+22 capabilities. Knowledge-base Q&A runs through the "Knowledge Base → Q&A assistant" chat panel:
 
 | Capability | ID |
 |---|---|
@@ -155,6 +179,8 @@ Page: **Task list** (`/todos`)
 | Test data generation | `test_data_generation` |
 | Web exploratory testing | `exploratory_web` |
 | Prompt optimization | `prompt_optimize` |
+| Fix suggestion | `fix_suggestion` |
+| Requirement batch split | `requirement_import` |
 
 - **Capability cards are driven by the prompt library**
 - **One-click output import**: the SQL data-generation statement can be added as a database script in one click, and automation-script generation adds a web/app/API automation script in one click by produced code type; imports carry an automatic `AI_`-prefixed number into the matching menu and the badge updates in real time
@@ -312,8 +338,8 @@ cd frontend && npm run build                                              # fron
 - Any new gate script dropped into `backend/scripts` named `check_*.py` is picked up
   automatically without touching the runner.
 
-Gate inventory (74 entries = 73 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
-scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 73 items actually
+Gate inventory (80 entries = 79 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
+scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 79 items actually
 execute):
 
 | Script | Covers | When it fails, look at |
@@ -391,6 +417,12 @@ execute):
 | `check_types.py` | Type gate: mypy --strict over the backend plus real `vue-tsc --noEmit` and `tsc -p tsconfig.e2e.json` (Playwright specs); `--require-frontend` fails CI without frontend deps | the file:line reported by mypy / TypeScript |
 | `check_noise.py` | Code-noise gate: zero tolerance for TODO/FIXME markers, debugger/console.log/alert, backend print/breakpoint/pdb, commented-out code, unused Python imports (respecting `# noqa: F401`) and stray .tmp/.bak/.orig files | the file:line it reports |
 | `check_walkthrough.py` | Fixed walkthrough: routing order + fallback order + behavioral-safety rules + structured records + global search | per-step assertion output |
+| `check_fix_suggestion.py` | AI fix-suggestion loop: migration and numbering, schema validation, generate → adopt writeback → terminal state, dismiss, no-model fallback, project isolation (migration 076) | `services/fix_suggestion_service.py` and the fix-suggestion API |
+| `check_kb_vector.py` | Knowledge vector search: chunking, incremental index, cosine and packing, fallback, RRF fusion, project isolation (migration 077) | `knowledge_embedding_service.py` and embedding config |
+| `check_exec_media.py` | Execution media: persistence, size/suffix limits, safe retrieval, retention cleanup | `services/media_service.py` and exploratory runs |
+| `check_auth_sessions.py` | Auth-session reuse: save/overwrite/expiry (cookie + JWT exp)/remove/cross-project isolation/path traversal/role sanitising (migration 079) | `services/auth_session_service.py` |
+| `check_heuristics_pack.py` | Offline heuristics packs: four dictionaries load, keyword hits, capability filter and default category | `prompts/heuristics/` and `heuristics_service.py` |
+| `check_requirement_import.py` | Requirement batch split: fingerprint, schema, split and batches, idempotent adoption, module resolution, cross-project isolation (migration 080) | `services/requirement_import_service.py` |
 | `smoke_api.py` | P3 API smoke: all blueprints' key paths on a temp DB | the failure list printed at the end |
 
 General triage: every script prints `[FAIL]` lines item by item and ends with `PASS=n FAIL=n`;
@@ -416,9 +448,9 @@ run as the source of truth. On CI `check_isolation_matrix` is excluded via `--sk
 ## End-to-end tests (E2E)
 
 Playwright-based full-flow E2E tests live in `frontend/e2e/`, configured by `frontend/playwright.config.ts`.
-Currently **12 specs / 33 cases**, run serially; spec code shares the strict type check with the frontend (`tsconfig.e2e.json`).
+Currently **17 specs / 47 cases**, run serially; spec code shares the strict type check with the frontend (`tsconfig.e2e.json`).
 The harness boots an **isolated environment** (separate backend on 8762 + temp DB, mock model on
-18790/18791, vite on 5199) and never touches the live 8760 service or `data/aitp.db`; teardown kills the
+18790/18791, vite on 5399) and never touches the live 8760 service or `data/aitp.db`; teardown kills the
 process tree and removes the temp directory.
 
 ```bash
@@ -430,6 +462,7 @@ cd frontend && npx playwright test               # serial, workers=1
 - **DFS**: exhaust interactions on core pages (AI capability, cases, plan/round, defects, reports, knowledge, regression), capped at 20 elements per page to avoid loops.
 - **Non-happy paths**: back/cancel/discard, empty data, very large data (1000 rows pagination + virtual window), unauthenticated/passcode, refresh/back, form boundaries (empty / over-long / special characters).
 - **Q&A history survives** (`06-assistant-history`): after hopping through 8 menu pages — enough to evict the assistant from the `keep-alive` cache — the thread is still there, and a full reload still shows it (proving it comes from the database, not memory); after "clear conversation" the current thread is empty but the archived session remains queryable in "AI records -> Session records" filtered by "Knowledge-base Q&A".
+- **Phase-four specs** (`13`–`17`): fix suggestions (fail → generate → adopt writeback / dismiss), vector search (configure embedding → rebuild → semantic recall + fallback), auth-session reuse (import → precheck → expiry block → remove), case mindmap (toggle → refresh restore → empty state), requirement batch split (split → tick and adopt → duplicate import skipped).
 - Every step asserts a business result, not just "no error"; elements are re-located after page changes, never reusing stale refs.
 - Results: `frontend/e2e/results.json` + console list; failures keep trace/screenshots.
 - Convention in `AGENTS.md`: **after every code change, run the verification and report the real pass/fail results in the reply**.
@@ -443,10 +476,10 @@ cd frontend && npx playwright test               # serial, workers=1
 ```
 backend/
   aitp/
-    api/          43 blueprints / 458 endpoints
+    api/          44 blueprints / 476 endpoints
     ai/           resolver, client, masking, adapters, cost, output_schema
     common/       constants, validation, pagination, keystore, security utilities
-    db/           connections and migrations (73 files)
+    db/           connections and migrations (77 files)
     repositories/ parameterized SQL repository layer
     services/     knowledge persistence, report export, backup/restore, execution matrix, retention/archival, exploratory testing, external import
     prompts/      prompt template library
@@ -457,9 +490,9 @@ frontend/
   src/
     api/          unified request layer
     components/   shared components
-    views/        60 page components
+    views/        62 page components
   e2e/            Playwright end-to-end tests (isolated harness)
-data/             runtime data (SQLite, logs, keystore, archives, defect screenshots in bug-screenshots/, exploratory screenshots and log slices)
+data/             runtime data (SQLite, logs, keystore, archives, defect screenshots in bug-screenshots/, exploratory screenshots and log slices, execution media in exec-media/, auth sessions in auth-sessions/)
 knowledge/        Markdown knowledge base storage
 ```
 

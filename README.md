@@ -4,15 +4,39 @@
 
 个人版的AI 测试工作台 —— **单用户、本地优先、离线可用**、**提示词工程，大模型调用数据脱敏**的质量管控工具。
 
-当前版本 **v2.4.5**：与后端 `aitp.__version__`、`db/migrator.py::APP_VERSION`、`GET /api/v1/health` 的
+当前版本 **v2.5.0**：与后端 `aitp.__version__`、`db/migrator.py::APP_VERSION`、`GET /api/v1/health` 的
 `appVersion` 以及迁移记录的 `app_version` 同源，一处升级四处一致。
 
 把 AI 实验室、测试用例、缺陷、日志分析、SQL 分析、回归、报告、知识库、任务清单、工作台配置利用AI的LLM辅助测试工作，收进同一条闭环：
 **需求 → 测试点 → 用例 → 执行 → 缺陷 → 回归 → 报告 → 知识沉淀**，中间随时把待办推进度挂在清单里。
 
+这条闭环转起来之后，资产会自己「滚雪球」——你用得越多，AI 越懂你的项目：
+
+**AI 产出 → 入库成为资产 → 执行留证据 → 沉淀为知识 → 反哺下一次生成 → …**
+
+刚上手时，AI 对你的项目一无所知，生成的用例难免泛泛；用一段时间之后就不一样了：
+
+1. **AI 产出的用例、脚本**，一键入库成为你的资产，和手工建的放在一起管理；
+2. **入库的资产被执行**——接口与自动化真跑、功能用例人工录入结果——哪些通过、哪些失败都留了底；
+3. **踩过的坑、验证过的结论**，「加入知识库」审核转正，沉淀为项目知识；
+4. **下一次生成时**，与输入相关的用例、缺陷与知识被自动装进提示词——AI 生成时已经知道功能点在哪、历史出过什么缺陷、踩过什么坑。
+
+库越用越准，产出越来越贴项目实际——这就是「资产复利」。
+
 - 数据全部保存在本机 SQLite（`data/aitp.db`），默认仅本机可访问，不对局域网/公网暴露。
 - AI 能力直接读取本地环境变量中的 AI 配置信息获取，同时支持工作台内配置与本地大模型（Ollama）。
 - 没有云端模型、模型不可用或断网时，自动降级到本地规则，不阻塞主流程。
+
+## v2.5.0 更新（四期：把资产串成飞轮）
+
+- **AI 修复建议（修复闭环）**：接口断言失败后一键生成「资产修改建议」——诊断原因、给出新断言 / 新预期、附字段级 diff，进「修复建议」待审池；人工确认采纳后才改写用例并留审计。AI 只建议、不直接改库；无模型时只给机械 diff
+- **知识库语义检索**：配置 Ollama 嵌入模型后，知识召回从纯关键词升级为「关键词 + 向量」RRF 混合，问答助手与上下文装配同时受益；未配置自动回落关键词检索，云端嵌入默认关闭且外发前脱敏
+- **执行媒体证据**：浏览器类执行可选采集视频 / Trace 并落到本机 `data/exec-media/`，证据详情内嵌回放、Trace 一键下载；单次视频 ≤ 50MB、Trace ≤ 20MB，超限自动降级为仅截图
+- **登录态复用**：按「项目 + 环境 + 角色」保存浏览器认证态（storageState），执行前预检 cookie / JWT 过期，有效直接复用、过期明确提示；档案只存本机，不进备份与导出
+- **离线测试知识包**：内置对抗性字符串、边界值模板、SFDIPOT 启发式、注入探测样例四份本地字典，按关键词命中注入提示词——零 LLM 调用、离线可用、不烧额度
+- **用例脑图视图**：测试用例页可一键切换到只读脑图，功能点树为骨架、用例为叶子，视图态写进地址栏可分享还原
+- **需求批量拆分导入**：需求页可上传或粘贴需求文档，AI 拆成多条可独立验收的需求并给出功能点归属建议；逐条勾选后批量落库为草稿，同一文档按内容指纹识别重复导入、已采纳条目自动跳过；无模型时不阻塞，可手工逐条新建
+- **质量工程**：新增 7 个门禁（修复建议 / 向量检索 / 执行媒体 / 登录态 / 知识包 / 脑图 / 需求导入）与 5 条端到端用例（13–17），版本升到 v2.5.0
 
 ## v2.4.5 更新
 
@@ -100,7 +124,7 @@ stop.bat          :: Windows
 
 ## 功能地图
 
-前端 56 条路由 / 60 个页面组件，后端 43 个蓝图 / 458 个接口统一挂在 `/api/v1` 下。
+前端 57 条路由 / 62 个页面组件，后端 44 个蓝图 / 476 个接口统一挂在 `/api/v1` 下。
 
 ### 首启引导与示例项目
 
@@ -133,7 +157,7 @@ stop.bat          :: Windows
 
 ### AI 实验室
 
-20 项能力，基于知识库的问答走「知识库 → 问答助手」的对话面板：
+22 项能力，基于知识库的问答走「知识库 → 问答助手」的对话面板：
 
 | 能力 | 标识 |
 |---|---|
@@ -157,6 +181,8 @@ stop.bat          :: Windows
 | 测试数据生成 | `test_data_generation` |
 | Web 探索性测试 | `exploratory_web` |
 | 提示词优化 | `prompt_optimize` |
+| 修复建议 | `fix_suggestion` |
+| 需求批量拆分 | `requirement_import` |
 
 - **测试数据脱敏样本（GAP-39）**：测试数据生成能力新增「脱敏样本」模式，CSV / JSON / XLSX 样本在本机解析，自动识别手机号、邮箱、身份证、卡号、口令等敏感列，按「掩码 / 哈希 / 随机 / 枚举 / 占位」规则脱敏；库内只存列结构与脱敏副本，原始样本不落盘，方案可保存复用，样本按保留期自动清理
 
@@ -311,7 +337,7 @@ cd frontend && npm run build                                              # 前�
 - `check_ai_live` 被 runner 永久排除：它打真实商汤模型接口、烧额度且非确定性，需要时单独手工跑。
 - 新增门禁脚本只要放进 `backend/scripts` 且命名 `check_*.py`，runner 自动纳入，无需改 runner。
 
-门禁清单（74 个脚本 = 73 个 `check_*.py` + `smoke_api.py`，与 `backend/scripts` 下真实脚本一一对应；其中 `check_ai_live` 不进 runner，实际执行 73 项）：
+门禁清单（80 个脚本 = 79 个 `check_*.py` + `smoke_api.py`，与 `backend/scripts` 下真实脚本一一对应；其中 `check_ai_live` 不进 runner，实际执行 79 项）：
 
 | 脚本 | 含义 | 失败怎么查 |
 | --- | --- | --- |
@@ -388,6 +414,12 @@ cd frontend && npm run build                                              # 前�
 | `check_types.py` | 类型门禁：mypy --strict 扫全后端 + 真实执行 `vue-tsc --noEmit` + `tsc -p tsconfig.e2e.json`（Playwright 用例）；CI 可加 `--require-frontend` 让缺前端依赖直接失败 | 直接看 mypy/TS 报错的文件行号 |
 | `check_noise.py` | 代码噪声门禁：TODO/FIXME 标记、debugger/console.log/alert、后端 print/breakpoint/pdb、被注释掉的代码、Python 未使用导入（尊重 `# noqa: F401`）、仓库临时文件（.tmp/.bak/.orig）零容忍 | 直接看报出的文件:行号 |
 | `check_walkthrough.py` | 固定走查案例：路由顺序 + 降级顺序 + 行为安全 + 结构化记录 + 全局搜索 | 看走查各步骤断言输出 |
+| `check_fix_suggestion.py` | AI 修复建议闭环：迁移与编号、Schema 校验、生成 → 采纳回写 → 终态、忽略、无模型降级、跨项目隔离（迁移 076） | 看 `services/fix_suggestion_service.py` 与修复建议接口 |
+| `check_kb_vector.py` | 知识库向量检索：分块、增量索引、余弦与打包、降级、RRF 融合、项目隔离（迁移 077） | 看 `knowledge_embedding_service.py` 与嵌入配置 |
+| `check_exec_media.py` | 执行媒体：落盘、大小与后缀限流、安全取回、留存清理 | 看 `services/media_service.py` 与探索性执行 |
+| `check_auth_sessions.py` | 登录态复用：保存/覆盖/过期判定（cookie + JWT exp）/清除/跨项目隔离/路径穿越/角色清洗（迁移 079） | 看 `services/auth_session_service.py` |
+| `check_heuristics_pack.py` | 离线测试知识包：四份字典可加载、关键词命中、能力过滤与默认分类 | 看 `prompts/heuristics/` 与 `heuristics_service.py` |
+| `check_requirement_import.py` | 需求批量拆分：指纹、Schema、拆分与批次、批量采纳幂等、功能点解析、跨项目隔离（迁移 080） | 看 `services/requirement_import_service.py` |
 | `smoke_api.py` | P3 API 冒烟：临时库跑通全部蓝图关键路径 | 按结尾「失败项」列表定位蓝图 |
 
 通用排查：每个脚本逐条打印 `[FAIL]` 并以 `PASS=n FAIL=n` 收尾；先单跑失败脚本
@@ -411,8 +443,8 @@ cd frontend && npm run build                                              # 前�
 ## 端到端测试（E2E）
 
 基于 Playwright 的全流程端到端测试，位于 `frontend/e2e/`，配置 `frontend/playwright.config.ts`。
-当前 **12 个 spec / 33 条用例**，串行执行；用例代码与前端共用 strict 类型检查（`tsconfig.e2e.json`）。
-工装自动拉起**隔离环境**（独立后端 8762 + 临时库、mock 模型 18790/18791、vite 5199），
+当前 **17 个 spec / 47 条用例**，串行执行；用例代码与前端共用 strict 类型检查（`tsconfig.e2e.json`）。
+工装自动拉起**隔离环境**（独立后端 8762 + 临时库、mock 模型 18790/18791、vite 5399），
 绝不触碰正式 8760 与 `data/aitp.db`；teardown 树杀进程并删临时目录。
 
 ```bash
@@ -424,6 +456,7 @@ cd frontend && npx playwright test               # 串行 workers=1
 - **DFS**：核心业务页（AI 能力、用例、计划/轮次、缺陷、报告、知识库、回归）穷尽交互，每页 ≤20 元素防死循环。
 - **非快乐路径**：返回/取消/放弃保存、空数据、超大量（1000 条分页+虚拟窗口）、未登录/口令、刷新/后退、表单边界（空/超长/特殊字符）。
 - **问答历史不丢**（`06-assistant-history`）：走够 8 个菜单页把助手页挤出 keep-alive 缓存后回来看历史仍在，整页刷新后仍在（证明在库里而不是内存里），「清空对话」后当前线程空了但「会话记录」按「知识库问答」还能查到。
+- **四期专项**（`13`–`17`）：修复建议（失败 → 生成 → 采纳回写 / 忽略终态）、向量检索（配置嵌入 → 重建 → 语义召回 + 降级）、登录态复用（导入 → 预检 → 过期拦截 → 清除）、用例脑图（切换 → 刷新还原 → 空态）、需求批量拆分（拆分 → 勾选采纳 → 重复导入跳过）。
 - 每步断言业务结果，不只断言「没报错」；页面变化后重新定位元素，不复用旧 ref。
 - 结果：`frontend/e2e/results.json` + 控制台 list；失败留 trace/截图。
 - 约定见 `AGENTS.md`：**每次改完代码必须跑一遍验证，并把真实通过/失败结果写进回复**。
@@ -437,10 +470,10 @@ cd frontend && npx playwright test               # 串行 workers=1
 ```
 backend/
   aitp/
-    api/          43 个蓝图 / 458 个接口
+    api/          44 个蓝图 / 476 个接口
     ai/           resolver、client、masking、adapters、cost、output_schema
     common/       常量、校验、分页、密钥库、安全工具
-    db/           连接与迁移（73 份）
+    db/           连接与迁移（77 份）
     repositories/ 参数化 SQL 仓储层
     services/     知识落盘、报告导出、备份恢复、执行矩阵、留存归档、探索性测试、外部导入等
     prompts/      提示词模板库
@@ -451,9 +484,9 @@ frontend/
   src/
     api/          统一请求层
     components/   通用组件
-    views/        60 个页面组件
+    views/        62 个页面组件
   e2e/            Playwright 端到端测试（隔离工装）
-data/             运行时数据（SQLite、日志、密钥、归档、缺陷截图 bug-screenshots/、探索性截图与日志切片）
+data/             运行时数据（SQLite、日志、密钥、归档、缺陷截图 bug-screenshots/、探索性截图与日志切片、执行媒体 exec-media/、登录态档案 auth-sessions/）
 knowledge/        知识库 Markdown 落盘目录
 ```
 
