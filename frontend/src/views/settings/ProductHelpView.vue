@@ -283,7 +283,20 @@
           </div>
         </el-tab-pane>
 
-        <!-- ==================== 7. 作者信息 ==================== -->
+        <!-- ==================== 7. 版本迭代信息 ==================== -->
+        <el-tab-pane label="版本迭代信息" name="changelog">
+          <div class="doc-body doc-body-wide">
+            <p class="doc-p muted">按版本号倒序排列，记录每个版本交付的功能与工程改动；版本号与后端 APP_VERSION 对齐。</p>
+            <div v-for="release in sortedReleaseNotes" :key="release.version" class="release-note">
+              <h4 class="doc-h4">{{ release.version }} <span class="muted">{{ release.date }}</span></h4>
+              <ul class="doc-ul">
+                <li v-for="item in release.items" :key="item">{{ item }}</li>
+              </ul>
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <!-- ==================== 8. 作者信息 ==================== -->
         <el-tab-pane label="作者信息" name="author">
           <div class="doc-body">
             <p class="doc-p">
@@ -347,6 +360,7 @@ import {
   PAIN_POINTS,
   POSITIONING,
   PRODUCT_STATS,
+  RELEASE_NOTES,
   RUNTIME_FACTS,
   VALUE_ITEMS,
 } from './productHelpContent'
@@ -367,6 +381,19 @@ onMounted(async () => {
 async function reopenTour(): Promise<void> {
   window.dispatchEvent(new CustomEvent('aitp:reopen-tour'))
 }
+
+/** 版本迭代按版本号倒序：去掉 v 前缀后按段数值比较，避免字典序把 v2.10.0 排到 v2.9.0 前面。 */
+const sortedReleaseNotes = computed(() =>
+  [...RELEASE_NOTES].sort((a, b) => {
+    const partsA = a.version.replace(/^v/, '').split('.').map(Number)
+    const partsB = b.version.replace(/^v/, '').split('.').map(Number)
+    for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+      const diff = (partsB[i] ?? 0) - (partsA[i] ?? 0)
+      if (diff !== 0) return diff
+    }
+    return 0
+  }),
+)
 
 type NumberedDemo = DemoCase & { index: number }
 
@@ -648,6 +675,16 @@ const demoScenes = computed(() => {
   font-size: 12px;
   color: var(--aitp-text-weak);
   font-weight: 600;
+}
+
+/* 版本迭代信息 */
+.release-note {
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--aitp-border);
+}
+
+.release-note:last-child {
+  border-bottom: none;
 }
 
 /* 作者信息 */

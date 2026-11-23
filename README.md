@@ -4,7 +4,7 @@
 
 个人版的AI 测试工作台 —— **单用户、本地优先、离线可用**、**提示词工程，大模型调用数据脱敏**的质量管控工具。
 
-当前版本 **v2.4.3**：与后端 `aitp.__version__`、`db/migrator.py::APP_VERSION`、`GET /api/v1/health` 的
+当前版本 **v2.4.5**：与后端 `aitp.__version__`、`db/migrator.py::APP_VERSION`、`GET /api/v1/health` 的
 `appVersion` 以及迁移记录的 `app_version` 同源，一处升级四处一致。
 
 把 AI 实验室、测试用例、缺陷、日志分析、SQL 分析、回归、报告、知识库、任务清单、工作台配置利用AI的LLM辅助测试工作，收进同一条闭环：
@@ -13,6 +13,20 @@
 - 数据全部保存在本机 SQLite（`data/aitp.db`），默认仅本机可访问，不对局域网/公网暴露。
 - AI 能力直接读取本地环境变量中的 AI 配置信息获取，同时支持工作台内配置与本地大模型（Ollama）。
 - 没有云端模型、模型不可用或断网时，自动降级到本地规则，不阻塞主流程。
+
+## v2.4.5 更新
+
+- **缺陷编号全局唯一**：手工建单 `BUG-001`、AI 处理产生 `AI_BUG-001`、自动化脚本/场景/矩阵产生 `Auto_BUG-001`，三类各自自增；缺陷号全局唯一，软删后永不复用（截图文件名不再被覆盖）；老库跨项目重号在启动迁移时自动顺延到最大号之后
+- **缺陷截图**：缺陷详情支持上传、预览、下载、删除截图；文件落在 `data/bug-screenshots/<缺陷编号>/`，命名 `pic_<缺陷编号>_001.png` 按序递增；单张 ≤ 10MB、每个缺陷 ≤ 30 张，只收 PNG/JPEG/GIF/WebP/BMP 位图
+- **备份开关**：「设置 → 数据备份与还原 → 备份内容」新增「备份包含缺陷截图」，默认关闭；打开后整包备份、项目资产包、留存归档都带上截图，关闭时三处都不包含（截图仍留本机目录，不参与留存清理）
+- **质量工程**：新增 `check_bug_screenshots.py` 门禁与端到端 spec 12（编号前缀、全局唯一、不复用、截图命名/上限/删除、三处开关）
+
+## v2.4.4 更新
+
+- **AI 用例产出导出**：「用例编号」列对未入库用例填「草稿-001」草稿序号；采纳入库或导入时由系统分配正式编号，草稿号不会落库
+- **自动化脚本**：新建脚本自动归属当前项目并带默认框架与起步正文；目录统计按当前项目收敛；定时调度目标从场景/脚本下拉选择；执行与批量执行防重复触发；编辑支持变更说明
+- **场景与数据库脚本表单**内置变量用法提示（含示例）；复制场景同样计入脚本引用库；调度「下次运行」显示本地时间
+- **质量工程**：e2e 用例纳入类型检查（`tsconfig.e2e.json`）；新增代码噪声门禁；全站死代码与前端重复代码清理
 
 ## 运行演示
 
@@ -84,7 +98,7 @@ stop.bat          :: Windows
 
 ## 功能地图
 
-前端 56 条路由 / 60 个页面组件，后端 43 个蓝图 / 454 个接口统一挂在 `/api/v1` 下。
+前端 56 条路由 / 60 个页面组件，后端 43 个蓝图 / 458 个接口统一挂在 `/api/v1` 下。
 
 ### 首启引导与示例项目
 
@@ -144,7 +158,7 @@ stop.bat          :: Windows
 
 - **测试数据脱敏样本（GAP-39）**：测试数据生成能力新增「脱敏样本」模式，CSV / JSON / XLSX 样本在本机解析，自动识别手机号、邮箱、身份证、卡号、口令等敏感列，按「掩码 / 哈希 / 随机 / 枚举 / 占位」规则脱敏；库内只存列结构与脱敏副本，原始样本不落盘，方案可保存复用，样本按保留期自动清理
 
-- **产出一键入库**：测试数据生成（SQL）的造数语句可一键「添加为数据库脚本」，自动化脚本生成按产出代码类型一键「添加为 web/app/接口自动化脚本」，入库自动带 `AI_` 前缀编号并进对应菜单，角标实时更新
+- **产出一键入库**：测试数据生成（SQL）的造数语句可一键「添加为数据库脚本」，自动化脚本生成按产出代码类型一键「添加为 web/app/接口自动化脚本」，入库自动带 `AI_` 前缀编号并进对应菜单，角标实时更新；用例类产出导出 Excel 时未入库用例填「草稿-001」草稿序号，采纳入库或导入时由系统分配正式编号（草稿号不会落库）
 
 - **能力卡片由提示词库驱动**
 - **智能路由**：输入一句话，自动匹配最合适的能力
@@ -164,7 +178,7 @@ stop.bat          :: Windows
 | 项目 | 项目增删改查、当前项目切换、状态管理 |
 | 需求 | 需求维护、直挂功能点（模块/子模块/功能点三级）、批量删除、导出 |
 | 测试用例 | 用例 CRUD、状态流转、xlsx 导入导出、批量执行 |
-| 缺陷 | 缺陷 CRUD、状态机流转、关联用例、日志附件、原始执行证据下钻 |
+| 缺陷 | 缺陷 CRUD、状态机流转、关联用例、日志附件、原始执行证据下钻；编号全局唯一并带来源前缀（手工 `BUG-` / AI `AI_BUG-` / 自动化 `Auto_BUG-`，软删不复用）；详情页可上传/预览/下载/删除截图（`data/bug-screenshots/<缺陷编号>/`，`pic_<编号>_001` 递增，单张 10MB、单号 30 张） |
 | 断言库 | 可复用断言规则按项目/功能点共享，接口用例以 `lib:编号` 引用，支持 JSON Schema 断言与失败差异对比 |
 | 数据库查询检查点 | 接口断言新增 `db:` 目标（`db:` 比首行首列 / `db:rows:` 比行数 / `db:json:` 比结果 JSON），场景新增「数据库」步骤；连接取自执行环境（口令走 OS 密钥库），只读强制（拒绝写操作/多语句/INTO）、超时与 200 行上限，`{{var}}` 参数化；适配 MySQL/PostgreSQL 协议族国产库（OceanBase/TiDB/GBase/金仓/瀚高/openGauss/GaussDB/神通）、达梦、ClickHouse、SQLite、MongoDB、Redis，驱动懒加载缺装给提示；查询语句与结果进统一证据 |
 | 知识库 | 待审池 → 正式库、版本、审核、引用保护、全文检索 |
@@ -177,7 +191,7 @@ stop.bat          :: Windows
 | 独立数据池 | 跨用例与场景共享一份测试数据，项目内名称唯一、支持解析预览；用例扩展字段与场景数据源统一按 `pool:<名称>` 引用，解析复用用例测试数据口径，不另造取数逻辑 |
 | Web 探索性测试（GAP-45） | MCP 驱动真实浏览器（`backend/scripts/browser_mcp_server.py`，由「探索性测试设置」里的 `mcpCommand` 一条完整启动命令拉起）按「读快照 → 决策 → 动作 → 观测」循环探索，无脚本发现「用例追不上功能」的漏网问题；正常步按「单步截图数」留证，异常步另强制 3 张截图 + 双锚点 ±N 秒日志切片 + 网络快照 + 控制台错误 + traceId 组成证据包；口令/令牌输入按 PII 规则脱敏；产物先进待审池人工审核，通过才转缺陷 |
 | 知识 / 报告片段跨项目复用（GAP-42） | 片段在来源项目维护一份，目标报告登记引用关系，渲染 / 导出实时读取正文，避免多份副本漂移；被引用的片段禁止删除 |
-| 数据留存与归档（GAP-44） | 按数据类型（轮次 / 自动化执行 / 证据 / 日志 / 待办）配置保留天数与到期动作（归档 / 软删 / 仅留摘要）；引用保护（缺陷引用的证据、矩阵引用的记录到期不清）；到期数据压缩归档到 `data/archive/` 并可检索回看原文；支持干跑预览与启动自动清理 |
+| 数据留存与归档（GAP-44） | 按数据类型（轮次 / 自动化执行 / 证据 / 日志 / 待办 / 缺陷截图）配置保留天数与到期动作（归档 / 软删 / 仅留摘要）；引用保护（缺陷引用的证据、矩阵引用的记录到期不清）；到期数据压缩归档到 `data/archive/` 并可检索回看原文；支持干跑预览与启动自动清理 |
 
 ### 工作台配置
 
@@ -188,7 +202,7 @@ stop.bat          :: Windows
 | 模块树管理 | 三级结构维护（子节点层级角色按父节点递进：模块→子模块→功能）、能力绑定与专属提示词 |
 | 系统配置 | 全量配置项读写 |
 | 测试环境配置 | 多套命名环境；每套可挂多台应用服务器并逐台探测、逐台画资源曲线；数据库类型覆盖 MySQL / PostgreSQL / SQL Server / Oracle / SQLite、国产库（达梦、人大金仓、瀚高、openGauss、GaussDB、OceanBase、TiDB、GBase、神通 OSCAR、ClickHouse）与非关系库（MongoDB、Redis、Elasticsearch、Cassandra、InfluxDB）；口令入系统密钥库 |
-| 数据备份 | 库快照备份、整包备份、恢复 |
+| 数据备份 | 库快照备份、整包备份、恢复；「备份包含缺陷截图」开关（默认关闭）控制整包 / 项目资产包 / 留存归档是否带截图 |
 | 数据留存与归档 | 各数据类型保留天数与到期动作、到期预览、干跑统计、立即清理、归档区检索与原文回看（GAP-44） |
 | 探索性测试设置 | 最大步数 / 时长 / 单步超时 / 单步截图数（异常步固定另补 3 张）、记录选择器、输入脱敏开关、日志切片窗口与来源、MCP 服务命令与钉住工具清单（GAP-45） |
 | 项目资产包 | 结构包导出 / 预览 / 改名导入：模块、版本、需求、用例、缺陷、知识、脚本、断言规则；id 全部重分配、外键重映射，不含密钥与执行历史 |
@@ -204,9 +218,14 @@ stop.bat          :: Windows
 
 1. **环境变量**（开箱即用）
    - 通用：`AITP_AI_PROVIDER` / `AITP_AI_BASE_URL` / `AITP_AI_API_KEY` / `AITP_AI_MODEL`
-   - 分厂商：`OPENAI_API_KEY` / `DASHSCOPE_API_KEY` / `DEEPSEEK_API_KEY` / `OLLAMA_HOST` …
+   - 分厂商：`OPENAI_API_KEY` / `DASHSCOPE_API_KEY` / `DEEPSEEK_API_KEY` / `SENSENOVA_API_KEY` / `MINIMAX_API_KEY` / `BIGMODEL_API_KEY` / `XIAOMI_API_KEY` / `MOONSHOT_API_KEY` / `ARK_API_KEY` / `HUNYUAN_API_KEY` / `SILICONFLOW_API_KEY` / `OPENROUTER_API_KEY` / `GITEE_AI_API_KEY` / `OLLAMA_HOST` …
 2. **工作台配置**：AI 配置页新增供应商档案，设置优先级
 3. **本地大模型**：Ollama（`ollama_native` 协议）
+
+内置供应商（填 Key 即用）：OpenAI、通义千问、DeepSeek 深度求索、商汤日日新、**MiniMax（国内 / 国际）**、**智谱 BigModel**、**小米 MiMo**、**Kimi 月之暗面（国内 / 国际）**、**火山引擎方舟（豆包）**、**腾讯云混元**、**硅基流动 SiliconFlow**、**OpenRouter**、**模力方舟（Gitee AI）**、自定义兼容接口；本地为 Ollama。
+
+- **接入方式（按厂商自动出现）**：同一供应商可在「按量 API / 订阅套餐（Agent / Coding / Token Plan）」间切换，切套餐会自动带出对应接口地址、协议与 Key 格式提示（如小米 `token-plan-cn.*` + `tp-/ttp-`、MiniMax / Kimi 的 Coding 套餐走 Anthropic 兼容端点）。
+- **协议**：OpenAI 兼容（`openai_compat`）、Anthropic Messages 兼容（`anthropic`，覆盖官方与各家 Coding 套餐）、Ollama 原生（`ollama_native`）。
 
 ### 优先级与自动降级
 
@@ -290,7 +309,7 @@ cd frontend && npm run build                                              # 前�
 - `check_ai_live` 被 runner 永久排除：它打真实商汤模型接口、烧额度且非确定性，需要时单独手工跑。
 - 新增门禁脚本只要放进 `backend/scripts` 且命名 `check_*.py`，runner 自动纳入，无需改 runner。
 
-门禁清单（72 个脚本 = 71 个 `check_*.py` + `smoke_api.py`，与 `backend/scripts` 下真实脚本一一对应；其中 `check_ai_live` 不进 runner，实际执行 71 项）：
+门禁清单（74 个脚本 = 73 个 `check_*.py` + `smoke_api.py`，与 `backend/scripts` 下真实脚本一一对应；其中 `check_ai_live` 不进 runner，实际执行 73 项）：
 
 | 脚本 | 含义 | 失败怎么查 |
 | --- | --- | --- |
@@ -308,6 +327,7 @@ cd frontend && npm run build                                              # 前�
 | `check_automation.py` | 自动化脚本资产与执行引擎：四类脚本 CRUD / 子进程执行留痕 / 结果回写；`from-output` 转脚本资产；AI 一键入库走独立编号（`AI_AUTO-W/AI_AUTO-A/AI_AUTO-I/AI_PERF` 与 `AI_SQL` 前缀），手工编号不受影响 | 看自动化执行记录与引擎日志（`data/aitp.log`） |
 | `check_automation_writeback.py` | 自动化结果回写用例/轮次（GAP-07） | 核对回写服务与轮次状态机 |
 | `check_backup_schedule.py` | 定时备份与保留策略（GAP-13） | 看备份服务与 `data/` 目录保留逻辑 |
+| `check_bug_screenshots.py` | 缺陷编号与截图（迁移 074）：来源列与三类前缀（BUG / AI_BUG / Auto_BUG）、缺陷号全局唯一、软删不复用、取号进写事务、截图命名 `pic_<编号>_001` 与单张 10MB / 单号 30 张上限、删除后序号不回退、截图默认不进整包 / 资产包 / 留存 | 看 `db/migrations/074_bug_numbering_screenshots.sql` 与 `repositories/bug_repo.py::next_bug_no` |
 | `check_case_test_data.py` | 用例多行步骤/预期按行配对 + 测试数据多格式解析（内联文本/JSON、txt/csv/xlsx/json/sql 文件、URL 与未知格式拒绝）、自动化执行消费 `AITP_TEST_DATA`、JMeter 指向解析后的 `testdata.csv`（BUG-44/45） | 看测试数据解析服务与用例步骤/数据落库 |
 | `check_ci_boundary.py` | CI Token 访问边界：路由白名单、项目范围、有效期、吊销、审计区分（GAP-24） | 看 CI 令牌鉴权中间件与审计来源标记 |
 | `check_ci_notifications.py` | CI 触发与 Webhook 通知（GAP-10），自带本地 HTTP 接收器 | 看令牌哈希、通知渠道生效范围与发送记录 |
@@ -333,6 +353,7 @@ cd frontend && npm run build                                              # 前�
 | `check_knowledge_recall.py` | 知识语义召回评估（D1 条件项）：混合检索 vs 纯向量/关键词的召回命中对比 | 看召回评估脚本与 `docs/AITP-三期-D1-召回评估.md` |
 | `check_knowledge_reuse.py` | 知识 / 报告片段跨项目复用：片段 CRUD、引用关系、渲染实时读正文、被引用禁删（GAP-42） | 看 `report_fragment_repo.py` 与 `biz_report_fragment*` |
 | `check_lab.py` | P6 AI 实验室 | 看实验室能力清单与临时 mock 服务输出 |
+| `check_numbering_uniqueness.py` | 编号唯一性兜底：需求 / 场景 / 场景执行主编号的唯一索引与列组合、同号拦截与跨项目放行、老库覆盖安装消歧（保留 id 最小一条、其余顺延到同组最大号之后、不误伤无重复行）、软删可复用、全部主编号列与取号调用点登记不漏项、需求外部导入幂等键与用例 / 缺陷同口径、矩阵取号持写锁 | 看 `db/migrations/075_no_unique_indexes.sql`、`repositories/numbering.py` 与 `services/execution_matrix_service.py` |
 | `check_observability.py` | 可观测性：traceId 贯穿日志与响应头、只记异常/慢请求（GAP-23） | 看 `backend/aitp/observability` 与日志格式 |
 | `check_onboarding.py` | 首启引导状态（GAP-18） | 看迁移 045 与 onboarding API |
 | `check_output_schema.py` | 输出结构校验：四个能力的 JSON Schema、字段缺失与类型错位的拦截、重试口径（GAP-28） | 看 `backend/aitp/ai/output_schema.py` 与能力映射 |
@@ -388,7 +409,7 @@ cd frontend && npm run build                                              # 前�
 ## 端到端测试（E2E）
 
 基于 Playwright 的全流程端到端测试，位于 `frontend/e2e/`，配置 `frontend/playwright.config.ts`。
-当前 **11 个 spec / 30 条用例**，串行执行；用例代码与前端共用 strict 类型检查（`tsconfig.e2e.json`）。
+当前 **12 个 spec / 33 条用例**，串行执行；用例代码与前端共用 strict 类型检查（`tsconfig.e2e.json`）。
 工装自动拉起**隔离环境**（独立后端 8762 + 临时库、mock 模型 18790/18791、vite 5199），
 绝不触碰正式 8760 与 `data/aitp.db`；teardown 树杀进程并删临时目录。
 
@@ -414,10 +435,10 @@ cd frontend && npx playwright test               # 串行 workers=1
 ```
 backend/
   aitp/
-    api/          43 个蓝图 / 454 个接口
+    api/          43 个蓝图 / 458 个接口
     ai/           resolver、client、masking、adapters、cost、output_schema
     common/       常量、校验、分页、密钥库、安全工具
-    db/           连接与迁移（71 份）
+    db/           连接与迁移（73 份）
     repositories/ 参数化 SQL 仓储层
     services/     知识落盘、报告导出、备份恢复、执行矩阵、留存归档、探索性测试、外部导入等
     prompts/      提示词模板库
@@ -430,7 +451,7 @@ frontend/
     components/   通用组件
     views/        60 个页面组件
   e2e/            Playwright 端到端测试（隔离工装）
-data/             运行时数据（SQLite、日志、密钥、归档、探索性截图与日志切片）
+data/             运行时数据（SQLite、日志、密钥、归档、缺陷截图 bug-screenshots/、探索性截图与日志切片）
 knowledge/        知识库 Markdown 落盘目录
 ```
 

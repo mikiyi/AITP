@@ -4,7 +4,7 @@ English | [简体中文](README.md)
 
 A personal AI testing workstation — **single-user, local-first, offline-capable** — a quality-control tool built around **prompt engineering and data masking for LLM calls**.
 
-Current version **v2.4.3**: the same value served by `aitp.__version__`, `db/migrator.py::APP_VERSION`,
+Current version **v2.4.5**: the same value served by `aitp.__version__`, `db/migrator.py::APP_VERSION`,
 the `appVersion` field of `GET /api/v1/health` and the `app_version` recorded by each migration.
 
 It folds the AI lab, test cases, defects, log analysis, SQL analysis, regression, reports, knowledge base, task list and workspace configuration into one closed loop of LLM-assisted testing:
@@ -13,6 +13,20 @@ It folds the AI lab, test cases, defects, log analysis, SQL analysis, regression
 - All data lives in a local SQLite file (`data/aitp.db`), bound to this machine only — never exposed to the LAN or the internet.
 - AI settings are read from local environment variables, from in-app configuration, and from local models (Ollama).
 - When there is no cloud model, the model is unavailable, or the network is down, AITP degrades to local rules automatically and never blocks the main workflow.
+
+## v2.4.5 changes
+
+- **Globally unique defect numbers**: manual defects use `BUG-001`, AI-processed findings use `AI_BUG-001`, automation scripts / scenarios / matrices use `Auto_BUG-001`, each sequence incrementing on its own; numbers are globally unique and never reused after soft delete (so screenshot filenames are never overwritten); cross-project duplicates in legacy databases are shifted behind the current maximum during the startup migration
+- **Defect screenshots**: the defect detail page supports uploading, previewing, downloading and deleting screenshots; files live in `data/bug-screenshots/<bugNo>/` named `pic_<bugNo>_001.png` and increment in order; 10MB per file, 30 per defect, bitmap formats only (PNG/JPEG/GIF/WebP/BMP)
+- **Backup switch**: "Settings -> Data backup & restore -> Backup content" adds "Include defect screenshots", off by default; when on, full bundles, project asset packages and retention archives all include screenshots, and when off all three exclude them (files stay on this machine and are excluded from retention cleanup)
+- **Quality engineering**: new `check_bug_screenshots.py` gate and E2E spec 12 (number prefixes, global uniqueness, no reuse, screenshot naming/limits/deletion, all three switch targets)
+
+## v2.4.4 changes
+
+- **AI case-output export**: cases not yet imported get a `草稿-001` draft number in the "case number" column; adopting or importing assigns the official number, and draft numbers never land in the database
+- **Automation scripts**: new scripts belong to the current project with a default framework and starter content; category stats are project-scoped; schedule targets come from scenario/script dropdowns; execution and batch execution are de-duplicated; edits accept a change note
+- **Scenario and database-script forms** carry inline variable-usage hints; copied scenarios count as references; schedule "next run" shows local time
+- **Quality engineering**: E2E specs join the type gate (`tsconfig.e2e.json`); a code-noise gate was added; dead code and duplicated frontend scaffolding were cleaned up
 
 ## Running demo
 
@@ -84,7 +98,7 @@ The launcher checks the port first: if AITP is already running it just opens the
 
 ## Feature map
 
-Frontend: 56 routes / 60 page components. Backend: 43 blueprints / 454 endpoints, all under `/api/v1`.
+Frontend: 56 routes / 60 page components. Backend: 43 blueprints / 458 endpoints, all under `/api/v1`.
 
 ### First-launch tour and demo project
 
@@ -161,7 +175,7 @@ Page: **Task list** (`/todos`)
 | Projects | CRUD, current-project switching, status management |
 | Requirements | Maintenance, direct feature-point linking (module / sub-module / feature), bulk delete, export |
 | Test cases | CRUD, status transitions, xlsx import/export, bulk execution |
-| Defects | CRUD, state-machine transitions, linked test cases, log attachments, drill-down into original execution evidence |
+| Defects | CRUD, state-machine transitions, linked test cases, log attachments, drill-down into original execution evidence; globally unique numbers with source prefixes (manual `BUG-`, AI `AI_BUG-`, automation `Auto_BUG-`, never reused after soft delete); upload / preview / download / delete screenshots on the detail page (`data/bug-screenshots/<bugNo>/`, `pic_<no>_001` incrementing, 10MB per file, 30 per defect) |
 | Assertion library | Reusable assertion rules shared per project/feature point, referenced from interface cases as `lib:<code>`, JSON Schema assertions with failure diffs |
 | Database query checkpoints | Interface assertions gain a `db:` target (`db:` compares the first cell, `db:rows:` the row count, `db:json:` the result JSON) and scenarios gain a "database" step; connections come from the execution environment (passwords via the OS secret store), read-only enforced (writes / multi-statements / INTO rejected), timeout and 200-row cap, `{{var}}` parameterization; covers MySQL/PostgreSQL-protocol domestic databases (OceanBase/TiDB/GBase/KingbaseES/Highgo/openGauss/GaussDB/OSCAR), Dameng, ClickHouse, SQLite, MongoDB and Redis with lazy drivers and install hints when missing; query text and results land in the unified evidence |
 | Knowledge base | Pending pool → official library, versioning, review, reference protection, full-text search |
@@ -169,12 +183,12 @@ Page: **Task list** (`/todos`)
 | Execution and evidence | Interface / automation / manual / regression / **exploratory** runs each write one unified evidence snapshot, drillable from runs, defects and reports |
 | Regression checklist | CRUD, AI-generated regression items, auto items really executed by the server with evidence, manual items require evidence to pass |
 | Scenario automation | No-code multi-step scenarios organised in **Web / App / API** tabs (App native steps are being wired up, currently a placeholder); steps can be interface / browser / database / **automation script**, each reusing the interface assertion engine (an automation-script step references a Web/App/API automation script by number and runs it with the scenario, its run record landing in the unified evidence — reusing the automation engine instead of a second execution wheel): JSONPath extraction feeds `{{var}}` into later steps (database-step query results are extractable too), a failed step can stop or continue the run, the whole scenario can be driven record by record from a data pool, and every run is kept in history. Scenarios carry an SCN number and an enabled/disabled status; the list supports name/number keyword and status filters, and the status can be set in the create/edit form. Naming: scripts = Python code (Web / App / API automation scripts with AUTO-W/AUTO-A/AUTO-I prefixes, PERF for performance, SQL for database scripts; AI one-click imports use the separate **AI_SQL-xxx** sequence for database scripts and **AI_AUTO-W/AI_AUTO-A/AI_AUTO-I/AI_PERF-xxx** for automation scripts, so the source is obvious at a glance), scenarios = no-code orchestration; schedules carry SCH numbers. A script is "in use" only when referenced by an automation step inside a scenario (the hover shows the referencing scenario SCN numbers; schedules and plain execution history do not count): hovering the button shows the referencing numbers as an at-most-10 item enumeration, with a "view more" dialog listing every reference beyond that; copied scenarios also count as references. Database-script and scenario-step forms carry inline variable-usage hints with {{var}} examples; new automation scripts start with a runnable default framework and starter content; category stats are scoped to the current project; schedule targets are picked from scenario/script dropdowns |
-| AI one-click import | AI-lab output turns into assets directly: the SQL data-generation statement can be added as a database script in one click, and automation-script generation adds a web/app/API automation script in one click according to the produced code type; the import carries an automatic `AI_`-prefixed number into the matching menu and the badge updates in real time |
+| AI one-click import | AI-lab output turns into assets directly: the SQL data-generation statement can be added as a database script in one click, and automation-script generation adds a web/app/API automation script in one click according to the produced code type; the import carries an automatic `AI_`-prefixed number into the matching menu and the badge updates in real time. When case-type output is exported to Excel, cases not yet imported get a `草稿-001` draft number; adopting or importing them assigns the official number (draft numbers never land in the database) |
 | Standalone data pool | One shared test-data set reused by cases and scenarios: unique name per project, parse preview, referenced as `pool:<name>` from case extension fields and scenario data sources, parsed by the same case test-data engine instead of a second fetch path |
 | Execution matrix (GAP-43) | Fan a batch of cases across multiple environments × endpoints (app servers), dispatch once and really run each cell; per-case cross-cell attribution (common pass / common failure / env-specific / endpoint-specific / mixed); one-click defect conversion for common failures with evidence attached; production environments require explicit confirmation to dispatch |
 | Web exploratory testing (GAP-45) | An MCP-driven real browser (started by the `mcpCommand` you configure under "Exploratory testing settings"; `backend/scripts/browser_mcp_server.py`) explores in a read-snapshot → decide → act → observe loop, finding gaps that scripted cases miss; normal steps keep evidence at the configured per-step screenshot count, anomalous steps force 3 screenshots plus a dual-anchor ±N-second log slice, network snapshot, console errors and traceId as an evidence pack; password/token inputs are masked per PII rules; findings go to the pending pool for human review first and only become defects after approval |
 | Knowledge / report fragment reuse (GAP-42) | A fragment is maintained once in its source project; target reports register a reference and rendering / export reads the body live, avoiding drifting copies; referenced fragments cannot be deleted |
-| Data retention and archival (GAP-44) | Per-data-type retention days and expiry actions (archive / soft-delete / summary-only) for runs, automation runs, evidence, logs and todos; reference protection (bug-linked evidence, matrix-linked records survive expiry); expired data is zipped into `data/archive/` and searchable with original readback; dry-run preview and startup auto-cleanup supported |
+| Data retention and archival (GAP-44) | Per-data-type retention days and expiry actions (archive / soft-delete / summary-only) for runs, automation runs, evidence, logs, todos and defect screenshots (screenshots only when the backup switch is on); reference protection (bug-linked evidence, matrix-linked records survive expiry); expired data is zipped into `data/archive/` and searchable with original readback; dry-run preview and startup auto-cleanup supported |
 
 ### Workspace configuration
 
@@ -185,7 +199,7 @@ Page: **Task list** (`/todos`)
 | Module tree | Three-level structure (a child's level role follows its parent: module -> sub-module -> feature), capability binding and per-node prompt |
 | System settings | Read/write all configuration items |
 | Test environment configuration | Multiple named environments, credentials in the system keystore, reachability probe |
-| Data backup | Database snapshot backup, full-bundle backup, restore |
+| Data backup | Database snapshot backup, full-bundle backup, restore; an "Include defect screenshots" switch (off by default) controls whether full bundles / project asset packages / retention archives carry screenshots |
 | Data retention and archival | Per-type retention days and expiry actions, expiry preview, dry-run, run cleanup now, archive search and original readback (GAP-44) |
 | Exploratory testing settings | Max steps / duration / per-step timeout / per-step screenshot count (anomalous steps force 3 more), record selectors, input masking toggle, log-slice window and sources, MCP server command and pinned-tool allowlist (GAP-45) |
 | Project asset package | Structure-package export / preview / rename-on-import: modules, versions, requirements, cases, defects, knowledge, scripts, assertion rules; every id is reallocated and foreign keys remapped; keystores and execution history never leave the package |
@@ -201,9 +215,14 @@ Three-level priority: **workspace configuration (database) > environment variabl
 
 1. **Environment variables** (work out of the box)
    - Generic: `AITP_AI_PROVIDER` / `AITP_AI_BASE_URL` / `AITP_AI_API_KEY` / `AITP_AI_MODEL`
-   - Per provider: `OPENAI_API_KEY` / `DASHSCOPE_API_KEY` / `DEEPSEEK_API_KEY` / `OLLAMA_HOST` …
+   - Per provider: `OPENAI_API_KEY` / `DASHSCOPE_API_KEY` / `DEEPSEEK_API_KEY` / `SENSENOVA_API_KEY` / `MINIMAX_API_KEY` / `BIGMODEL_API_KEY` / `XIAOMI_API_KEY` / `MOONSHOT_API_KEY` / `ARK_API_KEY` / `HUNYUAN_API_KEY` / `SILICONFLOW_API_KEY` / `OPENROUTER_API_KEY` / `GITEE_AI_API_KEY` / `OLLAMA_HOST` …
 2. **Workspace configuration**: add provider profiles on the AI configuration page and set their priorities
 3. **Local models**: Ollama (`ollama_native` protocol)
+
+Built-in providers (just fill in a key): OpenAI, DashScope (Qwen), DeepSeek, SenseNova, **MiniMax (CN / Global)**, **Zhipu BigModel**, **Xiaomi MiMo**, **Kimi by Moonshot (CN / Global)**, **Volcano Engine Ark (Doubao)**, **Tencent Cloud Hunyuan**, **SiliconFlow**, **OpenRouter**, **MoArk (Gitee AI)**, plus a custom compatible endpoint; Ollama for local models.
+
+- **Access mode (shown per provider)**: switch a provider between **pay-as-you-go API** and **subscription plans (Agent / Coding / Token Plan)**; choosing a plan auto-fills the matching endpoint, protocol and key-format hint (e.g. Xiaomi `token-plan-cn.*` + `tp-/ttp-`; MiniMax / Kimi coding plans use Anthropic-compatible endpoints).
+- **Protocols**: OpenAI-compatible (`openai_compat`), Anthropic Messages-compatible (`anthropic`, covering the official API and vendor coding plans), Ollama native (`ollama_native`).
 
 ### Priority and automatic degradation
 
@@ -293,8 +312,8 @@ cd frontend && npm run build                                              # fron
 - Any new gate script dropped into `backend/scripts` named `check_*.py` is picked up
   automatically without touching the runner.
 
-Gate inventory (72 entries = 71 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
-scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 71 items actually
+Gate inventory (74 entries = 73 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
+scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 73 items actually
 execute):
 
 | Script | Covers | When it fails, look at |
@@ -313,6 +332,7 @@ execute):
 | `check_automation.py` | Automation script assets and execution engine: CRUD across four script categories, subprocess execution with traces, result write-back; `from-output` turns AI output into a script asset; AI one-click imports use separate numbers (`AI_AUTO-W/AI_AUTO-A/AI_AUTO-I/AI_PERF` and `AI_SQL` prefixes) without disturbing manual numbering | execution records and engine log (`data/aitp.log`) |
 | `check_automation_writeback.py` | Automation result writeback to cases/rounds (GAP-07) | writeback service and round state machine |
 | `check_backup_schedule.py` | Scheduled backups and retention (GAP-13) | backup service and `data/` retention logic |
+| `check_bug_screenshots.py` | Defect numbering and screenshots (migration 074): source column with three prefixes (BUG / AI_BUG / Auto_BUG), globally unique defect numbers, no reuse after soft delete, numbering inside a write transaction, screenshot naming `pic_<no>_001` with 10MB per file / 30 per defect limits, sequence not rewound after deletion, screenshots excluded from bundle / asset package / retention unless enabled | `db/migrations/074_bug_numbering_screenshots.sql` and `repositories/bug_repo.py::next_bug_no` |
 | `check_case_test_data.py` | Case steps/expectations paired line by line + test-data parsing in many formats (inline text/JSON, txt/csv/xlsx/json/sql files, URLs and unknown formats refused), automation consumes `AITP_TEST_DATA`, JMeter points at the parsed `testdata.csv` (BUG-44/45) | the test-data parsing service and case step/data persistence |
 | `check_ci_boundary.py` | CI token access boundary: route allowlist, project scope, expiry, revocation, audit source (GAP-24) | CI token auth checks and audit source marking |
 | `check_ci_notifications.py` | CI triggers and webhook notifications (GAP-10), self-hosted HTTP collector | token hashing, channel scoping, delivery records |
@@ -334,6 +354,7 @@ execute):
 | `check_kb_ask.py` | Knowledge-base Q&A recall fallback (natural language must retrieve formal entries) | KB retrieval and `knowledge/` storage |
 | `check_knowledge_governance.py` | P8 knowledge governance: approval, versioning, reference protection, reindex | governance services and Markdown persistence |
 | `check_lab.py` | P6 AI lab | lab capability list and mock server output |
+| `check_numbering_uniqueness.py` | Numbering backstop: unique indexes and column tuples for requirement / scenario / scenario-run numbers, same-number blocking with cross-project allowance, legacy upgrade de-duplication (keeps the lowest id, re-queues the rest behind the group maximum, never touches clean rows), number reuse after soft delete, every master numbering column and `next_no` call site registered, requirement external import key at the same strictness as cases and defects, matrix numbering holds the write lock | `db/migrations/075_no_unique_indexes.sql`, `repositories/numbering.py` and `services/execution_matrix_service.py` |
 | `check_observability.py` | Observability: traceId across logs and response headers, only failures/slow requests logged (GAP-23) | `backend/aitp/observability` and log format |
 | `check_onboarding.py` | First-run onboarding state (GAP-18) | migration 045 and the onboarding API |
 | `check_output_schema.py` | Output structure validation: JSON Schema for four capabilities, blocking missing fields and type mismatches, retry semantics (GAP-28) | `backend/aitp/ai/output_schema.py` and the capability mapping |
@@ -395,7 +416,7 @@ run as the source of truth. On CI `check_isolation_matrix` is excluded via `--sk
 ## End-to-end tests (E2E)
 
 Playwright-based full-flow E2E tests live in `frontend/e2e/`, configured by `frontend/playwright.config.ts`.
-Currently **11 specs / 30 cases**, run serially; spec code shares the strict type check with the frontend (`tsconfig.e2e.json`).
+Currently **12 specs / 33 cases**, run serially; spec code shares the strict type check with the frontend (`tsconfig.e2e.json`).
 The harness boots an **isolated environment** (separate backend on 8762 + temp DB, mock model on
 18790/18791, vite on 5199) and never touches the live 8760 service or `data/aitp.db`; teardown kills the
 process tree and removes the temp directory.
@@ -422,10 +443,10 @@ cd frontend && npx playwright test               # serial, workers=1
 ```
 backend/
   aitp/
-    api/          43 blueprints / 454 endpoints
+    api/          43 blueprints / 458 endpoints
     ai/           resolver, client, masking, adapters, cost, output_schema
     common/       constants, validation, pagination, keystore, security utilities
-    db/           connections and migrations (71 files)
+    db/           connections and migrations (73 files)
     repositories/ parameterized SQL repository layer
     services/     knowledge persistence, report export, backup/restore, execution matrix, retention/archival, exploratory testing, external import
     prompts/      prompt template library
@@ -438,7 +459,7 @@ frontend/
     components/   shared components
     views/        60 page components
   e2e/            Playwright end-to-end tests (isolated harness)
-data/             runtime data (SQLite, logs, keystore, archives, exploratory screenshots and log slices)
+data/             runtime data (SQLite, logs, keystore, archives, defect screenshots in bug-screenshots/, exploratory screenshots and log slices)
 knowledge/        Markdown knowledge base storage
 ```
 
