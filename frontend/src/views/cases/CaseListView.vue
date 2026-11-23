@@ -3,6 +3,10 @@
     <div class="page-header">
       <h2 class="page-title">测试用例</h2>
       <div class="toolbar" style="margin: 0">
+        <el-radio-group v-model="viewMode" size="small" @change="onViewModeChange">
+          <el-radio-button value="list">列表</el-radio-button>
+          <el-radio-button value="mindmap">脑图</el-radio-button>
+        </el-radio-group>
         <ProjectSwitcher />
         <el-button :icon="Upload" @click="importVisible = true">导入 xlsx</el-button>
         <BaseExportMenu
@@ -46,7 +50,16 @@
       </div>
 
       <div class="panel panel-pad">
+        <CaseMindmapPanel
+          v-if="viewMode === 'mindmap'"
+          :nodes="moduleNavNodes"
+          :cases="mindmapCases"
+          :truncated="mindmapTruncated"
+          :case-limit="MINDMAP_CASE_LIMIT"
+          @open="openCaseDetailById"
+        />
         <BaseProTable
+          v-else
           ref="tableRef"
           :columns="columns"
           :fetcher="fetcher"
@@ -346,6 +359,7 @@ import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from
 import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
 import ModuleTree, { type ModuleTreeExpose } from '@/components/ModuleTree.vue'
+import CaseMindmapPanel from './CaseMindmapPanel.vue'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import { caseApi, knowledgeApi, moduleApi, projectVersionApi, requirementApi, testEnvApi, testRunApi } from '@/api'
 import type { PagePayload } from '@/api/request'
@@ -407,6 +421,51 @@ function openKnowledge(row: TestCase): void {
 }
 const appStore = useAppStore()
 const tableRef = ref<TableExpose | null>(null)
+
+// ---- 四期专项 H：用例脑图视图（只读，纯前端 ECharts tree）----
+const MINDMAP_CASE_LIMIT = 300
+const PAGE_SIZE_LIMIT = 100
+const viewMode = ref<'list' | 'mindmap'>(route.query.view === 'mindmap' ? 'mindmap' : 'list')
+const mindmapCases = ref<TestCase[]>([])
+const mindmapTruncated = ref(false)
+
+/** 脑图数据装配：功能点树走 moduleNavNodes，用例按当前项目/版本分页取够上限。 */
+async function loadMindmapCases(): Promise<void> {
+  const projectId = appStore.currentProjectId
+  if (!projectId) {
+    mindmapCases.value = []
+    mindmapTruncated.value = false
+    return
+  }
+  const versionId = Number(route.query.versionId) || undefined
+  const collected: TestCase[] = []
+  for (let pageNum = 1; pageNum <= Math.ceil(MINDMAP_CASE_LIMIT / PAGE_SIZE_LIMIT); pageNum += 1) {
+    const page = await caseApi.list({
+      projectId, versionId, pageNum, pageSize: PAGE_SIZE_LIMIT,
+    })
+    collected.push(...page.list)
+    const total = Number(page.total ?? collected.length)
+    if (collected.length >= total) {
+      mindmapTruncated.value = total > MINDMAP_CASE_LIMIT
+      break
+    }
+  }
+  mindmapCases.value = collected.slice(0, MINDMAP_CASE_LIMIT)
+}
+
+function onViewModeChange(value: string | number | boolean): void {
+  const mode = value === 'mindmap' ? 'mindmap' : 'list'
+  void router.replace({
+    query: { ...route.query, view: mode === 'mindmap' ? 'mindmap' : undefined },
+  })
+  if (mode === 'mindmap') {
+    void loadMindmapCases()
+  }
+}
+
+function openCaseDetailById(caseId: number): void {
+  void router.push(`/test-cases/${caseId}`)
+}
 
 const caseTypeOptions = [
   { label: '功能测试', value: 'functional' },
@@ -613,6 +672,9 @@ watch(
   () => route.query.versionId,
   () => {
     void loadModuleNav()
+    if (viewMode.value === 'mindmap') {
+      void loadMindmapCases()
+    }
   },
 )
 
@@ -1262,13 +1324,30 @@ useProjectScope({
     void loadModuleOptions()
     void loadVersionOptions()
     void loadModuleNav()
+    if (viewMode.value === 'mindmap') {
+      void loadMindmapCases()
+    }
   },
   resetScopedFilters: () => {
     clearModuleNav()
     // 旧项目的版本、功能点筛选在新项目里不存在，留着会把列表筛成空。
     tableRef.value?.clearFilter(['versionId', 'moduleId'])
+    mindmapCases.value = []
   },
 })
+
+watch(
+  () => route.query.view,
+  (value) => {
+    const mode = value === 'mindmap' ? 'mindmap' : 'list'
+    if (mode === viewMode.value) return
+    viewMode.value = mode
+    if (mode === 'mindmap') {
+      void loadModuleNav()
+      void loadMindmapCases()
+    }
+  },
+)
 </script>
 
 <style scoped>

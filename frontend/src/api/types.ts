@@ -48,6 +48,54 @@ export interface Requirement {
   createdAt?: string
   updatedAt?: string
 }
+
+/** 四期专项 D：需求批量拆分的一条建议（勾选后批量采纳）。 */
+export interface RequirementImportItem {
+  title: string
+  description: string
+  acceptance: string
+  modulePath: string
+  priority: string
+}
+
+/** 拆分结果：批次、指纹、重复标记与降级说明。 */
+export interface RequirementImportSplit {
+  generated: boolean
+  degraded: boolean
+  duplicated: boolean
+  fingerprint: string
+  importId: number | null
+  fileName: string
+  chars: number
+  items: RequirementImportItem[]
+  schema: Record<string, unknown>
+  message: string
+}
+
+/** 批量采纳结果。 */
+export interface RequirementImportAdopt {
+  importId: number
+  fingerprint: string
+  created: number
+  skipped: number
+  ids: number[]
+  skippedTitles: string[]
+  message: string
+}
+
+/** 导入批次（用于重复导入提示与来源追溯）。 */
+export interface RequirementImportBatch {
+  id: number
+  projectId: number
+  fingerprint: string
+  fileName: string
+  itemCount: number
+  adoptedCount: number
+  chars: number
+  createdAt: string
+  updatedAt: string
+}
+
 export type ModuleNodeType = 'module' | 'submodule' | 'feature'
 
 export interface ModuleNode {
@@ -3134,4 +3182,97 @@ export interface ExplorationStep {
 export interface ExplorationSessionDetail {
   session: ExplorationSession
   steps: ExplorationStep[]
+}
+
+/** 四期专项 F：登录态档案（storageState 只存本机，不含明文回传）。 */
+export interface AuthSession {
+  id: number
+  projectId: number
+  envId: number | null
+  role: string
+  originCount: number
+  cookieCount: number
+  expiresAt: string
+  expired: boolean
+  note: string
+  lastUsedAt: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AuthSessionPrecheck {
+  cookieCount: number
+  originCount: number
+  earliestExpiry: number
+  expired: boolean
+  checkedAt: number
+}
+
+/** 四期专项 B：嵌入通道与向量索引概览。 */
+export interface KnowledgeEmbeddingStatus {
+  embedding: {
+    usable: boolean
+    enabled: boolean
+    protocol: string
+    baseUrl: string
+    model: string
+    local: boolean
+    reason: string
+  }
+  chunkCount: number
+  indexedArticles: number
+  states: Record<string, number>
+  /** rebuild 接口额外回带 */
+  state?: string
+  articles?: number
+  embedded?: number
+  reason?: string
+}
+
+/** 四期专项 A：AI 修复建议（接口断言失败 → 诊断 → 待审采纳）。 */
+export interface FixSuggestion {
+  id: number
+  suggestionNo: string
+  projectId: number
+  executionId: number
+  evidenceId: number | null
+  caseId: number
+  caseNo: string
+  source: string
+  targetType: string
+  targetLabel: string
+  suggestion: Record<string, unknown>
+  analysis: string
+  summary: string
+  reason: string
+  diffPreview: string
+  status: string
+  statusLabel: string
+  model: string
+  usage: Record<string, unknown>
+  cost: Record<string, unknown>
+  degrade: Record<string, unknown>
+  appliedAt: string
+  appliedBy: string
+  dismissedAt: string
+  createdAt: string
+}
+
+export interface FixSuggestionPage {
+  list: FixSuggestion[]
+  total: number
+  pageNum: number
+  pageSize: number
+  counts: Record<string, number>
+  statuses: Array<{ value: string; label: string }>
+  targets: Array<{ value: string; label: string }>
+}
+
+/** 生成结果：有模型返回 suggestion；无模型降级返回机械 diff。 */
+export interface FixSuggestionGenerateResult {
+  generated: boolean
+  message?: string
+  mechanicalDiff?: string
+  suggestion?: FixSuggestion
+  executionId?: number
 }

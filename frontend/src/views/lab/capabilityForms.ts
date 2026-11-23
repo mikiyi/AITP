@@ -230,6 +230,18 @@ export const CAPABILITY_FORMS: Record<string, CapabilityField[]> = {
     { name: 'maxSteps', label: '最大步数', type: 'number', defaultValue: '20' },
     { name: 'maxSeconds', label: '最大时长（秒）', type: 'number', defaultValue: '180' },
   ],
+  requirement_import: [
+    {
+      name: 'documentText',
+      label: '需求文档内容',
+      type: 'textarea',
+      rows: 14,
+      primary: true,
+      placeholder: '粘贴需求文档正文，或先在附件区上传 Word / Excel / PDF / Markdown 抽取文本',
+    },
+    { name: 'projectName', label: '项目名称', type: 'text' },
+    { name: 'maxItems', label: '最多拆几条', type: 'number', defaultValue: '30' },
+  ],
 }
 
 /**
@@ -247,6 +259,8 @@ const VARIABLE_LABEL_FALLBACK: Record<string, string> = {
   contextBugs: '上下文缺陷',
   contextKnowledge: '上下文知识',
   moduleCount: '建议模块数',
+  documentText: '需求文档内容',
+  maxItems: '最多拆几条',
   moduleId: '功能点',
   targetUrl: '目标地址',
   maxSteps: '最大步数',

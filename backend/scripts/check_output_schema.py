@@ -250,9 +250,10 @@ def dump(value: Any) -> str:
 
 def pure_checks() -> None:
     check("修正重试上限写死一次（红线：不无限烧 token）", schema.MAX_SCHEMA_RETRIES == 1)
-    check("schema 只覆盖四类结构化产出",
+    check("schema 覆盖六类结构化产出（含四期修复建议与需求拆分）",
           set(schema.SCHEMAS) == {"case_generation", "xmind_to_case",
-                                  "regression_generation", "testpoint_generation"},
+                                  "regression_generation", "testpoint_generation",
+                                  "fix_suggestion", "requirement_import"},
           str(sorted(schema.SCHEMAS)))
     json_caps = {code for code, spec in caps.CAPABILITIES.items()
                  if spec.output_format == caps.OUTPUT_JSON}
@@ -441,6 +442,22 @@ def _sample_for(code: str) -> Any:
                  "verifyTarget": "同一通知两次只入账一次"}]
     if code == "testpoint_generation":
         return {"name": "登录", "children": [{"name": "手机号登录"}]}
+    if code == "fix_suggestion":
+        return {
+            "analysis": "断言期望 0，实际 1001",
+            "target": "assertion",
+            "suggestion": "把断言改为 1001",
+            "newAssertion": "json:$.code = 1001",
+            "newExpectedBody": "",
+            "newExpectedStatus": "",
+            "reason": "接口行为已变化",
+        }
+    if code == "requirement_import":
+        return [
+            {"title": "手机号验证码登录", "description": "有效验证码 5 分钟内可登录",
+             "acceptance": "1. 有效验证码登录成功", "modulePath": "登录/验证码",
+             "priority": "P0"},
+        ]
     return GOOD_CASES
 
 

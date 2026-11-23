@@ -2,7 +2,7 @@
  * E2E 全局准备：拉起隔离工装并播种，绝不碰正式 8760 / data/aitp.db。
  *  - mock 模型: 18790(openai)/18791(ollama)
  *  - 后端: 8762 + 临时库
- *  - vite: 5199 代理到 8762
+ *  - vite: 5399 代理到 8762
  * 状态写入 e2e/.state.json 供 teardown 清理。
  */
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -17,7 +17,7 @@ const root = path.resolve(frontendDir, '..')
 const python = path.join(root, '.venv', 'Scripts', 'python.exe')
 
 const BACKEND = 'http://127.0.0.1:8762'
-const VITE = 'http://127.0.0.1:5199'
+const VITE = 'http://127.0.0.1:5399'
 
 interface State { tmp: string; pids: number[] }
 
@@ -78,8 +78,8 @@ export default async function globalSetup(): Promise<void> {
   })
 
   // 4. vite dev
-  const vite = start(process.execPath, [path.join(frontendDir, 'node_modules', 'vite', 'bin', 'vite.js'), '--port', '5199', '--host', '127.0.0.1', '--strictPort'], frontendDir, {
-    AITP_DEV_PORT: '5199', AITP_PROXY_TARGET: BACKEND,
+  const vite = start(process.execPath, [path.join(frontendDir, 'node_modules', 'vite', 'bin', 'vite.js'), '--port', '5399', '--host', '127.0.0.1', '--strictPort'], frontendDir, {
+    AITP_DEV_PORT: '5399', AITP_PROXY_TARGET: BACKEND,
   }, path.join(tmp, 'vite.log'))
   pids.push(vite.pid!)
   await waitHttp(VITE)

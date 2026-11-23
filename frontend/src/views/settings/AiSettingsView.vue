@@ -74,6 +74,49 @@
     </div>
 
     <div class="panel panel-pad">
+      <div class="section-head">
+        <h3>嵌入模型（语义检索）</h3>
+        <el-tag :type="embedding.embedding.usable ? 'success' : 'info'" effect="plain" size="small">
+          {{ embedding.embedding.usable ? '可用' : '未启用' }}
+        </el-tag>
+      </div>
+      <el-alert type="info" :closable="false" show-icon class="page-alert" title="向量检索用于知识召回">
+        配置 Ollama 嵌入模型（如 nomic-embed-text）后，知识召回从纯关键词升级为「关键词 + 向量」混合；
+        不配置时自动回落关键词检索，功能照常。云端嵌入默认关闭，需显式开启且外发前脱敏。
+      </el-alert>
+      <el-form label-width="110px" class="embedding-form">
+        <el-form-item label="协议">
+          <el-select v-model="embeddingForm.protocol" style="width: 220px">
+            <el-option label="Ollama 原生" value="ollama_native" />
+            <el-option label="OpenAI 兼容" value="openai_compat" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="接口地址">
+          <el-input v-model="embeddingForm.baseUrl" placeholder="http://127.0.0.1:11434" />
+        </el-form-item>
+        <el-form-item label="模型">
+          <el-input v-model="embeddingForm.model" placeholder="nomic-embed-text" />
+        </el-form-item>
+        <el-form-item label="云端开启">
+          <el-switch v-model="embeddingForm.enabled" />
+          <span class="muted" style="margin-left: 8px">本地地址无需开启</span>
+        </el-form-item>
+      </el-form>
+      <div class="embedding-status">
+        <span class="muted">{{ embedding.embedding.reason }}</span>
+        <span class="muted">
+          已索引 {{ embedding.indexedArticles }} 条 / {{ embedding.chunkCount }} 块
+        </span>
+      </div>
+      <div class="embedding-actions">
+        <el-button :loading="embeddingSaving" @click="saveEmbedding">保存配置</el-button>
+        <el-button type="primary" :loading="embeddingRebuilding" @click="rebuildEmbedding">
+          重建索引
+        </el-button>
+      </div>
+    </div>
+
+    <div class="panel panel-pad">
       <el-table v-loading="loading" :data="profiles" border stripe>
         <el-table-column prop="name" label="名称" min-width="120" show-overflow-tooltip />
         <el-table-column prop="provider" label="供应商" width="100" />
@@ -530,13 +573,14 @@
 import { computed, onActivated, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Connection, InfoFilled, Plus, Refresh } from '@element-plus/icons-vue'
-import { labApi, settingsApi } from '@/api'
+import { knowledgeApi, labApi, settingsApi } from '@/api'
 import type {
   AiBudgetStatus,
   AiModelInfo,
   AiProfile,
   AiProfilePrice,
   AiStatus,
+  KnowledgeEmbeddingStatus,
   SelfCheckResult,
 } from '@/api/types'
 
@@ -597,6 +641,63 @@ const savingMask = ref(false)
 
 /** AI 设置页签：llm=模型档案与调用参数，mask=外发脱敏策略 */
 const activeTab = ref<'llm' | 'mask'>('llm')
+
+// ---- 四期专项 B：嵌入模型（语义检索）----
+const embedding = ref<KnowledgeEmbeddingStatus>({
+  embedding: { usable: false, enabled: false, protocol: 'ollama_native', baseUrl: '',
+    model: '', local: false, reason: '加载中' },
+  chunkCount: 0,
+  indexedArticles: 0,
+  states: {},
+})
+const embeddingForm = reactive({
+  protocol: 'ollama_native',
+  baseUrl: '',
+  model: '',
+  enabled: false,
+})
+const embeddingSaving = ref(false)
+const embeddingRebuilding = ref(false)
+
+async function loadEmbedding(): Promise<void> {
+  const payload = await knowledgeApi.embeddingStatus()
+  embedding.value = payload
+  embeddingForm.protocol = payload.embedding.protocol || 'ollama_native'
+  embeddingForm.baseUrl = payload.embedding.baseUrl || ''
+  embeddingForm.model = payload.embedding.model || ''
+  embeddingForm.enabled = Boolean(payload.embedding.enabled)
+}
+
+async function saveEmbedding(): Promise<void> {
+  embeddingSaving.value = true
+  try {
+    await settingsApi.updateConfig([
+      { key: 'ai.embedding.protocol', value: embeddingForm.protocol },
+      { key: 'ai.embedding.baseUrl', value: embeddingForm.baseUrl.trim() },
+      { key: 'ai.embedding.model', value: embeddingForm.model.trim() },
+      { key: 'ai.embedding.enabled', value: embeddingForm.enabled ? '1' : '0' },
+    ])
+    ElMessage.success('嵌入模型配置已保存')
+    await loadEmbedding()
+  } finally {
+    embeddingSaving.value = false
+  }
+}
+
+async function rebuildEmbedding(): Promise<void> {
+  embeddingRebuilding.value = true
+  try {
+    const payload = await knowledgeApi.rebuildEmbedding()
+    embedding.value = payload
+    if (payload.embedding.usable) {
+      ElMessage.success(`已重建向量索引：${payload.articles ?? 0} 条 / 新增 ${payload.embedded ?? 0} 块`)
+    } else {
+      ElMessage.warning(payload.embedding.reason || '未配置嵌入模型，已保持关键词检索')
+    }
+  } finally {
+    embeddingRebuilding.value = false
+  }
+}
 
 const dialogVisible = ref(false)
 const saving = ref(false)
@@ -933,6 +1034,7 @@ function loadAll(): void {
   void loadStatus()
   void loadAiConfig()
   void loadCost()
+  void loadEmbedding()
 }
 
 function onProviderChange(name: string): void {
@@ -1337,6 +1439,25 @@ onActivated(() => {
 
 .candidates {
   margin-top: 10px;
+}
+
+.embedding-form {
+  margin-top: 12px;
+  max-width: 640px;
+}
+
+.embedding-status {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  margin: 4px 0 12px;
+}
+
+.embedding-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .priority-alert {

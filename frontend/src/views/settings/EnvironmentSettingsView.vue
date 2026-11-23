@@ -61,6 +61,56 @@
       <el-empty v-else description="还没有测试环境，点右上角「新建环境」添加一套" :image-size="90" />
     </div>
 
+    <div class="panel panel-pad settings-block">
+      <div class="settings-block__head">
+        <h3>登录态档案</h3>
+        <span class="muted">保存浏览器认证态，执行时跳过重复登录；只存本机，不进备份与导出</span>
+      </div>
+      <p class="muted settings-block__hint">
+        粘贴 Playwright 导出的 <code>storageState</code> JSON（含 cookies / origins）。
+        保存时会做过期预检：cookie 或 JWT 已过期会直接标记为「已过期」，执行前再预检一次。
+        登录态含会话凭据，页面不展示明文，也不外发给任何大模型。
+      </p>
+      <div class="auth-form">
+        <el-select v-model="authForm.envId" placeholder="绑定环境（可选）" clearable style="width: 200px">
+          <el-option v-for="item in envs" :key="item.id" :label="item.name" :value="item.id" />
+        </el-select>
+        <el-input v-model="authForm.role" placeholder="角色，如 admin / user" style="width: 180px" />
+        <el-button type="primary" :loading="authSaving" @click="saveAuthSession">导入登录态</el-button>
+      </div>
+      <el-input
+        v-model="authForm.text"
+        type="textarea"
+        :rows="4"
+        class="auth-json"
+        placeholder='{"cookies": [...], "origins": [...]}'
+      />
+      <el-table v-if="authSessions.length" :data="authSessions" border size="small" class="auth-table">
+        <el-table-column prop="role" label="角色" width="120" />
+        <el-table-column label="绑定环境" width="160">
+          <template #default="{ row }">{{ envName(row.envId) }}</template>
+        </el-table-column>
+        <el-table-column label="凭据" width="150">
+          <template #default="{ row }">{{ row.cookieCount }} cookie / {{ row.originCount }} origin</template>
+        </el-table-column>
+        <el-table-column label="状态" width="130">
+          <template #default="{ row }">
+            <el-tag :type="row.expired ? 'danger' : 'success'" size="small" effect="plain">
+              {{ row.expired ? '已过期' : '可用' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="lastUsedAt" label="最近使用" min-width="170" />
+        <el-table-column label="操作" width="150" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="precheckAuth(row)">预检</el-button>
+            <el-button link type="danger" size="small" @click="removeAuth(row)">清除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-else description="还没有登录态档案" :image-size="72" />
+    </div>
+
     <div v-if="probeResult" class="panel panel-pad settings-block">
       <div class="settings-block__head">
         <h3>探测结果 · {{ probeTargetName }}</h3>
@@ -199,8 +249,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Back, Lock, Plus } from '@element-plus/icons-vue'
 import RouteSubNav from '@/components/RouteSubNav.vue'
 import { EXEC_TABS } from '@/router/subnav'
-import { testEnvApi, settingsApi } from '@/api'
-import type { TestEnv, TestEnvListResult, TestEnvProbe } from '@/api/types'
+import { authSessionApi, testEnvApi, settingsApi } from '@/api'
+import type { AuthSession, TestEnv, TestEnvListResult, TestEnvProbe } from '@/api/types'
 import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
@@ -282,9 +332,80 @@ async function load(): Promise<void> {
     dbTypes.value = result.dbTypes
     dbTypeLabels.value = result.dbTypeLabels ?? {}
     dbDefaultPorts.value = result.dbDefaultPorts
+    await loadAuthSessions()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载环境配置失败')
   }
+}
+
+// ---- 四期专项 F：登录态档案 ----
+const authSessions = ref<AuthSession[]>([])
+const authSaving = ref(false)
+const authForm = reactive({ envId: null as number | null, role: 'admin', text: '' })
+
+async function loadAuthSessions(): Promise<void> {
+  if (!appStore.currentProjectId) {
+    authSessions.value = []
+    return
+  }
+  const payload = await authSessionApi.list()
+  authSessions.value = payload.list
+}
+
+function envName(envId: number | null): string {
+  if (!envId) return '全部环境'
+  return envs.value.find((item) => item.id === envId)?.name ?? String(envId)
+}
+
+async function saveAuthSession(): Promise<void> {
+  if (!authForm.text.trim()) {
+    ElMessage.warning('请先粘贴 storageState JSON')
+    return
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(authForm.text)
+  } catch {
+    ElMessage.error('不是合法 JSON，请检查格式')
+    return
+  }
+  authSaving.value = true
+  try {
+    await authSessionApi.save({
+      envId: authForm.envId ?? null,
+      role: authForm.role.trim() || 'default',
+      storageState: parsed,
+    })
+    ElMessage.success('登录态已保存到本机')
+    authForm.text = ''
+    await loadAuthSessions()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '保存登录态失败')
+  } finally {
+    authSaving.value = false
+  }
+}
+
+async function precheckAuth(row: AuthSession): Promise<void> {
+  try {
+    const result = await authSessionApi.precheck(row.id)
+    ElMessage.success(
+      `登录态可用：${result.precheck.cookieCount} 个 cookie / ${result.precheck.originCount} 个 origin`,
+    )
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '登录态已过期，请重新保存')
+  }
+}
+
+async function removeAuth(row: AuthSession): Promise<void> {
+  try {
+    await ElMessageBox.confirm(`确认清除角色「${row.role}」的登录态？`, '清除登录态', { type: 'warning' })
+  } catch {
+    return
+  }
+  await authSessionApi.remove(row.id)
+  ElMessage.success('已清除')
+  await loadAuthSessions()
 }
 
 function resetForm(): void {
@@ -489,6 +610,22 @@ onActivated(() => {
   margin: 0 0 12px;
   font-size: 12px;
   line-height: 1.7;
+}
+
+.auth-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.auth-json {
+  margin-bottom: 12px;
+}
+
+.auth-table {
+  margin-top: 4px;
 }
 
 .env-name {

@@ -123,8 +123,48 @@ _capability_re = re.compile(r"^- ([a-z_]+)（.*?关键词：(.*)$", re.MULTILINE
 _module_re = re.compile(r"^- id=(\d+)｜(.*?)｜", re.MULTILINE)
 
 
+#: 修复建议能力（接口断言失败诊断）返回值
+MOCK_FIX_SUGGESTION: dict[str, Any] = {
+    "analysis": "JSONPath $.code 期望 0，实际返回 1001，接口真实行为已变化，判定为资产过期。",
+    "target": "assertion",
+    "suggestion": "把断言 json:$.code = 0 改为 json:$.code = 1001",
+    "newAssertion": "status = 200\njson:$.code = 1001",
+    "newExpectedBody": "",
+    "newExpectedStatus": "",
+    "reason": "响应体 code 稳定返回 1001，与历史版本一致",
+}
+
+
+#: 需求批量拆分能力（四期专项 D）返回值
+MOCK_REQUIREMENT_SPLIT: list[dict[str, Any]] = [
+    {
+        "title": "手机号验证码登录",
+        "description": "用户输入已注册手机号并获取短信验证码，校验通过后登录成功并返回 token。",
+        "acceptance": "1. 有效验证码 5 分钟内可登录成功\n2. 过期验证码提示已失效\n3. 未注册手机号提示先注册",
+        "modulePath": "登录/验证码",
+        "priority": "P0",
+    },
+    {
+        "title": "验证码发送频率限制",
+        "description": "同一手机号 60 秒内只能发送一次验证码，避免短信轰炸。",
+        "acceptance": "1. 60 秒内重复发送被拒\n2. 第 61 秒可再次发送",
+        "modulePath": "登录/验证码",
+        "priority": "P1",
+    },
+    {
+        "title": "登录失败次数锁定",
+        "description": "同一手机号连续 5 次验证码错误后锁定 15 分钟。",
+        "acceptance": "1. 第 5 次失败后锁定\n2. 锁定期内提示剩余时间",
+        "modulePath": "登录/账号安全",
+        "priority": "P1",
+    },
+]
+
+
 def _reply_for(prompt: str) -> str:
     """按提示词内容返回对应的 mock 产出，尽量贴近真实模型行为。"""
+    if "需求批量拆分清单" in prompt:
+        return json.dumps(MOCK_REQUIREMENT_SPLIT, ensure_ascii=False)
     if "功能点清单" in prompt:
         match = _module_re.search(prompt)
         module_id = int(match.group(1)) if match else 1
@@ -136,11 +176,38 @@ def _reply_for(prompt: str) -> str:
         )
     if "能力目录" in prompt:
         return json.dumps(_route_capabilities(prompt), ensure_ascii=False)
+    if "资产修改建议" in prompt:
+        return json.dumps(MOCK_FIX_SUGGESTION, ensure_ascii=False)
     if "JSON 数组" in prompt:
         return json.dumps(MOCK_CASES, ensure_ascii=False)
     if "JSON 树" in prompt or "负责把需求拆成" in prompt:
         return json.dumps(MOCK_TESTPOINTS, ensure_ascii=False)
     return "pong from AITP mock server ok"
+
+
+#: 语义概念向量表（四期专项 B 的 mock 嵌入）：同一概念下的不同说法给同一方向，
+#: 让「语义问句召回不用关键词原词」在离线工装里可验证。
+EMBEDDING_CONCEPTS: list[tuple[tuple[str, ...], list[float]]] = [
+    (("幂等", "重复扣款", "重复入账", "重复通知", "重复提交"), [1.0, 0.0, 0.0, 0.0]),
+    (("登录", "验证码", "认证", "鉴权", "登录失败"), [0.0, 1.0, 0.0, 0.0]),
+    (("性能", "压测", "并发", "响应时间", "吞吐"), [0.0, 0.0, 1.0, 0.0]),
+]
+EMBEDDING_DEFAULT = [0.0, 0.0, 0.0, 1.0]
+
+
+def _embedding_for(text: str) -> list[float]:
+    """按概念词命中累加向量；都不命中给默认方向（保证任意文本都有向量）。"""
+    low = str(text or "").lower()
+    vector = [0.0, 0.0, 0.0, 0.0]
+    hit = False
+    for words, direction in EMBEDDING_CONCEPTS:
+        if any(word.lower() in low for word in words):
+            hit = True
+            for index, value in enumerate(direction):
+                vector[index] += value
+    if not hit:
+        return list(EMBEDDING_DEFAULT)
+    return vector
 
 
 def _split_reply(reply: str, size: int = 80) -> list[str]:
@@ -237,7 +304,26 @@ class OpenAIHandler(_BaseHandler):
 
     def do_POST(self) -> None:
         body = self._read_json()
-        if not self.path.rstrip("/").endswith("/chat/completions"):
+        path = self.path.rstrip("/")
+        if path.endswith("/embeddings"):
+            if not self._auth_ok():
+                self._send_json({"error": {"message": "Incorrect API key provided"}}, status=401)
+                return
+            raw = body.get("input")
+            texts = raw if isinstance(raw, list) else [str(raw or "")]
+            data = [
+                {"index": index, "object": "embedding", "embedding": _embedding_for(str(text))}
+                for index, text in enumerate(texts)
+            ]
+            _log(self.port, f"POST {self.path} -> embeddings x{len(data)}")
+            self._send_json({
+                "object": "list",
+                "data": data,
+                "model": body.get("model") or "mock-embedding",
+                "usage": {"prompt_tokens": len(texts), "total_tokens": len(texts)},
+            })
+            return
+        if not path.endswith("/chat/completions"):
             self._send_json({"error": {"message": "not found"}}, status=404)
             return
         if not self._auth_ok():
@@ -350,7 +436,12 @@ class OllamaHandler(_BaseHandler):
 
     def do_POST(self) -> None:
         body = self._read_json()
-        if not self.path.rstrip("/").endswith("/api/chat"):
+        path = self.path.rstrip("/")
+        if path.endswith("/api/embeddings"):
+            _log(self.port, f"POST {self.path}")
+            self._send_json({"embedding": _embedding_for(str(body.get("prompt") or ""))})
+            return
+        if not path.endswith("/api/chat"):
             self._send_json({"error": "not found"}, status=404)
             return
 

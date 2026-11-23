@@ -33,6 +33,7 @@ from ..services import (
     audit_service,
     knowledge_assistant_service,
     knowledge_category_service,
+    knowledge_embedding_service,
     knowledge_reuse_service,
     knowledge_storage,
     prompt_usage,
@@ -477,7 +478,16 @@ def _sync_file(conn: Any, article_id: int) -> str:
                 knowledge_storage.remove_article_file(conn, previous)
             except (OSError, AppError):
                 logger.warning("知识条目 %s 改名后旧文件未删除：%s", article_id, previous)
+    _sync_embedding(conn, article_id)
     return relative
+
+
+def _sync_embedding(conn: Any, article_id: int) -> None:
+    """四期专项 B：审核通过 / 版本更新后增量重嵌；失败只记日志，不影响主流程。"""
+    try:
+        knowledge_embedding_service.ensure_index(conn, int(article_id))
+    except Exception as exc:  # noqa: BLE001 - 嵌入失败不该让审核动作失败
+        logger.warning("知识条目 %s 向量索引失败：%s", article_id, exc)
 
 
 
@@ -1090,6 +1100,20 @@ def search_articles() -> Response:
     page_num, page_size = page_args()
     filters = query_filters(ARTICLE_FILTERS)
     result = KnowledgeRepository(conn).search(keyword, filters, page_num=page_num, page_size=page_size)
+    rows = [dict(row) for row in result.get("list", [])]
+    # 四期专项 B：有嵌入模型时把向量召回按 RRF 融进知识检索；无模型时保持原样。
+    project_filter = filters.get("project_id")
+    fused, used_vector = knowledge_embedding_service.fuse_with_literal(
+        conn, keyword, rows,
+        project_id=int(project_filter) if project_filter else None,
+        limit=page_size,
+    )
+    if used_vector:
+        result["list"] = fused
+        result["total"] = max(int(result.get("total") or 0), len(fused))
+        result["matchMode"] = "hybrid"
+    else:
+        result["list"] = rows
     result["list"] = [_article_public(row) for row in result.get("list", [])]
     return ok(result)
 
@@ -1176,3 +1200,27 @@ def reindex_knowledge() -> Response:
     audit(conn, audit_service.AUDIT_ACTION_CONFIG, audit_service.RESOURCE_KNOWLEDGE_ARTICLE, None, "",
           {"scanned": result.get("scanned")})
     return ok(result)
+
+
+# ---------------- 四期专项 B：向量索引状态与重建 ----------------
+
+@bp.get("/embedding/status")
+def embedding_status() -> Response:
+    """嵌入通道与索引概览：可用性、分块数、各状态条目数。"""
+    conn = db()
+    return ok(knowledge_embedding_service.status(conn))
+
+
+@bp.post("/embedding/rebuild")
+def rebuild_embedding() -> Response:
+    """整库增量重建向量索引；无可用嵌入模型时返回 usable=false（不报错）。"""
+    conn = db()
+    project_id = optional_int(request.args.get("projectId") or body().get("projectId"),
+                              "projectId")
+    result = knowledge_embedding_service.rebuild_all(conn, project_id=project_id)
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_CONFIG, audit_service.RESOURCE_KNOWLEDGE_ARTICLE,
+          None, "", {"embeddingRebuild": True, "articles": result.get("articles")})
+    payload = {"projectId": project_id, **result,
+               **knowledge_embedding_service.status(conn)}
+    return ok(payload)

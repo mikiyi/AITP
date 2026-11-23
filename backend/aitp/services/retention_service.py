@@ -40,9 +40,12 @@ TYPE_EVIDENCE = "evidence"
 TYPE_LOG = "log"
 TYPE_TODO = "todo"
 TYPE_BUG_SCREENSHOT = "bug_screenshot"
+#: 四期专项 C：执行媒体（视频 / Trace），按目录最后访问时间到期清理
+TYPE_EXEC_MEDIA = "exec_media"
 
 DATA_TYPES: tuple[str, ...] = (
-    TYPE_TEST_RUN, TYPE_AUTOMATION_RUN, TYPE_EVIDENCE, TYPE_BUG_SCREENSHOT, TYPE_LOG, TYPE_TODO,
+    TYPE_TEST_RUN, TYPE_AUTOMATION_RUN, TYPE_EVIDENCE, TYPE_BUG_SCREENSHOT,
+    TYPE_EXEC_MEDIA, TYPE_LOG, TYPE_TODO,
 )
 TYPE_LABELS = {
     TYPE_TEST_RUN: "测试轮次",
@@ -51,6 +54,7 @@ TYPE_LABELS = {
     TYPE_LOG: "操作日志",
     TYPE_TODO: "已完成待办",
     TYPE_BUG_SCREENSHOT: "缺陷截图",
+    TYPE_EXEC_MEDIA: "执行媒体",
 }
 ACTION_LABELS = {
     ACTION_ARCHIVE: "归档后清理",
@@ -65,6 +69,7 @@ TYPE_ACTIONS: dict[str, tuple[str, ...]] = {
     TYPE_LOG: (ACTION_ARCHIVE, ACTION_DELETE),
     TYPE_TODO: (ACTION_ARCHIVE, ACTION_DELETE),
     TYPE_BUG_SCREENSHOT: (ACTION_ARCHIVE, ACTION_DELETE),
+    TYPE_EXEC_MEDIA: (ACTION_DELETE,),
 }
 
 #: 缺陷截图是否纳入留存：与整包备份/项目资产包共用同一个开关，默认不纳入
@@ -537,6 +542,18 @@ def run_cleanup(
             summary["types"].append({
                 "dataType": data_type, "dataTypeLabel": TYPE_LABELS[data_type],
                 "due": 0, "archived": 0, "cleaned": 0, "skipped": 0, "action": action,
+            })
+            continue
+        if data_type == TYPE_EXEC_MEDIA:
+            # 四期专项 C：媒体按目录 mtime 到期整批删除，没有可归档的摘要
+            from . import media_service
+
+            due = media_service.list_expired(conn, days)
+            cleaned_media = 0 if dry_run else media_service.purge_expired(conn, days)
+            summary["types"].append({
+                "dataType": data_type, "dataTypeLabel": TYPE_LABELS[data_type],
+                "due": len(due), "archived": 0, "cleaned": cleaned_media,
+                "skipped": 0, "action": action,
             })
             continue
         rows, protected = _due_rows_with_protected(conn, data_type, _cutoff(days))

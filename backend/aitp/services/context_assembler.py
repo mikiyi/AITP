@@ -30,6 +30,7 @@ from typing import Any, Iterable
 from ..ai.capability_codes import (
     CTX_BUG,
     CTX_CASE,
+    CTX_HEURISTIC,
     CTX_KNOWLEDGE,
     CTX_MODULE,
     CapabilitySpec,
@@ -43,6 +44,7 @@ from ..db.fts import hybrid_search, tokenize
 from ..logging_setup import log_event
 from ..repositories.module_repo import ModuleRepository
 from ..repositories.sys_config_repo import SysConfigRepository
+from . import heuristics_service
 
 logger = logging.getLogger(__name__)
 
@@ -51,14 +53,19 @@ KIND_MODULE = CTX_MODULE
 KIND_CASE = CTX_CASE
 KIND_BUG = CTX_BUG
 KIND_KNOWLEDGE = CTX_KNOWLEDGE
+#: 四期专项 G：离线测试知识包（本地字典检索，零 LLM 调用）
+KIND_HEURISTIC = CTX_HEURISTIC
 
-CONTEXT_KINDS: tuple[str, ...] = (KIND_MODULE, KIND_CASE, KIND_BUG, KIND_KNOWLEDGE)
+CONTEXT_KINDS: tuple[str, ...] = (
+    KIND_MODULE, KIND_CASE, KIND_BUG, KIND_KNOWLEDGE, KIND_HEURISTIC,
+)
 
 KIND_LABELS: dict[str, str] = {
     KIND_MODULE: "模块树路径",
     KIND_CASE: "已有用例",
     KIND_BUG: "历史缺陷",
     KIND_KNOWLEDGE: "知识条目",
+    KIND_HEURISTIC: "测试知识包",
 }
 
 #: 注入提示词的变量名：模板里以 `{{contextModules}}` 这类占位出现，
@@ -68,6 +75,7 @@ VARIABLE_OF_KIND: dict[str, str] = {
     KIND_CASE: "contextCases",
     KIND_BUG: "contextBugs",
     KIND_KNOWLEDGE: "contextKnowledge",
+    KIND_HEURISTIC: "contextHeuristics",
 }
 
 # ---- 三档（默认 standard，决策 3）；档位码与 capability_codes 的 TIER_* 同源 ----
@@ -82,9 +90,12 @@ TIER_LABELS: dict[str, str] = {TIER_LITE: "精简", TIER_STANDARD: "标准", TIE
 #: 每档的硬上限：单种类条目数、总条目数、总字数。
 #: 字数上限是 token 成本的主要约束（红线：条数必须硬上限化并可视化）。
 TIER_LIMITS: dict[str, dict[str, int]] = {
-    TIER_LITE: {"module": 2, "case": 3, "bug": 2, "knowledge": 2, "total": 8, "chars": 900},
-    TIER_STANDARD: {"module": 4, "case": 8, "bug": 5, "knowledge": 4, "total": 20, "chars": 2600},
-    TIER_FULL: {"module": 8, "case": 16, "bug": 10, "knowledge": 8, "total": 42, "chars": 6000},
+    TIER_LITE: {"module": 2, "case": 3, "bug": 2, "knowledge": 2, "heuristic": 1,
+                "total": 8, "chars": 900},
+    TIER_STANDARD: {"module": 4, "case": 8, "bug": 5, "knowledge": 4, "heuristic": 2,
+                    "total": 20, "chars": 2600},
+    TIER_FULL: {"module": 8, "case": 16, "bug": 10, "knowledge": 8, "heuristic": 4,
+                "total": 42, "chars": 6000},
 }
 
 #: 系统配置里覆盖档位的键
@@ -112,6 +123,7 @@ QUERY_VARIABLES: dict[str, tuple[str, ...]] = {
     "api_test_design": ("apiDescription",),
     "automation_script": ("scenario",),
     "performance_script": ("scenario",),
+    "fix_suggestion": ("failedSummary", "caseTitle"),
 }
 
 _STOP_TOKEN_RE = re.compile(r"^[^\w一-鿿]+$")
@@ -573,8 +585,32 @@ def _knowledge_blocks(
     return blocks
 
 
-def related_requirement_id(
-    conn: sqlite3.Connection, project_id: int, keywords: list[str]
+def _heuristic_blocks(
+    conn: sqlite3.Connection,
+    *,
+    capability: str,
+    keywords: list[str],
+    limit: int,
+) -> list[ContextBlock]:
+    """离线测试知识包：本地字典按关键词命中，零 LLM 调用、零 token 成本。
+
+    不支持 sqlite 也不依赖项目数据，异常只让本块为空，不影响其余召回。
+    """
+    if limit <= 0:
+        return []
+    try:
+        hits = heuristics_service.search(keywords, capability=capability, limit=limit)
+    except (OSError, ValueError, TypeError) as exc:  # noqa: BLE001 - 字典异常不阻塞
+        log_event(logger, "context_heuristic_failed", level=logging.WARNING,
+                  capability=capability, error=str(exc)[:200])
+        return []
+    return [
+        ContextBlock(KIND_HEURISTIC, hit.ref, hit.title, _trim(hit.text), hit.score)
+        for hit in hits
+    ]
+
+
+def related_requirement_id(    conn: sqlite3.Connection, project_id: int, keywords: list[str]
 ) -> int | None:
     """按字面命中找「这次生成对应的是库里哪条需求」；找不到返回 None。
 
@@ -670,6 +706,9 @@ def assemble(
             elif kind == KIND_BUG:
                 blocks = _bug_blocks(conn, project_id=project_id, module_id=module_id,
                                      keywords=plan.keywords, limit=limit)
+            elif kind == KIND_HEURISTIC:
+                blocks = _heuristic_blocks(conn, capability=capability,
+                                           keywords=plan.keywords, limit=limit)
             else:
                 blocks = _knowledge_blocks(conn, keywords=plan.keywords, limit=limit)
         except sqlite3.Error as exc:  # noqa: BLE001 - 单路召回失败不影响其余与主链路

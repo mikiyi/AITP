@@ -39,6 +39,12 @@ CAP_TEST_DATA_GENERATION = "test_data_generation"
 # GAP-45：Web 探索性测试（MCP 驱动 + 人工审核 + 证据包）
 CAP_EXPLORATORY_WEB = "exploratory_web"
 
+# 四期专项 A：AI 修复建议（接口断言失败 → 诊断 → 建议改资产 → 待审采纳）
+CAP_FIX_SUGGESTION = "fix_suggestion"
+
+# 四期专项 D：需求批量拆分导入（一份文档 → N 条需求 + 功能点归属建议）
+CAP_REQUIREMENT_IMPORT = "requirement_import"
+
 # 顺序执行的父记录不是可执行能力，只用于把整条流水线归成一条记录
 CAP_COMPOSITE = "composite"
 
@@ -76,6 +82,8 @@ CTX_MODULE = "module"
 CTX_CASE = "case"
 CTX_BUG = "bug"
 CTX_KNOWLEDGE = "knowledge"
+#: 四期专项 G：离线测试知识包（本地字典检索，零 LLM 调用）
+CTX_HEURISTIC = "heuristic"
 
 #: 上下文档位：与 `services/context_assembler.py` 的 TIER_* 同一套取值
 TIER_LITE = "lite"
@@ -190,7 +198,7 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
         variables=("requirement", "projectName", "moduleCount", "outputTemplate"),
         output_format=OUTPUT_JSON,
         mindmap=True,
-        context_kinds=(CTX_MODULE, CTX_CASE, CTX_KNOWLEDGE),
+        context_kinds=(CTX_MODULE, CTX_CASE, CTX_KNOWLEDGE, CTX_HEURISTIC),
     ),
     CAP_CASE_GENERATION: CapabilitySpec(
         CAP_CASE_GENERATION, "用例生成", "生成可执行的测试用例",
@@ -199,7 +207,7 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
         variables=("requirement", "caseTypes", "count", "projectName", "outputTemplate"),
         output_format=OUTPUT_JSON,
         adoptable=True,
-        context_kinds=(CTX_MODULE, CTX_CASE, CTX_BUG, CTX_KNOWLEDGE),
+        context_kinds=(CTX_MODULE, CTX_CASE, CTX_BUG, CTX_KNOWLEDGE, CTX_HEURISTIC),
     ),
     CAP_XMIND_TO_CASE: CapabilitySpec(
         CAP_XMIND_TO_CASE, "XMind 转用例", "把 xmind 大纲转成测试用例",
@@ -267,7 +275,9 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
         CAP_API_TEST_DESIGN, "接口测试设计", "为接口设计覆盖正常、异常与安全的测试用例",
         ("接口", "api", "接口测试", "接口用例", "接口文档", "endpoint", "url"),
         prompt_code="api-test-design",
-        variables=("projectName", "apiDescription", "baseUrl", "outputTemplate"),
+        variables=("projectName", "apiDescription", "baseUrl", "outputTemplate",
+                   "contextKnowledge", "contextHeuristics"),
+        context_kinds=(CTX_KNOWLEDGE, CTX_HEURISTIC),
     ),
     CAP_TEST_PLAN: CapabilitySpec(
         CAP_TEST_PLAN, "测试计划", "为版本定测试范围、策略与准入准出标准",
@@ -322,7 +332,9 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
         ("测试数据", "造数", "造数据", "假数据", "样本数据", "模拟数据",
          "mock数据", "mock 数据", "testdata", "测试文件", "大文件", "空文件"),
         prompt_code="test-data-generation",
-        variables=("dialect", "intent", "projectName", "schemaDesc", "rowCount"),
+        variables=("dialect", "intent", "projectName", "schemaDesc", "rowCount",
+                   "contextModules", "contextHeuristics"),
+        context_kinds=(CTX_MODULE, CTX_HEURISTIC),
     ),
     CAP_EXPLORATORY_WEB: CapabilitySpec(
         CAP_EXPLORATORY_WEB, "Web 探索性测试",
@@ -331,6 +343,27 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
          "网页探索", "web探索", "explore", "exploratory", "人工审核", "证据包"),
         prompt_code="exploratory-web",
         variables=("projectName", "targetUrl", "maxSteps", "maxSeconds"),
+    ),
+    CAP_FIX_SUGGESTION: CapabilitySpec(
+        CAP_FIX_SUGGESTION, "修复建议",
+        "接口断言失败后诊断原因，产出可采纳的资产修改建议（AI 只建议，人工确认采纳）",
+        ("修复建议", "断言失败", "改断言", "自动修复", "修一下断言", "断言改",
+         "资产修改建议", "修复闭环", "AI修复", "AI 修复", "fix_suggestion"),
+        prompt_code="fix-suggestion",
+        variables=("caseNo", "caseTitle", "failedSummary", "oldAssertions",
+                   "oldExpectedBody", "oldExpectedStatus", "responseSummary"),
+        output_format=OUTPUT_JSON,
+        context_kinds=(CTX_BUG, CTX_KNOWLEDGE),
+    ),
+    CAP_REQUIREMENT_IMPORT: CapabilitySpec(
+        CAP_REQUIREMENT_IMPORT, "需求批量拆分",
+        "把一份需求文档拆成多条可独立验收的需求，并给出功能点归属建议（逐条勾选后批量采纳）",
+        ("需求拆分", "批量拆分", "拆需求", "拆分需求", "需求导入", "导入需求",
+         "需求文档拆分", "需求批量", "批量导入", "requirement_import"),
+        prompt_code="requirement-import",
+        variables=("documentText", "projectName", "maxItems"),
+        output_format=OUTPUT_JSON,
+        context_kinds=(CTX_MODULE,),
     ),
 }
 
@@ -363,6 +396,8 @@ LAB_CAPABILITIES: tuple[str, ...] = (
     CAP_AUTOMATION_SCRIPT, CAP_PERFORMANCE_SCRIPT, CAP_TEST_DATA_GENERATION,
     CAP_EXPLORATORY_WEB,
     CAP_PROMPT_OPTIMIZE,
+    CAP_FIX_SUGGESTION,
+    CAP_REQUIREMENT_IMPORT,
 )
 
 #: 扩展能力位：此前提示词库里的补充能力已全部并入核心能力，保留空位以兼容既有引用

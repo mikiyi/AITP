@@ -1,0 +1,56 @@
+# SFDIPOT 测试启发式清单（四期专项 G）
+# 六维检查项，用于把「功能」扩成「功能 + 结构 + 数据 + 平台 + 操作 + 时间」的覆盖。
+version: 1
+pack: sfdipot
+label: SFDIPOT 测试启发式
+capabilities: [case_generation, testpoint_generation]
+default_category: function
+categories:
+  - id: structure
+    label: 结构（Structure）
+    keywords: [结构, 模块, 组成, 架构, 组件, 结构维度]
+    description: 系统由哪些部分组成，边界与依赖是什么
+    samples:
+      - 该功能由哪些页面 / 接口 / 表组成
+      - 每部分的输入输出与依赖
+      - 模块之间的调用方向与失败传播
+  - id: function
+    label: 功能（Function）
+    keywords: [功能, 需求, 业务, 逻辑, 功能维度]
+    description: 需求声明了哪些功能，隐含功能是什么
+    samples:
+      - 需求显式要求的功能点逐条对照
+      - 隐含功能：登录态、权限、幂等、重复提交
+      - 错误路径与提示文案
+  - id: data
+    label: 数据（Data）
+    keywords: [数据, 字段, 输入, 输出, 数据类型, 数据维度]
+    description: 进出系统的数据形状与边界
+    samples:
+      - 字段类型、必填、长度、枚举取值
+      - 空 / 满 / 越界 / 特殊字符
+      - 数据一致性与事务回滚
+  - id: platform
+    label: 平台（Platform）
+    keywords: [平台, 浏览器, 系统, 兼容, 设备, 平台维度]
+    description: 运行环境差异带来的行为差异
+    samples:
+      - 主流浏览器与分辨率
+      - 操作系统与字体渲染
+      - 依赖服务不可用时的降级
+  - id: operation
+    label: 操作（Operation）
+    keywords: [操作, 使用方式, 交互, 流程, 操作维度]
+    description: 用户实际怎么用，异常操作如何
+    samples:
+      - 主流程与快捷流程
+      - 重复点击、快速切换、取消中断
+      - 并发操作与超时重试
+  - id: time
+    label: 时间（Time）
+    keywords: [时间, 定时, 过期, 超时, 时序, 时间维度]
+    description: 时间相关的状态与顺序
+    samples:
+      - 会话 / token / 缓存过期
+      - 定时任务与跨天边界
+      - 请求乱序到达与重放

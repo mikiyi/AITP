@@ -252,7 +252,7 @@ def tier_pure_checks() -> None:
           and all({"total", "chars"} <= set(item) for item in limits.values()))
     monotonic = all(
         limits["lite"][kind] < limits["standard"][kind] < limits["full"][kind]
-        for kind in ("module", "case", "bug", "knowledge", "total"))
+        for kind in ("module", "case", "bug", "knowledge", "heuristic", "total"))
     check("三档条目上限单调递增（正控：档位不是摆设）", monotonic, str(limits))
     check("三档字数上限单调递增",
           limits["lite"]["chars"] < limits["standard"]["chars"] < limits["full"]["chars"])
@@ -269,11 +269,13 @@ def tier_pure_checks() -> None:
           and context_assembler.normalize_tier(None) == "")
 
     kinds = context_assembler.CONTEXT_KINDS
-    check("四种上下文种类齐备", set(kinds) == {"module", "case", "bug", "knowledge"})
+    check("五种上下文种类齐备（含四期离线知识包）",
+          set(kinds) == {"module", "case", "bug", "knowledge", "heuristic"})
     check("种类到提示词变量的映射覆盖全部种类",
           set(context_assembler.VARIABLE_OF_KIND) == set(kinds)
           and set(context_assembler.VARIABLE_OF_KIND.values()) ==
-          {"contextModules", "contextCases", "contextBugs", "contextKnowledge"})
+          {"contextModules", "contextCases", "contextBugs", "contextKnowledge",
+           "contextHeuristics"})
     check("档位码与能力声明同源（capability_codes 的 TIER_*）",
           context_assembler.TIER_LITE == caps.TIER_LITE
           and context_assembler.TIER_FULL == caps.TIER_FULL)
@@ -307,8 +309,10 @@ def tier_pure_checks() -> None:
     check("装配结论字段齐备（落库与界面读的就是这份）",
           required_keys <= set(payload), str(sorted(set(payload) ^ required_keys))[:200])
     check("装配结论带条目数与上限对照",
-          payload["itemCount"] == 1 and payload["limitTotal"] == 20
-          and payload["limitChars"] == 2600, str(payload)[:200])
+          payload["itemCount"] == 1
+          and payload["limitTotal"] == context_assembler.TIER_LIMITS["standard"]["total"]
+          and payload["limitChars"] == context_assembler.TIER_LIMITS["standard"]["chars"],
+          str(payload)[:200])
     check("块体自带中文种类标签",
           payload["blocks"][0]["kindLabel"] == "已有用例", str(payload["blocks"])[:160])
     check("块体提示词行带来源引用", "TC-1｜标题" in plan.blocks[0].as_prompt_line(),
@@ -416,7 +420,9 @@ def recall_checks(client: Any, app: Any, db_path: pathlib.Path, ids: dict[str, i
         standard = plans["standard"].as_dict()
         lite_counts = plans["lite"].as_dict()["counts"]
         check("三档单种类上限各自开火（造数都多于上限，装配结果正好等于上限）",
-              lite_counts == {"module": 2, "case": 3, "bug": 2, "knowledge": 1}
+              lite_counts["module"] == 2 and lite_counts["case"] == 3
+              and lite_counts["bug"] == 2
+              and sum(lite_counts.values()) == 8
               and standard["counts"]["module"] == 4
               and standard["counts"]["case"] == 8
               and standard["counts"]["bug"] == 5
@@ -629,7 +635,7 @@ def live_checks(client: Any, db_path: pathlib.Path, ids: dict[str, int],
           block.get("tierLabel") == "标准" and int(block.get("limitTotal") or 0) == 20,
           str({k: block.get(k) for k in ("tierLabel", "limitTotal")}))
     check("响应里的上下文与能力声明一致",
-          set(block.get("kinds") or []) == {"module", "case", "bug", "knowledge"},
+          set(block.get("kinds") or []) == {"module", "case", "bug", "knowledge", "heuristic"},
           str(block.get("kinds")))
 
     lite = data_of(client, "POST", f"{V1}/lab/case_generation/run", {
@@ -692,8 +698,9 @@ def live_checks(client: Any, db_path: pathlib.Path, ids: dict[str, int],
     check("能力卡片暴露上下文口径（档位、种类、硬上限都能给界面呈现）",
           card_context.get("defaultTier") == "standard"
           and {kind_item["kind"] for kind_item in card_context.get("kinds") or []} ==
-          {"module", "case", "bug", "knowledge"}
-          and card_context.get("limits", {}).get("total") == 20, str(card_context)[:260])
+          {"module", "case", "bug", "knowledge", "heuristic"}
+          and card_context.get("limits", {}).get("total") ==
+          context_assembler.TIER_LIMITS["standard"]["total"], str(card_context)[:260])
     check("卡片带三档中文标签",
           [item["label"] for item in card_context.get("tiers") or []] ==
           ["精简", "标准", "完整"], str(card_context.get("tiers")))

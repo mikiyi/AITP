@@ -51,6 +51,8 @@ CASES: tuple[tuple[str, str], ...] = (
     ("test_data_generation", "帮我造一批测试数据，假数据要覆盖订单状态的边界值和异常组合"),
     ("exploratory_web", "对这个站点做 Web 探索性测试，发现的异常要留证据包交人工审核"),
     ("prompt_optimize", "帮我对下来语句进行“从需求拆解测试点，输出 JSON 树用于渲染脑图”提示词优化"),
+    ("fix_suggestion", "这次接口断言失败了，帮我生成一版修复建议"),
+    ("requirement_import", "对这个需求文档做需求拆分和批量导入"),
 )
 
 
@@ -85,7 +87,7 @@ def _top(text: str) -> tuple[str, float]:
 def check_coverage(checker: Checker) -> None:
     cards = set(LAB_CAPABILITIES)
     covered = {code for code, _ in CASES}
-    checker.check("能力卡片数量", len(LAB_CAPABILITIES) == 20, f"实际 {len(LAB_CAPABILITIES)} 张")
+    checker.check("能力卡片数量", len(LAB_CAPABILITIES) == 22, f"实际 {len(LAB_CAPABILITIES)} 张")
     checker.check(
         "用例覆盖全部卡片",
         cards == covered,

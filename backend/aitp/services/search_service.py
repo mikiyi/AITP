@@ -335,7 +335,10 @@ def search_knowledge(
     if total == 0:
         fallback = _search_knowledge_ngrams(conn, keyword, limit, extra, extra_params)
         if fallback is not None:
-            return fallback
+            # 语义问句常常一个关键词都不命中：这条路径同样要过向量融合，否则语义检索形同虚设
+            fallback_items, fallback_total = fallback
+            return _fuse_knowledge(conn, keyword, fallback_items, fallback_total,
+                                   project_id=project_id, limit=limit)
     order, order_params = _order_by(tokens)
     sql = (
         "SELECT id, project_id, title, category, COALESCE(summary, '') AS summary,"
@@ -357,6 +360,28 @@ def search_knowledge(
         }
         for row in _rows(conn, sql, params + order_params + [limit])
     ]
+    # 四期专项 B：有可用嵌入模型时按 RRF 与向量召回融合；无模型时原样返回关键词结果。
+    return _fuse_knowledge(conn, keyword, items, total,
+                           project_id=project_id, limit=limit)
+
+
+def _fuse_knowledge(
+    conn: sqlite3.Connection,
+    keyword: str,
+    items: list[dict[str, Any]],
+    total: int,
+    *,
+    project_id: int | None,
+    limit: int,
+) -> tuple[list[dict[str, Any]], int]:
+    """字面结果与向量召回做 RRF 融合；无模型 / 无命中时原样返回。"""
+    from .knowledge_embedding_service import fuse_with_literal
+
+    fused, used_vector = fuse_with_literal(
+        conn, keyword, [dict(item) for item in items], project_id=project_id, limit=limit,
+    )
+    if used_vector:
+        return fused, max(int(total), len(fused))
     return items, total
 
 

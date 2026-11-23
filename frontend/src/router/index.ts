@@ -126,6 +126,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '验证沙箱', icon: 'CircleCheck' },
   },
   {
+    path: '/fix-suggestions',
+    name: 'fix-suggestions',
+    component: () => import('@/views/fix-suggestions/FixSuggestionListView.vue'),
+    meta: { title: '修复建议', icon: 'MagicStick' },
+  },
+  {
     path: '/bugs',
     name: 'bugs',
     component: () => import('@/views/bugs/BugListView.vue'),

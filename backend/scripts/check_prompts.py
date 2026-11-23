@@ -30,6 +30,7 @@ CTX_MODULES = "- moduleId=12｜支付回调：完整路径：交易/支付/回�
 CTX_CASES = "- TC-0007｜验证码超时-重发-成功：类型：functional｜优先级：P1"
 CTX_BUGS = "- BUG-0031｜支付回调金额翻倍：严重级：major｜状态：fixed"
 CTX_KNOWLEDGE = "- K:5｜支付回调幂等要点：分类：踩坑记录｜重复推送需按订单号幂等"
+CTX_HEURISTIC = "- 边界值模板·数值字段：按 0/1/上限/溢出取；样例：0 / 1 / -1 / 2147483647"
 
 
 def _ctx(*kinds: str) -> dict[str, str]:
@@ -38,6 +39,8 @@ def _ctx(*kinds: str) -> dict[str, str]:
         "cases": CTX_CASES,
         "bugs": CTX_BUGS,
         "knowledge": CTX_KNOWLEDGE,
+        "heuristic": CTX_HEURISTIC,
+        "heuristics": CTX_HEURISTIC,
     }
     return {f"context{name.capitalize()}": mapping[name] for name in kinds}
 
@@ -88,7 +91,8 @@ SAMPLES: dict[str, dict[str, Any]] = {
     "bug-classification": {"bugTitle": "空指针", "bugDescription": "NPE", "modulePath": "交易/支付"},
     "test-plan": {"projectName": "示例电商", "period": "第 3 周", "requirementSummary": "登录下单", "modules": "登录"},
     "api-test-design": {"projectName": "示例电商", "baseUrl": "http://127.0.0.1/api", "apiDescription": "下单接口",
-                       "outputTemplate": "## 接口概览\n## 用例清单"},
+                       "outputTemplate": "## 接口概览\n## 用例清单",
+                       **_ctx("knowledge", "heuristics")},
     "risk-assessment": {"projectName": "示例电商", "changeScope": "支付改造", "metricsJson": "{}"},
     "automation-script": {
         "projectName": "示例电商", "targetType": "web", "framework": "selenium", "language": "python",
@@ -104,10 +108,24 @@ SAMPLES: dict[str, dict[str, Any]] = {
         "projectName": "示例电商", "dialect": "MySQL 8.0",
         "intent": "给订单表造一批数据，覆盖三种订单状态和金额为 0 的边界值",
         "schemaDesc": "orders(id, user_id, amount, status, created_at)", "rowCount": "20",
+        **_ctx("modules", "heuristics"),
     },
     "exploratory-web": {
         "projectName": "示例电商", "targetUrl": "http://127.0.0.1:8760/",
         "maxSteps": "20", "maxSeconds": "180",
+    },
+    "fix-suggestion": {
+        "caseNo": "IT-001", "caseTitle": "下单接口返回 code 校验",
+        "failedSummary": "- JSONPath $.code：期望 0，实际 1001",
+        "oldAssertions": "status = 200\njson:$.code = 0",
+        "oldExpectedBody": "{\"code\": 0}", "oldExpectedStatus": "200",
+        "responseSummary": "{\"statusCode\": 200, \"body\": \"{\\\"code\\\": 1001}\"}",
+        **_ctx("bugs", "knowledge"),
+    },
+    "requirement-import": {
+        "documentText": "# 登录需求\n用户可用手机号+验证码登录；同一手机号 60 秒内只能发送一次验证码。",
+        "projectName": "示例电商", "maxItems": "10",
+        **_ctx("modules"),
     },
 }
 

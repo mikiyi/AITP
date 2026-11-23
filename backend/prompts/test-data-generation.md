@@ -2,7 +2,7 @@
 name: "test-data-generation"
 title: "测试数据生成（SQL）"
 description: "按自然语言描述生成可在目标数据库直接执行的测试数据 SQL"
-optional: "projectName, schemaDesc, rowCount"
+optional: "projectName, schemaDesc, rowCount, contextModules, contextHeuristics"
 ---
 
 # 角色
@@ -22,6 +22,10 @@ optional: "projectName, schemaDesc, rowCount"
 
 # 期望条数（可选）
 {{rowCount}}
+
+# 项目功能点与边界值参考（与输入相关时才注入，可为空）
+{{contextModules}}
+{{contextHeuristics}}
 
 # 任务
 1. **前置检查**：先判断描述里的信息是否足够生成可执行 SQL。缺少表名、字段名或主键规则时，明确列出「需要补充的信息」，不要靠猜测的表结构继续

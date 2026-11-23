@@ -158,6 +158,7 @@ MASTER_NUMBER_COLUMNS: dict[str, tuple[str, ...]] = {
     "biz_test_schedule": ("schedule_no",),
     "biz_api_scenario": ("scenario_no",),
     "biz_api_scenario_run": ("run_no",),
+    "biz_fix_suggestion": ("suggestion_no",),
 }
 
 #: 源码里 next_no 系列允许出现的编号列名；出现这里没有的列名说明新增了编号却没兜底

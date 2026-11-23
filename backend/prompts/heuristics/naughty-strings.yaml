@@ -1,0 +1,49 @@
+# 对抗性字符串精选字典（四期专项 G）
+# 仅用于测试生成与用例设计，不联网更新；命中片段按档位限量注入提示词。
+# 结构：packs[].categories[]，每类 keywords 用于本地检索命中。
+version: 1
+pack: naughty_strings
+label: 对抗性字符串
+capabilities: [case_generation, testpoint_generation, test_data_generation]
+default_category: empty_and_length
+categories:
+  - id: empty_and_length
+    label: 空值与长度
+    keywords: [空, 空串, 空值, 长度, 超长, empty, null, 长度边界]
+    description: 校验空值与长度上下限，重点看前后端长度口径是否一致
+    samples:
+      - 空字符串 ""
+      - 单个空格 " "
+      - 全角空格 "　"
+      - 超长字符串 10000 个 "a"
+      - 仅换行 "\n\n\n"
+  - id: unicode_edge
+    label: Unicode 怪异字符
+    keywords: [unicode, 编码, 乱码, 生僻字, emoji, 特殊字符, 字符集]
+    description: 覆盖多字节、组合字符、双向文本与零宽字符
+    samples:
+      - 零宽字符 "a\u200bb"
+      - 双向覆盖 "\u202Eabc"
+      - 组合音标 "e\u0301"
+      - 生僻汉字 "𠮷𠬝"
+      - 家庭 emoji "👨‍👩‍👧‍👦"
+  - id: control_chars
+    label: 控制字符
+    keywords: [控制字符, 制表符, 换行, 回车, 转义, 二进制]
+    description: 控制字符与转义序列常触发解析层异常
+    samples:
+      - 制表符 "\t"
+      - 回车换行 "\r\n"
+      - 空字符 "\u0000"
+      - 退格 "\b"
+      - 转义串 "%00%0d%0a"
+  - id: injection_hint
+    label: 注入探测提示
+    keywords: [注入, 注入测试, xss, sqli, 脚本, 恶意输入]
+    description: 仅作测试生成的探测样例，验证转义与白名单是否生效
+    samples:
+      - "<script>alert(1)</script>"
+      - "' OR '1'='1"
+      - "{{7*7}}"
+      - "../../../etc/passwd"
+      - "${jndi:ldap://127.0.0.1/a}"

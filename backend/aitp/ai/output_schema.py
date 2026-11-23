@@ -282,6 +282,25 @@ def _tp_node(depth: int) -> FieldRule:
 #: 给 5 层余量：模板要求最深三层，多给两层避免深一点的树被当成多余字段裁掉
 _TP_NODE = _tp_node(5)
 
+#: 四期专项 A：修复建议（单对象，关键字段严格）
+_FIX_SUGGESTION_TARGETS = ("assertion", "expected_body", "expected_status", "bug")
+
+#: 四期专项 D：需求批量拆分条目（标题严格，其余描述类字段宽松）
+_REQUIREMENT_IMPORT_ITEM = FieldRule(
+    name="requirement",
+    type=TYPE_OBJECT,
+    fields=(
+        FieldRule("title", TYPE_STRING, required=True, strict=True, max_len=200),
+        FieldRule("description", TYPE_STRING, default="", aliases=("content", "desc"),
+                  max_len=4000),
+        FieldRule("acceptance", TYPE_STRING, default="",
+                  aliases=("acceptanceCriteria", "verifyTarget"), max_len=2000),
+        FieldRule("modulePath", TYPE_STRING, default="", aliases=("module", "path"),
+                  max_len=200),
+        FieldRule("priority", TYPE_STRING, enum=PRIORITIES, default="P2"),
+    ),
+)
+
 SCHEMAS: dict[str, SchemaSpec] = {
     "case_generation": SchemaSpec("case_generation", "测试用例", ROOT_ARRAY, "用例", item=CASE_ITEM),
     "xmind_to_case": SchemaSpec(
@@ -297,6 +316,26 @@ SCHEMAS: dict[str, SchemaSpec] = {
                       max_len=200),
             FieldRule("children", TYPE_ARRAY, default=[], item=_TP_NODE),
         ),
+    ),
+    "fix_suggestion": SchemaSpec(
+        "fix_suggestion", "修复建议", ROOT_OBJECT, "建议",
+        fields=(
+            FieldRule("analysis", TYPE_STRING, required=True, strict=True, max_len=2000),
+            FieldRule("target", TYPE_STRING, required=True, strict=True,
+                      enum=_FIX_SUGGESTION_TARGETS),
+            FieldRule("suggestion", TYPE_STRING, required=True, strict=True, max_len=2000),
+            FieldRule("newAssertion", TYPE_STRING, default="", aliases=("newRule", "assertion"),
+                      max_len=2000),
+            FieldRule("newExpectedBody", TYPE_STRING, default="", aliases=("expectedBody",),
+                      max_len=4000),
+            FieldRule("newExpectedStatus", TYPE_STRING, default="", aliases=("expectedStatus",),
+                      max_len=40),
+            FieldRule("reason", TYPE_STRING, default="", max_len=2000),
+        ),
+    ),
+    "requirement_import": SchemaSpec(
+        "requirement_import", "需求", ROOT_ARRAY, "需求",
+        item=_REQUIREMENT_IMPORT_ITEM,
     ),
 }
 

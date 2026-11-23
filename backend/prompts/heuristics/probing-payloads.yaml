@@ -1,0 +1,36 @@
+# 注入探测样例（四期专项 G）
+# 仅用于生成安全测试用例，验证转义、白名单、参数化是否生效；不是攻击工具库。
+version: 1
+pack: probing_payloads
+label: 注入探测样例
+capabilities: [api_test_design, test_data_generation]
+default_category: xss
+categories:
+  - id: xss
+    label: XSS 探测
+    keywords: [xss, 脚本注入, 富文本, 评论, 反射, 跨站]
+    description: 验证输出编码与富文本白名单
+    samples:
+      - "<script>alert(1)</script>"
+      - "<img src=x onerror=alert(1)>"
+      - "javascript:alert(1)"
+      - "\"><svg onload=alert(1)>"
+  - id: sqli
+    label: SQL 注入探测
+    keywords: [sql注入, sqli, 数据库注入, 参数注入, 查询]
+    description: 验证参数化查询与错误信息脱敏
+    samples:
+      - "' OR '1'='1"
+      - "1' AND SLEEP(3)--"
+      - "'; DROP TABLE t;--"
+      - "1 UNION SELECT null, username FROM users--"
+  - id: path_and_template
+    label: 路径 / 模板注入
+    keywords: [路径穿越, 目录穿越, 模板注入, ssti, 文件读取]
+    description: 验证路径规范化与模板沙箱
+    samples:
+      - "../../../etc/passwd"
+      - "..\\..\\windows\\win.ini"
+      - "{{7*7}}"
+      - "${7*7}"
+      - "%2e%2e%2f%2e%2e%2fetc%2fpasswd"

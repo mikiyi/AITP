@@ -8,12 +8,12 @@ from typing import Any
 from flask import Blueprint, Response, request
 
 from ..common.enums import REQUIREMENT_STATUS
-from ..common.validators import check_choice, optional_str, require_int, require_str
+from ..common.validators import check_choice, optional_int, optional_str, require_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.module_repo import ModuleRepository
 from ..repositories.requirement_repo import RequirementRepository
-from ..services import audit_service, tabular_export
+from ..services import audit_service, requirement_import_service, tabular_export
 from .helpers import (
     attach_version_codes,
     audit,
@@ -133,6 +133,68 @@ def export_requirements() -> Response:
     return download_response(
         content, tabular_export.safe_filename("需求清单", extension), mimetype, count=len(rows)
     )
+
+
+@bp.post("/import/split")
+def split_requirement_import() -> Response:
+    """把文档拆成多条需求建议：只回勾选用条目，不落需求。"""
+    conn = db()
+    data = body()
+    project_id = require_int(data.get("projectId"), "projectId")
+    require_project(conn, project_id)
+    text = require_str(data.get("text"), "text", requirement_import_service.MAX_DOC_CHARS)
+    file_name = optional_str(data.get("fileName"), "fileName", 200)
+    result = requirement_import_service.split(
+        conn,
+        project_id=project_id,
+        text=text,
+        file_name=file_name,
+        profile_id=optional_int(data.get("profileId"), "profileId"),
+        max_items=data.get("maxItems"),
+    )
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_IMPORT, audit_service.RESOURCE_REQUIREMENT, None,
+          file_name, {"chars": result["chars"], "items": len(result["items"]),
+                      "duplicated": result["duplicated"]})
+    return ok(result)
+
+
+@bp.post("/import/adopt")
+def adopt_requirement_import() -> Response:
+    """把勾选的需求建议批量落库为草稿，重复条目按外部键跳过。"""
+    conn = db()
+    data = body()
+    project_id = require_int(data.get("projectId"), "projectId")
+    require_project(conn, project_id)
+    items = data.get("items")
+    if not isinstance(items, list):
+        raise AppError(ErrorCode.PARAM_ERROR, "参数 items 必须是数组")
+    result = requirement_import_service.adopt(
+        conn,
+        project_id=project_id,
+        items=items,
+        import_id=optional_int(data.get("importId"), "importId"),
+        fingerprint_value=str(data.get("fingerprint") or ""),
+        file_name=optional_str(data.get("fileName"), "fileName", 200),
+    )
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_CREATE, audit_service.RESOURCE_REQUIREMENT, None,
+          f"批量采纳 {result['created']} 条", {
+              "importId": result["importId"], "created": result["created"],
+              "skipped": result["skipped"],
+          })
+    return ok(result)
+
+
+@bp.get("/imports")
+def list_requirement_imports() -> Response:
+    """最近导入批次，用于重复导入提示与来源追溯。"""
+    conn = db()
+    project_id = scope_arg()
+    if project_id is None:
+        raise AppError(ErrorCode.PARAM_ERROR, "projectId 必填：导入批次按项目取，不返回全库")
+    limit = optional_int(request.args.get("limit"), "limit") or 20
+    return ok({"list": requirement_import_service.list_imports(conn, project_id, limit)})
 
 
 @bp.get("/<pk>")

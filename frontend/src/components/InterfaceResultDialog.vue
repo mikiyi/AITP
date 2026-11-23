@@ -49,6 +49,15 @@
         <pre class="iface-pre">{{ result.request.body }}</pre>
       </template>
     </template>
+    <template #footer>
+      <el-button @click="visible = false">关闭</el-button>
+      <el-button
+        v-if="result && !result.passed && result.executionId"
+        type="primary"
+        :loading="generating"
+        @click="emitGenerate"
+      >生成修复建议</el-button>
+    </template>
   </el-dialog>
 </template>
 
@@ -59,16 +68,25 @@ import type { InterfaceExecution } from '@/api/types'
 const props = defineProps<{
   modelValue: boolean
   result: InterfaceExecution | null
+  generating?: boolean
 }>()
 
 const emit = defineEmits<{
   (event: 'update:modelValue', value: boolean): void
+  (event: 'generateFix', executionId: number): void
 }>()
 
 const visible = computed({
   get: () => props.modelValue,
   set: (value: boolean) => emit('update:modelValue', value),
 })
+
+function emitGenerate(): void {
+  const executionId = props.result?.executionId
+  if (executionId) {
+    emit('generateFix', executionId)
+  }
+}
 
 const requestHeaders = computed(() => {
   const headers = props.result?.request.headers ?? {}

@@ -5,6 +5,7 @@
       <div class="toolbar" style="margin: 0">
         <ProjectSwitcher />
         <BaseExportMenu :resolve-url="resolveExportUrl" />
+        <el-button :icon="Upload" @click="openImport">文档批量导入</el-button>
         <el-button type="primary" :icon="Plus" @click="openCreate">新建需求</el-button>
       </div>
     </div>
@@ -86,6 +87,74 @@
         <el-button type="primary" :loading="saving" @click="save">保存</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="importVisible" title="文档批量拆分导入" width="880px" class="req-import-dialog">
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="AI 只产出拆分建议，勾选后才落库；同一文档重复导入时，已采纳的条目会自动跳过"
+      />
+      <el-form label-width="92px" class="req-import-form">
+        <el-form-item label="需求文档">
+          <el-input
+            v-model="importForm.text"
+            class="req-import-text"
+            type="textarea"
+            :rows="8"
+            placeholder="粘贴需求文档正文，或先上传 Word / Excel / PDF / Markdown 自动抽取文本"
+          />
+          <div class="req-import-actions">
+            <el-upload
+              :show-file-list="false"
+              accept=".docx,.xlsx,.pdf,.md,.txt,.html,.json"
+              :http-request="uploadImportDoc"
+            >
+              <el-button :loading="importUploading">上传文档</el-button>
+            </el-upload>
+            <span v-if="importForm.fileName" class="req-import-file">已载入：{{ importForm.fileName }}</span>
+          </div>
+        </el-form-item>
+        <el-form-item label="最多拆几条">
+          <el-input-number v-model="importForm.maxItems" :min="1" :max="50" />
+        </el-form-item>
+      </el-form>
+
+      <el-alert
+        v-if="importMessage"
+        class="req-import-msg"
+        :type="importResult && !importResult.generated ? 'warning' : 'success'"
+        :closable="false"
+        :title="importMessage"
+      />
+
+      <el-table
+        v-if="importRows.length"
+        :data="importRows"
+        row-key="title"
+        class="req-import-table"
+        @selection-change="onImportSelection"
+      >
+        <el-table-column type="selection" width="44" />
+        <el-table-column prop="title" label="需求标题" min-width="180" />
+        <el-table-column prop="description" label="描述" min-width="240" show-overflow-tooltip />
+        <el-table-column prop="modulePath" label="建议功能点" width="150" show-overflow-tooltip />
+        <el-table-column prop="priority" label="优先级" width="80" />
+      </el-table>
+
+      <template #footer>
+        <el-button @click="importVisible = false">取消</el-button>
+        <el-button type="primary" :loading="importSplitting" @click="runSplit">开始拆分</el-button>
+        <el-button
+          type="success"
+          :loading="importAdopting"
+          :disabled="!importSelection.length"
+          @click="confirmImportAdopt"
+        >
+          采纳 {{ importSelection.length }} 条
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 
     <AddToKnowledgeDialog
@@ -100,15 +169,15 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox, type UploadRequestOptions } from 'element-plus'
+import { Plus, Upload } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
-import { projectVersionApi, requirementApi } from '@/api'
+import { labApi, projectVersionApi, requirementApi } from '@/api'
 import { CASE_PRIORITY_OPTIONS } from '@/constants/enums'
-import type { Requirement } from '@/api/types'
+import type { Requirement, RequirementImportItem, RequirementImportSplit } from '@/api/types'
 import { useProjectScope } from '@/composables/useProjectScope'
 import { useProjectExtraQuery, useProjectVersionOptions } from '@/composables/useProjectOptions'
 import { useAppStore } from '@/stores/app'
@@ -344,6 +413,103 @@ async function batchRemove(rows: Record<string, any>[]): Promise<void> {
     ElMessage.error(err instanceof Error ? err.message : '批量删除失败')
   } finally {
     batchRemoving.value = false
+  }
+}
+
+// ---------------- 四期专项 D：文档批量拆分导入 ----------------
+
+const importVisible = ref(false)
+const importUploading = ref(false)
+const importSplitting = ref(false)
+const importAdopting = ref(false)
+const importRows = ref<RequirementImportItem[]>([])
+const importSelection = ref<RequirementImportItem[]>([])
+const importMessage = ref('')
+const importResult = ref<RequirementImportSplit | null>(null)
+const importForm = reactive({ text: '', fileName: '', maxItems: 30 })
+
+function openImport(): void {
+  Object.assign(importForm, { text: '', fileName: '', maxItems: 30 })
+  importRows.value = []
+  importSelection.value = []
+  importMessage.value = ''
+  importResult.value = null
+  importVisible.value = true
+}
+
+async function uploadImportDoc(options: UploadRequestOptions): Promise<void> {
+  const form = new FormData()
+  form.append('file', options.file)
+  importUploading.value = true
+  try {
+    const result = await labApi.uploadDocument(form)
+    importForm.text = result.text
+    importForm.fileName = result.fileName
+    ElMessage.success('文档已抽取为文本，可直接开始拆分')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '文档解析失败')
+  } finally {
+    importUploading.value = false
+  }
+}
+
+async function runSplit(): Promise<void> {
+  if (!importForm.text.trim()) {
+    ElMessage.warning('请先粘贴或上传需求文档')
+    return
+  }
+  if (!appStore.currentProjectId) {
+    ElMessage.warning('请先在顶部选择项目')
+    return
+  }
+  importSplitting.value = true
+  try {
+    const result = await requirementApi.splitImport({
+      projectId: appStore.currentProjectId,
+      text: importForm.text,
+      fileName: importForm.fileName || undefined,
+      maxItems: importForm.maxItems,
+    })
+    importResult.value = result
+    importRows.value = result.items
+    if (!result.generated) {
+      importMessage.value = result.message || '未能拆出可用需求，请调整文档内容后重试'
+      return
+    }
+    importMessage.value = result.duplicated
+      ? result.message
+      : `已拆出 ${result.items.length} 条需求，勾选后批量采纳`
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '拆分失败')
+  } finally {
+    importSplitting.value = false
+  }
+}
+
+function onImportSelection(rows: RequirementImportItem[]): void {
+  importSelection.value = rows
+}
+
+async function confirmImportAdopt(): Promise<void> {
+  if (!importSelection.value.length || !appStore.currentProjectId) {
+    return
+  }
+  importAdopting.value = true
+  try {
+    const result = await requirementApi.adoptImport({
+      projectId: appStore.currentProjectId,
+      items: importSelection.value,
+      importId: importResult.value?.importId ?? undefined,
+      fingerprint: importResult.value?.fingerprint || undefined,
+      fileName: importForm.fileName || undefined,
+    })
+    ElMessage.success(result.message)
+    importVisible.value = false
+    tableRef.value?.reload()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '批量采纳失败')
+  } finally {
+    importAdopting.value = false
   }
 }
 </script>

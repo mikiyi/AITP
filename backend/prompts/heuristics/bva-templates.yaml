@@ -1,0 +1,48 @@
+# 边界值分析模板（四期专项 G）
+# 按字段类型给出「空 / 下界 / 上界 / 越界」四类取值，供用例与造数直接引用。
+version: 1
+pack: bva_templates
+label: 边界值模板
+capabilities: [case_generation, testpoint_generation, api_test_design, test_data_generation]
+default_category: number
+categories:
+  - id: number
+    label: 数值字段
+    keywords: [数值, 数字, 整数, 小数, 金额, 数量, 分页, 边界值, bva]
+    description: 数值边界按「0 / 1 / 上限 / 上限+1 / 负数」取
+    samples:
+      - 0
+      - 1
+      - -1
+      - 最大值 2147483647
+      - 溢出 2147483648
+  - id: string
+    label: 字符串字段
+    keywords: [字符串, 文本, 名称, 描述, 长度, 字符数, 边界值, bva]
+    description: 字符串按「空 / 1 字符 / 达到上限 / 超一位」取
+    samples:
+      - 空串 ""
+      - 单字符 "a"
+      - 上限长度（按字段 maxLength 取满）
+      - 上限+1 字符
+      - 首尾空白 "  文本  "
+  - id: date
+    label: 日期时间字段
+    keywords: [日期, 时间, 闰年, 月末, 时区, 时间戳, 边界值, bva]
+    description: 日期按「闰年 2 月 / 月末 / 跨时区 / 极值」取
+    samples:
+      - "2024-02-29（闰年）"
+      - "2023-02-29（非闰年非法值）"
+      - "2024-01-31 23:59:59"
+      - "1970-01-01 00:00:00"
+      - "2038-01-19 03:14:08（32 位时间戳边界）"
+  - id: collection
+    label: 集合字段
+    keywords: [集合, 列表, 数组, 批量, 多条, 空列表, 边界值, bva]
+    description: 集合按「空 / 单元素 / 满额 / 超一位」取
+    samples:
+      - "空列表 []"
+      - "单元素 [1]"
+      - "达到分页上限的条数"
+      - "上限+1 条"
+      - "含重复元素 [1, 1, 2]"

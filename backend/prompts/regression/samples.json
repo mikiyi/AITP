@@ -204,6 +204,62 @@
         "projectName": "示例电商项目"
       },
       "fixture": "## 需求确认\n- 已确认：验证码有效期 5 分钟；60 秒发送限流；连续 5 次错误锁定 10 分钟。\n- 待澄清：锁定是否对同一设备生效；短信通道失败是否计入错误次数。\n- 验收要点：过期/限流/锁定三种失败均有用户可读提示。"
+    },
+    {
+      "id": "fix_suggestion_assertion",
+      "capability": "fix_suggestion",
+      "title": "接口断言失败 · 修复建议",
+      "variables": {
+        "caseNo": "IT-001",
+        "caseTitle": "下单接口返回 code 校验",
+        "failedSummary": "- JSONPath $.code：期望 0，实际 1001",
+        "oldAssertions": "status = 200\njson:$.code = 0",
+        "oldExpectedBody": "{\"code\": 0}",
+        "oldExpectedStatus": "200",
+        "responseSummary": "{\"statusCode\": 200, \"body\": \"{\\\"code\\\": 1001}\"}"
+      },
+      "fixture": {
+        "analysis": "JSONPath $.code 期望 0，实际返回 1001，接口真实行为已变化，判定为资产过期。",
+        "target": "assertion",
+        "suggestion": "把断言 json:$.code = 0 改为 json:$.code = 1001",
+        "newAssertion": "status = 200\njson:$.code = 1001",
+        "newExpectedBody": "",
+        "newExpectedStatus": "",
+        "reason": "响应体 code 稳定返回 1001，与历史版本一致"
+      }
+    },
+    {
+      "id": "requirement_import_doc",
+      "capability": "requirement_import",
+      "title": "需求文档 · 批量拆分",
+      "variables": {
+        "documentText": "# 登录需求\n用户可用手机号+验证码登录；同一手机号 60 秒内只能发送一次验证码；连续 5 次错误锁定 15 分钟。",
+        "projectName": "示例电商项目",
+        "maxItems": "10"
+      },
+      "fixture": [
+        {
+          "title": "手机号验证码登录",
+          "description": "用户输入已注册手机号并获取短信验证码，校验通过后登录成功并返回 token。",
+          "acceptance": "1. 有效验证码 5 分钟内可登录成功\n2. 过期验证码提示已失效",
+          "modulePath": "登录/验证码",
+          "priority": "P0"
+        },
+        {
+          "title": "验证码发送频率限制",
+          "description": "同一手机号 60 秒内只能发送一次验证码。",
+          "acceptance": "1. 60 秒内重复发送被拒\n2. 第 61 秒可再次发送",
+          "modulePath": "登录/验证码",
+          "priority": "P1"
+        },
+        {
+          "title": "登录失败次数锁定",
+          "description": "同一手机号连续 5 次验证码错误后锁定 15 分钟。",
+          "acceptance": "1. 第 5 次失败后锁定\n2. 锁定期内提示剩余时间",
+          "modulePath": "登录/账号安全",
+          "priority": "P1"
+        }
+      ]
     }
   ]
 }

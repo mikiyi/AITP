@@ -411,7 +411,12 @@
       title="轮次用例执行证据"
     />
 
-    <InterfaceResultDialog v-model="interfaceResultVisible" :result="interfaceResult" />
+    <InterfaceResultDialog
+      v-model="interfaceResultVisible"
+      :result="interfaceResult"
+      :generating="fixGenerating"
+      @generate-fix="generateFixSuggestion"
+    />
     <ProdConfirmDialog ref="prodDialog" />
   </div>
 </template>
@@ -422,7 +427,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { TableInstance } from 'element-plus'
 import { ArrowLeft, CircleCheck, Cpu, DataAnalysis, Document, Download, Refresh, VideoPlay } from '@element-plus/icons-vue'
-import { automationApi, reportApi, testEnvApi, testRunApi } from '@/api'
+import { automationApi, fixSuggestionApi, reportApi, testEnvApi, testRunApi } from '@/api'
 import { ApiError, ErrorCode } from '@/api/request'
 import type {
   AutomationRun,
@@ -467,6 +472,7 @@ const interfaceTarget = ref<TestRunCase | null>(null)
 const interfaceEnvId = ref<number | null>(null)
 const interfaceTimeout = ref(10)
 const interfaceResult = ref<InterfaceExecution | null>(null)
+const fixGenerating = ref(false)
 
 const automationRuns = ref<AutomationRun[]>([])
 const automationDialogVisible = ref(false)
@@ -724,8 +730,30 @@ async function runInterfaceConfirm(): Promise<void> {
   }
 }
 
-async function openAutomation(): Promise<void> {
-  automationSelected.value = []
+async function generateFixSuggestion(executionId: number): Promise<void> {
+  const projectId = run.value?.projectId
+  if (!projectId) {
+    ElMessage.warning('缺少项目上下文，无法生成修复建议')
+    return
+  }
+  fixGenerating.value = true
+  try {
+    const result = await fixSuggestionApi.generate({ executionId, projectId })
+    if (result.generated) {
+      ElMessage.success(`已生成修复建议 ${result.suggestion?.suggestionNo ?? ''}，请到「修复建议」页审核`)
+    } else {
+      ElMessage.warning(result.message || '暂无可用 AI 模型，已给出规则 diff')
+    }
+    interfaceResultVisible.value = false
+    router.push('/fix-suggestions')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '生成修复建议失败')
+  } finally {
+    fixGenerating.value = false
+  }
+}
+
+async function openAutomation(): Promise<void> {  automationSelected.value = []
   automationTimeout.value = 300
   automationLoading.value = true
   automationDialogVisible.value = true

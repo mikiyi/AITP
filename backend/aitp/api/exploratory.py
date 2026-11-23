@@ -7,13 +7,13 @@
 
 from __future__ import annotations
 
-from flask import Blueprint, Response
+from flask import Blueprint, Response, request, send_file
 
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.exploration_repo import ExplorationSessionRepository, ExplorationStepRepository
 from ..repositories.automation_repo import AutomationScriptRepository
-from ..services import audit_service, exploratory_service
+from ..services import audit_service, exploratory_service, media_service
 from .helpers import (
     audit, body, commit, db, guard_project_scope, keyword_of,
     page_args, path_int, query_filters, require_project, scope_arg,
@@ -166,6 +166,24 @@ def session_to_script(pk: str) -> Response:
     })
     commit(conn)
     return ok({"scriptId": new_id, "scriptNo": script_no, "name": name})
+
+
+@bp.get("/media")
+def media_api() -> Response:
+    """四期专项 C：取回执行媒体（视频内联播放 / Trace 下载）。
+
+    路径只允许落在 `data/exec-media` 内；越界或不存在一律 404。
+    """
+    conn = db()
+    project_id = scope_arg()
+    if project_id is None:
+        raise AppError(ErrorCode.PARAM_ERROR, "缺少 projectId，无法校验媒体归属")
+    relative = str(request.args.get("path") or "").strip()
+    path = media_service.media_file(conn, relative)
+    if path is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "媒体不存在或路径不合法")
+    as_attachment = path.suffix.lower() == ".zip"
+    return send_file(path, as_attachment=as_attachment, download_name=path.name)
 
 
 @bp.get("/steps/<pk>/evidence")

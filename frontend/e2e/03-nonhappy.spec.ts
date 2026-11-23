@@ -28,10 +28,12 @@ test('空数据项目显示空态而非报错', async ({ page }) => {
 })
 
 test('超大量用例：分页总数正确且窗口行数受限', async ({ page }) => {
+  test.setTimeout(180_000)
   const p = data(await api('POST', '/projects', { code: `BIG${Date.now()}`, name: '大量项目' }))
-  // 造 1000 条
-  for (let i = 0; i < 1000; i++) {
-    await api('POST', '/test-cases', { projectId: p.id, title: `BIG 用例 ${i}`, caseType: 'functional', priority: 'P2' })
+  // 造 1000 条：串行 1000 次 POST 会把 60s 预算全部吃在造数上，改成 20 路并发分批发送
+  const mk = (i: number) => api('POST', '/test-cases', { projectId: p.id, title: `BIG 用例 ${i}`, caseType: 'functional', priority: 'P2' })
+  for (let base = 0; base < 1000; base += 20) {
+    await Promise.all(Array.from({ length: 20 }, (_, k) => mk(base + k)))
   }
   const h = attachHealth(page)
   await page.goto('/test-cases')

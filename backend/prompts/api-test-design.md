@@ -2,7 +2,7 @@
 name: "api-test-design"
 title: "接口测试设计"
 description: "为接口设计测试用例"
-optional: "baseUrl, outputTemplate"
+optional: "baseUrl, outputTemplate, contextKnowledge, contextHeuristics"
 ---
 
 # 角色
@@ -27,6 +27,10 @@ optional: "baseUrl, outputTemplate"
 
 # 产出物模板
 {{outputTemplate}}
+
+# 项目知识与测试启发（与输入相关时才注入，可为空）
+{{contextKnowledge}}
+{{contextHeuristics}}
 
 模板给出时，按模板里的标题层级与表格列组织内容；模板是「（未提供）」时，按下面的默认结构输出。
 

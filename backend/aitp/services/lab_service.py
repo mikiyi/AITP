@@ -1528,8 +1528,9 @@ def _search_kb_for_ask(
     """
     from ..common.knowledge_lexicon import expand_synonyms
     from ..db.fts import hybrid_search
+    from .knowledge_embedding_service import fuse_with_literal
 
-    return hybrid_search(
+    result = hybrid_search(
         conn,
         fts_table=str(repo_cls.FTS_TABLE),
         content_table=str(repo_cls.table),
@@ -1542,3 +1543,13 @@ def _search_kb_for_ask(
         fallback_on_empty=True,
         synonyms=expand_synonyms(question),
     )
+    rows = result.get("list") or []
+    # 四期专项 B：有嵌入模型时把向量召回一起融进问答引用；无模型时保持原样。
+    fused, used_vector = fuse_with_literal(
+        conn, question, [dict(row) for row in rows], project_id=None,
+        limit=max(1, int(limit)),
+    )
+    if used_vector:
+        result = {**result, "list": fused, "total": max(int(result.get("total") or 0),
+                                                        len(fused))}
+    return result

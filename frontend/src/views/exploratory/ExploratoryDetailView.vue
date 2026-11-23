@@ -127,12 +127,26 @@
           </el-descriptions-item>
         </el-descriptions>
 
-        <h4 style="margin-top: 16px">异常截图（{{ evidence.attachments?.length || 0 }} 张）</h4>
+        <h4 style="margin-top: 16px">证据附件（{{ evidence.attachments?.length || 0 }} 项）</h4>
         <div v-if="evidence.attachments?.length" class="shot-list">
           <div v-for="(att, index) in evidence.attachments" :key="index" class="shot-item">
-            <el-tag size="small" effect="plain">{{ att.fileName || `截图 ${index + 1}` }}</el-tag>
+            <el-tag size="small" effect="plain">{{ att.fileName || `附件 ${index + 1}` }}</el-tag>
           </div>
         </div>
+
+        <template v-if="mediaAttachments.length">
+          <h4 style="margin-top: 16px">执行媒体</h4>
+          <div v-for="att in mediaAttachments" :key="att.relativePath" class="media-item">
+            <template v-if="att.kind === 'video'">
+              <video class="media-video" controls preload="metadata" :src="mediaUrl(att)" />
+              <span class="muted">{{ att.fileName }}</span>
+            </template>
+            <template v-else>
+              <a :href="mediaUrl(att)" class="media-link">下载 Trace：{{ att.fileName }}</a>
+              <span class="muted">用 Playwright 官方查看器本地打开</span>
+            </template>
+          </div>
+        </template>
 
         <h4 style="margin-top: 16px">网络快照</h4>
         <pre class="evidence-block">{{ evidence.requestSummary || '（无网络请求）' }}</pre>
@@ -156,6 +170,7 @@ import { exploratoryApi } from '@/api'
 import DetailNotFound from '@/components/DetailNotFound.vue'
 import { ApiError, ErrorCode } from '@/api/request'
 import { dateTimeText } from '@/utils/format'
+import { useAppStore } from '@/stores/app'
 import type { ExplorationSessionDetail, ExplorationStep, ExploratoryOption, ExecutionEvidence } from '@/api/types'
 
 const router = useRouter()
@@ -166,6 +181,26 @@ let timer: ReturnType<typeof setTimeout> | null = null
 
 const evidenceVisible = ref(false)
 const evidence = ref<ExecutionEvidence | null>(null)
+const appStore = useAppStore()
+
+/** 四期专项 C：证据里挂的视频 / Trace 附件（截图走原有展示）。 */
+const mediaAttachments = computed<Array<{ kind: string; relativePath: string; fileName: string }>>(
+  () => {
+    const list = (evidence.value?.attachments ?? []) as Array<Record<string, unknown>>
+    return list
+      .filter((item) => item.kind === 'video' || item.kind === 'trace')
+      .map((item) => ({
+        kind: String(item.kind),
+        relativePath: String(item.relativePath || ''),
+        fileName: String(item.fileName || ''),
+      }))
+  },
+)
+
+function mediaUrl(att: { relativePath: string }): string {
+  const projectId = String(appStore.currentProjectId ?? '')
+  return `/api/v1/exploratory/media?path=${encodeURIComponent(att.relativePath)}&projectId=${projectId}`
+}
 const registeringBugId = ref<number | null>(null)
 const notFound = ref(false)
 
@@ -283,6 +318,22 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+.media-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.media-video {
+  width: 100%;
+  max-width: 520px;
+  border-radius: 6px;
+  background: #000;
+}
+.media-link {
+  color: var(--el-color-primary);
+  font-size: 13px;
 }
 .evidence-block {
   white-space: pre-wrap;

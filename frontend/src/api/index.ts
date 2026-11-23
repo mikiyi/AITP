@@ -29,6 +29,8 @@ import type {
   AiStatus,
   AiTask,
   AuditLog,
+  AuthSession,
+  AuthSessionPrecheck,
   AutomationCategoryInfo,
   AutomationInterpreters,
   AutomationRuntime,
@@ -67,7 +69,11 @@ import type {
   KnowledgeReindexResult,
   KnowledgeStorage,
   KnowledgeVersion,
+  FixSuggestion,
+  FixSuggestionGenerateResult,
+  FixSuggestionPage,
   ImageAttachment,
+  KnowledgeEmbeddingStatus,
   MaskInfo,
   ModuleCoverageResult,
   ModuleNode,
@@ -94,6 +100,10 @@ import type {
   ReportStats,
   ReportTrend,
   Requirement,
+  RequirementImportAdopt,
+  RequirementImportBatch,
+  RequirementImportItem,
+  RequirementImportSplit,
   SqlAnalysis,
   SqlScript,
   SqlScriptResult,
@@ -424,6 +434,25 @@ export const requirementApi = {
   update: (id: number, body: Partial<Requirement>) => put<Requirement>(`/requirements/${id}`, body),
   remove: (id: number) => del(`/requirements/${id}`),
   batchRemove: (ids: number[]) => post<BatchDeleteResult>('/requirements/batch-delete', { ids }),
+  /** 四期专项 D：需求文档批量拆分（只回勾选建议，不落需求）。 */
+  splitImport: (body: {
+    projectId: number
+    text: string
+    fileName?: string
+    profileId?: number
+    maxItems?: number
+  }) => post<RequirementImportSplit>('/requirements/import/split', body),
+  /** 批量采纳勾选的需求建议。 */
+  adoptImport: (body: {
+    projectId: number
+    items: RequirementImportItem[]
+    importId?: number
+    fingerprint?: string
+    fileName?: string
+  }) => post<RequirementImportAdopt>('/requirements/import/adopt', body),
+  /** 最近导入批次。 */
+  imports: (projectId: number, limit = 20) =>
+    get<{ list: RequirementImportBatch[] }>('/requirements/imports', { projectId, limit }),
   exportUrl: (query: Record<string, unknown>) => exportUrl('requirements/export', query),
 }
 
@@ -600,7 +629,12 @@ export const knowledgeApi = {
     }>(`/knowledge/articles/${id}/organize`),
   /** 分类清单：内置中文分类 + 自定义分类。 */
   categories: () => get<{ list: KnowledgeCategory[] }>('/knowledge/categories'),
-  createCategory: (name: string) => post<KnowledgeCategory>('/knowledge/categories', { name }),
+  /** 四期专项 B：嵌入通道与向量索引概览。 */
+  embeddingStatus: () => get<KnowledgeEmbeddingStatus>('/knowledge/embedding/status'),
+  /** 整库增量重建向量索引；无可用嵌入模型时 usable=false（不报错）。 */
+  rebuildEmbedding: (projectId?: number) =>
+    post<KnowledgeEmbeddingStatus>('/knowledge/embedding/rebuild',
+      projectId ? { projectId } : {}),  createCategory: (name: string) => post<KnowledgeCategory>('/knowledge/categories', { name }),
   removeCategory: (id: number) => del(`/knowledge/categories/${id}`),
   listDrafts: (query: Record<string, unknown> = {}) =>
     get<PagePayload<KnowledgeDraft>>('/knowledge/drafts', query as never),
@@ -1017,6 +1051,41 @@ export const externalImportApi = {
     get<ExternalImportBatch[]>('/external-imports/batches', { projectId }),
   batch: (id: number, projectId: number) =>
     get<ExternalImportBatch>(`/external-imports/batches/${id}`, { projectId }),
+}
+
+/** 四期专项 F：登录态档案（storageState 只存本机）。 */
+export const authSessionApi = {
+  list: (envId?: number) =>
+    get<{ list: AuthSession[]; projectId: number; envId: number | null }>(
+      '/auth-sessions', envId ? { envId } : {},
+    ),
+  save: (body: { envId?: number | null; role: string; storageState: unknown; note?: string }) =>
+    post<AuthSession>('/auth-sessions', body as never),
+  get: (id: number) => get<{ session: AuthSession; precheck: AuthSessionPrecheck | null }>(
+    `/auth-sessions/${id}`,
+  ),
+  precheck: (id: number) => post<{ confirm: boolean; session: AuthSession; precheck: AuthSessionPrecheck }>(
+    `/auth-sessions/${id}/precheck`, {},
+  ),
+  remove: (id: number) => del<{ removed: boolean }>(`/auth-sessions/${id}`),
+}
+
+/** 四期专项 A：AI 修复建议（断言失败 → 诊断 → 待审采纳）。 */
+export const fixSuggestionApi = {
+  list: (query: Record<string, unknown> = {}) =>
+    get<FixSuggestionPage>('/fix-suggestions', query as never),
+  get: (id: number) => get<FixSuggestion>(`/fix-suggestions/${id}`),
+  /** 从执行记录生成建议；无模型时返回 generated=false + 机械 diff。 */
+  generate: (body: { executionId: number; projectId?: number; profileId?: number }) =>
+    post<FixSuggestionGenerateResult>('/fix-suggestions', body),
+  adopt: (id: number, projectId: number) =>
+    post<{ applied: boolean; suggestion: FixSuggestion; caseId: number; field: string }>(
+      `/fix-suggestions/${id}/adopt`, { projectId },
+    ),
+  dismiss: (id: number, projectId: number) =>
+    post<{ dismissed: boolean; suggestion: FixSuggestion }>(
+      `/fix-suggestions/${id}/dismiss`, { projectId },
+    ),
 }
 
 /** GAP-44 数据留存与归档：配置、清理、归档区检索与回看。 */

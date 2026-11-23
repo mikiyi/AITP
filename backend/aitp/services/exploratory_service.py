@@ -42,7 +42,7 @@ from ..repositories.exploration_repo import (
 )
 from ..repositories.knowledge_draft_repo import KnowledgeDraftRepository
 from ..repositories.sys_config_repo import SysConfigRepository
-from . import dedup_service, execution_protocol
+from . import dedup_service, execution_protocol, media_service
 
 SETTINGS_KEY = "exploratory.web.settings"
 
@@ -70,6 +70,9 @@ PINNED_TOOLS = (
     "browser_screenshot", "browser_console_messages", "browser_network_requests",
 )
 
+#: 四期专项 C：可选媒体工具；不钉住，服务提供就采集、没提供就跳过
+MEDIA_TOOLS = ("browser_video", "browser_trace")
+
 #: 异常类型
 ANOMALY_PAGE_ERROR = "page_error"
 ANOMALY_HTTP_ERROR = "http_error"
@@ -95,6 +98,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "maxSeconds": 180,
     "perStepTimeout": 30,
     "perStepScreenshots": 1,
+    "captureMedia": False,
     "recordSelectors": True,
     "inputMasking": True,
     "screenshotDir": "exploratory/screenshots",
@@ -140,7 +144,7 @@ def update_settings(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[str,
     for key in ("maxSteps", "maxSeconds", "perStepTimeout", "perStepScreenshots", "logWindowSeconds"):
         if key in data:
             candidate[key] = _bounded_int(data[key], key)
-    for key in ("recordSelectors", "inputMasking"):
+    for key in ("recordSelectors", "inputMasking", "captureMedia"):
         if key in data:
             candidate[key] = _as_bool(data[key])
     for key in ("screenshotDir", "logSliceDir", "mcpCommand"):
@@ -804,6 +808,9 @@ def _capture_normal_step(
             file_path.write_bytes(b"")
         screenshots.append({"fileName": file_name, "filePath": str(file_path), "kind": "screenshot"})
     trace_id = next((str(item["traceId"])[:64] for item in network if item.get("traceId")), "")
+    media, media_note = _capture_media(
+        conn, client, settings, session, index, data_root,
+    )
     result = execution_protocol.ExecutionResult(
         source_type=execution_protocol.SOURCE_EXPLORATORY,
         source_row_id=step_id,
@@ -811,10 +818,10 @@ def _capture_normal_step(
         title=f"{session['name']} / 第{index}步 正常",
         result="passed",
         duration_ms=duration_ms,
-        log_summary="正常步，无异常日志切片",
+        log_summary="正常步，无异常日志切片" + (f"；{media_note}" if media_note else ""),
         request_summary=execution_protocol.summarize(network, 1500),
         response_summary=execution_protocol.summarize(console, 1500),
-        attachments=screenshots,
+        attachments=[*screenshots, *media],
         source_ref={
             "table": "biz_exploration_step", "id": step_id,
             "sessionId": int(session["id"]), "targetUrl": str(session["target_url"]),
@@ -827,6 +834,55 @@ def _capture_normal_step(
     evidence_id = execution_protocol.capture(conn, result)
     conn.commit()
     return evidence_id
+
+
+def _capture_media(
+    conn: sqlite3.Connection,
+    client: McpClient,
+    settings: dict[str, Any],
+    session: dict[str, Any],
+    index: int,
+    data_root: Path,
+) -> tuple[list[dict[str, Any]], str]:
+    """四期专项 C：可选地采集视频 / Trace。
+
+    只在开启 captureMedia 且 MCP 浏览器服务真的提供对应工具时落盘；
+    没提供、超限或写入失败都不报错，只在证据日志里留一句说明。
+    """
+    if not _as_bool(settings.get("captureMedia", False)):
+        return [], ""
+    batch = str(session.get("session_no") or session.get("id") or "misc")
+    captured: list[dict[str, Any]] = []
+    notes: list[str] = []
+    for tool, kind, suffix in (
+        ("browser_video", media_service.KIND_VIDEO, ".webm"),
+        ("browser_trace", media_service.KIND_TRACE, ".zip"),
+    ):
+        if tool not in MEDIA_TOOLS:
+            continue
+        try:
+            payload = client.call_tool(tool, {"step": index})
+        except Exception:  # noqa: BLE001 - 工具缺失/失败都不阻塞探索
+            notes.append(f"{kind} 未采集（浏览器服务未提供或采集失败）")
+            continue
+        content = payload.get("content") or payload.get("data") or ""
+        try:
+            raw = base64.b64decode(content) if isinstance(content, str) else b""
+        except ValueError:
+            raw = b""
+        if not raw:
+            notes.append(f"{kind} 未采集（返回空）")
+            continue
+        saved = media_service.save_media(
+            conn, batch=batch, kind=kind,
+            file_name=f"step{index}{suffix}", data=raw,
+        )
+        if saved is None:
+            notes.append(media_service.degrade_note(kind, len(raw)))
+            continue
+        captured.append(saved)
+    _ = data_root  # 目录口径统一由 media_service 管理，保留参数便于将来按会话分目录
+    return captured, "；".join(notes)
 
 
 def _capture_anomaly(
@@ -875,6 +931,9 @@ def _capture_anomaly(
     log_summary = log_slice["text"] or "；".join(
         f"{s['name'] or s['path']}：{s['note']}" for s in log_slice["sources"]
     ) or "未配置日志来源，无日志切片"
+    media, media_note = _capture_media(conn, client, settings, session, index, data_root)
+    if media_note:
+        log_summary = f"{log_summary}；{media_note}"
     result = execution_protocol.ExecutionResult(
         source_type=execution_protocol.SOURCE_EXPLORATORY,
         source_row_id=step_id,
@@ -885,7 +944,7 @@ def _capture_anomaly(
         log_summary=log_summary,
         request_summary=execution_protocol.summarize(network, 1500),
         response_summary=execution_protocol.summarize(console, 1500),
-        attachments=screenshots,
+        attachments=[*screenshots, *media],
         source_ref={
             "table": "biz_exploration_step", "id": step_id,
             "sessionId": int(session["id"]), "targetUrl": str(session["target_url"]),
