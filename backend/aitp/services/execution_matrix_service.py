@@ -19,6 +19,7 @@ from ..errors import AppError, ErrorCode
 from ..repositories.automation_repo import AutomationScriptRepository
 from ..repositories.base import dumps, loads
 from ..repositories.bug_repo import BugRepository
+from ..repositories.numbering import begin_claim
 from ..repositories.execution_matrix_repo import (
     ExecutionMatrixCellRepository,
     ExecutionMatrixRepository,
@@ -94,6 +95,7 @@ CancelFn = Callable[[], bool]
 
 
 def _next_matrix_no(conn: sqlite3.Connection) -> str:
+    begin_claim(conn)
     rows = conn.execute(
         "SELECT matrix_no FROM biz_execution_matrix WHERE is_deleted = 0"
     ).fetchall()
@@ -921,7 +923,9 @@ def create_bugs_from_matrix(
 
         bug_id = bug_repo.insert({
             "project_id": int(matrix["project_id"]),
-            "bug_no": bug_repo.next_bug_no(int(matrix["project_id"])),
+            "bug_no": bug_repo.next_bug_no("automation"),
+            "source": "automation",
+            "source_ref": f"matrix:{matrix.get('matrix_no')}/{case_no}",
             "title": str(data.get("title") or f"[执行矩阵] {row.get('title') or case_no}")[:500],
             "severity": str(data.get("severity") or "P2"),
             "status": "open",

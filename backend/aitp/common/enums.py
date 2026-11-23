@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 PROJECT_STATUS = ("active", "archived")
 
 #: 项目版本状态：规划中 → 进行中 → 已发布
@@ -20,6 +22,13 @@ CASE_PREFIX = {
     "ui": "UIT",
     "exception": "ET",
 }
+
+_CASE_NO_RE = re.compile(r"^(?:" + "|".join(CASE_PREFIX.values()) + r")-\d+$")
+
+
+def is_case_no(value: str) -> bool:
+    """是否为系统正式用例编号（FT-001 等）；草稿号、空值返回 False。"""
+    return bool(_CASE_NO_RE.match(value.strip()))
 
 # 执行状态：与 xlsx「执行状态」列取值一致（未执行/通过/失败/阻塞）
 CASE_STATUS = ("not_executed", "pass", "fail", "blocked")

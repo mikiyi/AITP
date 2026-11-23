@@ -1132,7 +1132,9 @@ def _create_bug_from_step(
     project_id = int(session["project_id"])
     return int(repo.insert({
         "project_id": project_id,
-        "bug_no": repo.next_bug_no(project_id),
+        "bug_no": repo.next_bug_no("ai"),
+        "source": "ai",
+        "source_ref": f"exploratory:{session.get('id')}/step:{step.get('step_no')}",
         "title": title[:500],
         "severity": "P2",
         "status": "open",

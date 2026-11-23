@@ -263,6 +263,42 @@ def check_jmeter_csv(workdir: pathlib.Path) -> None:
         connection.close()
 
 
+def check_draft_export_import(api: Api, project_id: int) -> None:
+    """AI 产出的草稿编号（草稿-001）导入时必须换成系统正式编号。"""
+    from io import BytesIO
+
+    from openpyxl import Workbook
+
+    from aitp.services import xlsx_exporter
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = xlsx_exporter.SHEET_HEADERS["functional"][0]
+    headers = list(xlsx_exporter.SHEET_HEADERS["functional"][1])
+    sheet.append(headers)
+    values = {header: "" for header in headers}
+    values.update({"用例编号": "草稿-001", "用例标题/描述": "草稿导入用例", "用例类型": "功能测试"})
+    sheet.append([values[header] for header in headers])
+    stream = BytesIO()
+    workbook.save(stream)
+
+    resp, body = api.call(
+        "POST", "/api/v1/test-cases/import",
+        data={"projectId": str(project_id), "file": (BytesIO(stream.getvalue()), "draft.xlsx")},
+        content_type="multipart/form-data",
+    )
+    created = (body.get("data") or {}).get("created") or 0
+    check("草稿编号 Excel 可导入", body.get("code") == ErrorCode.SUCCESS and created == 1, str(body)[:200])
+    listed = api.data("GET", f"/api/v1/test-cases?projectId={project_id}&keyword=%E8%8D%89%E7%A8%BF%E5%AF%BC%E5%85%A5%E7%94%A8%E4%BE%8B")
+    case_nos = [str(item.get("caseNo") or "") for item in listed.get("list") or []]
+    check("导入草稿号不落库，改成正式编号",
+          case_nos == ["FT-001"] or (len(case_nos) == 1 and all(no.startswith("FT-") for no in case_nos)
+                                     and all(not no.startswith("草稿-") for no in case_nos)),
+          str(case_nos)[:200])
+    check("导入统计如实标记改号数", (body.get("data") or {}).get("renumbered") == 1,
+          str(body.get("data"))[:200])
+
+
 def main() -> int:
     workdir = pathlib.Path(tempfile.mkdtemp(prefix="aitp_case_td_"))
     try:
@@ -273,6 +309,7 @@ def main() -> int:
         check_resolver(workdir)
         check_preview_and_steps(api, project_id)
         check_execution_consumption(api, workdir, project_id)
+        check_draft_export_import(api, project_id)
         check_jmeter_csv(workdir)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)

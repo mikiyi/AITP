@@ -475,7 +475,9 @@ def create_bug_from_failure(
     version_label = _version_label(conn, run.get("version_id"))
     bug_id = bug_repo.insert({
         "project_id": project_id,
-        "bug_no": bug_repo.next_bug_no(project_id),
+        "bug_no": bug_repo.next_bug_no("manual"),
+        "source": "manual",
+        "source_ref": f"run:{run.get('run_no') or run_id}/case:{row.get('case_no')}",
         "version_id": run.get("version_id"),
         "title": title,
         "severity": severity,

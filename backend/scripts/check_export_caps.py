@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import pathlib
+import io
 import re
 import sys
 from typing import Any, cast
@@ -23,9 +24,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from aitp.ai import capability_codes  # noqa: E402
+from aitp.common.enums import is_case_no  # noqa: E402
 from aitp.errors import AppError  # noqa: E402
 from aitp.services import output_exporter  # noqa: E402
 import importlib.util
+from openpyxl import load_workbook  # noqa: E402
 
 HELP_TS = ROOT / "frontend" / "src" / "views" / "settings" / "productHelpContent.ts"
 
@@ -139,6 +142,38 @@ def main() -> int:
     check("解析规则能命中虚假宣称",
           help_claims("「缺陷分析」「测试计划」可导出 Excel，「缺陷分析」可导出 Word")
           == {"Excel": {"缺陷分析", "测试计划"}, "Word": {"缺陷分析"}})
+
+    # AI 产出用例未入库：导出必须给可追溯的草稿号，不能留空或伪装正式编号
+    draft_json = ('[{"title":"草稿用例一","caseType":"functional"},'
+                  '{"title":"草稿用例二","caseType":"interface"}]')
+    content, count = output_exporter.export_output(
+        capability_codes.CAP_CASE_GENERATION, draft_json
+    )
+    sheet = load_workbook(io.BytesIO(content)).active
+    header = [cell.value for cell in sheet[1]]
+    column = header.index("用例编号") + 1
+    draft_values = [sheet.cell(row, column).value for row in range(2, sheet.max_row + 1)]
+    check("AI 产出导出的用例编号列不为空",
+          len(draft_values) == count and all(draft_values), str(draft_values))
+    check("AI 产出草稿号格式统一",
+          all(str(value).startswith(output_exporter.DRAFT_NO_PREFIX) for value in draft_values),
+          str(draft_values))
+    check("正式编号与草稿号判定正确",
+          is_case_no("FT-001") and is_case_no("UIT-12")
+          and not is_case_no("草稿-001") and not is_case_no("TC-001")
+          and not is_case_no(""))
+
+    # 反向对照：模型在产出里自带的编号（TC-001 等）一律不透传，统一改成草稿号
+    content, _ = output_exporter.export_output(
+        capability_codes.CAP_CASE_GENERATION, CASE_JSON
+    )
+    sheet = load_workbook(io.BytesIO(content)).active
+    header = [cell.value for cell in sheet[1]]
+    column = header.index("用例编号") + 1
+    leaked = [sheet.cell(row, column).value for row in range(2, sheet.max_row + 1)]
+    check("模型自带的用例编号不会透传到导出文件",
+          all(str(value).startswith(output_exporter.DRAFT_NO_PREFIX) for value in leaked),
+          str(leaked))
 
     print("-" * 40)
     print(f"PASS={_passed} FAIL={_failed}")

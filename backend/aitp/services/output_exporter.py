@@ -63,6 +63,10 @@ CASE_TYPE_LABEL = {
 _FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*|\s*```$", re.MULTILINE)
 
 
+#: 用例类产出未入库时的草稿序号：正式用例编号只能由系统分配，导出只给可追溯的草稿号
+DRAFT_NO_PREFIX = "草稿-"
+
+
 def export_output(
     capability: str,
     output: str,
@@ -85,7 +89,10 @@ def export_output(
         items = _try_parse_case_json(text)
         if items:
             headers = _merge_columns(columns, DEFAULT_CASE_COLUMNS)
-            rows = [_case_row(item, headers) for item in items]
+            rows = [
+                _case_row(item, headers, f"{DRAFT_NO_PREFIX}{index:03d}")
+                for index, item in enumerate(items, start=1)
+            ]
             content = _build_case_workbook(headers, rows, sheet_name or "测试用例")
             return content, len(rows)
 
@@ -180,8 +187,11 @@ def _case_values(item: dict[str, Any]) -> dict[str, str]:
     return values
 
 
-def _case_row(item: dict[str, Any], headers: list[str]) -> list[str]:
+def _case_row(item: dict[str, Any], headers: list[str], draft_no: str = "") -> list[str]:
     values = _case_values(item)
+    if draft_no:
+        # 导出的是 AI 草稿：模型给的编号一律不信，统一给草稿号，正式编号只能入库后由系统分配
+        values["用例编号"] = draft_no
     return [values.get(header, "") for header in headers]
 
 
@@ -347,7 +357,10 @@ def export_docx(
         items = _try_parse_case_json(text)
         if items:
             headers = _merge_columns(columns, DEFAULT_CASE_COLUMNS)
-            rows = [[str(value) for value in _case_row(item, headers)] for item in items]
+            rows = [
+                [str(value) for value in _case_row(item, headers, f"{DRAFT_NO_PREFIX}{index:03d}")]
+                for index, item in enumerate(items, start=1)
+            ]
             document.add_heading(title or "测试用例", level=1)
             _add_docx_table(document, headers, rows)
             return _save_docx(document), len(rows)

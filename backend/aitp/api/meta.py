@@ -6,7 +6,7 @@ from flask import Blueprint, Response
 
 from ..ai.capability_codes import CAPABILITIES
 from ..common import enums
-from ..common.constants import PROVIDERS
+from ..common.constants import PLANS, PROVIDERS
 from ..db.connection import get_db
 from ..envelope import ok
 from ..repositories.knowledge_category_repo import KnowledgeCategoryRepository
@@ -73,6 +73,13 @@ def list_providers() -> Response:
             "defaultModel": spec.default_model,
             "requiresApiKey": spec.requires_api_key,
             "envKeys": list(spec.env_key),
+            "plan": None if spec.name not in PLANS else {
+                "label": PLANS[spec.name].label,
+                "baseUrl": PLANS[spec.name].base_url,
+                "protocol": PLANS[spec.name].protocol,
+                "defaultModel": PLANS[spec.name].default_model,
+                "keyHint": PLANS[spec.name].key_hint,
+            },
         }
         for spec in PROVIDERS.values()
     ])

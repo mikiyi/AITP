@@ -16,15 +16,15 @@ test('探索异常一键登记缺陷：按钮变缺陷链接，接口回写 bugI
   await expect(anomalyRow.getByRole('button', { name: '登记缺陷' })).toBeVisible()
   await anomalyRow.getByRole('button', { name: '登记缺陷' }).click()
 
-  await expect(page.locator('.el-message', { hasText: '已登记缺陷 BUG-' })).toBeVisible({ timeout: 10_000 })
-  await expect(anomalyRow.locator('button', { hasText: 'BUG-' })).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('.el-message', { hasText: '已登记缺陷 AI_BUG-' })).toBeVisible({ timeout: 10_000 })
+  await expect(anomalyRow.locator('button', { hasText: 'AI_BUG-' })).toBeVisible({ timeout: 10_000 })
 
   const sessions = data(await api('GET', `/exploratory/sessions?projectId=${seed.projectId}&keyword=${encodeURIComponent('登录页无脚本探索演示')}&pageSize=5`))
   const sessionId = sessions.list[0].id
   const detail = data(await api('GET', `/exploratory/sessions/${sessionId}?projectId=${seed.projectId}`))
   const anomaly = detail.steps.find((step: any) => step.isAnomaly)
   expect(anomaly.bugId, '异常步应回写缺陷 id').toBeTruthy()
-  expect(String(anomaly.bugNo)).toMatch(/^BUG-/)
+  expect(String(anomaly.bugNo)).toMatch(/^AI_BUG-/)
 
   const bugs = data(await api('GET', `/bugs?projectId=${seed.projectId}&keyword=${encodeURIComponent(anomaly.bugNo)}&pageSize=5`))
   expect(bugs.list.some((bug: any) => bug.id === anomaly.bugId), '缺陷应真实落库').toBeTruthy()

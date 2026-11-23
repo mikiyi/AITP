@@ -17,14 +17,18 @@ import json
 import re
 import sqlite3
 import zipfile
+from pathlib import Path
 from typing import Any
 
 from ..errors import AppError, ErrorCode
+from ..repositories.sys_config_repo import SysConfigRepository
 
 PACKAGE_FORMAT = "aitp-project-package"
 PACKAGE_VERSION = 1
-MAX_ENTRIES = 50
+MAX_ENTRIES = 5000
 MAX_UNCOMPRESSED = 100 * 1024 * 1024
+
+CONFIG_INCLUDE_BUG_SHOTS = "backup.include_bug_screenshots"
 
 _SECRET_COLUMN_RE = re.compile(r"(password|passwd|secret|token|api[_-]?key|credential)", re.I)
 _DROP_COLUMNS = {"ai_task_id", "session_id", "file_path", "ref_id", "merged_into", "content_checksum"}
@@ -45,6 +49,17 @@ _CORE_TABLES: tuple[tuple[str, dict[str, str | None]], ...] = (
     }),
     ("biz_assertion_rule", {"module_id": "biz_module"}),
 )
+
+
+def _include_bug_screenshots(conn: sqlite3.Connection) -> bool:
+    raw = str(SysConfigRepository(conn).get_value(CONFIG_INCLUDE_BUG_SHOTS, "0") or "").strip().lower()
+    return raw not in ("", "0", "false", "off", "no")
+
+
+def _data_dir(conn: sqlite3.Connection) -> Path:
+    row = conn.execute("PRAGMA database_list").fetchone()
+    path = str((row[2] if row else "") or "")
+    return Path(path).parent if path else Path("data")
 
 
 def _columns(conn: sqlite3.Connection, table: str) -> list[str]:
@@ -83,11 +98,28 @@ def export_package(conn: sqlite3.Connection, project_id: int) -> bytes:
         data[table] = cleaned
         counts[table] = len(cleaned)
 
-    manifest = {
+    include_shots = _include_bug_screenshots(conn)
+    shot_root = _data_dir(conn) / "bug-screenshots"
+    shot_files: list[tuple[str, str, bytes]] = []
+    if include_shots:
+        rows = conn.execute(
+            "SELECT s.bug_id, s.file_name, b.bug_no FROM biz_bug_screenshot s"
+            " JOIN biz_bug b ON b.id = s.bug_id"
+            " WHERE s.is_deleted = 0 AND b.is_deleted = 0 AND b.project_id = ?",
+            (project_id,),
+        ).fetchall()
+        for row in rows:
+            bug_no = str(row["bug_no"] or "")
+            file_name = str(row["file_name"] or "")
+            path = shot_root / bug_no / file_name
+            if path.is_file():
+                shot_files.append((bug_no, file_name, path.read_bytes()))
+    manifest: dict[str, Any] = {
         "format": PACKAGE_FORMAT,
         "version": PACKAGE_VERSION,
         "project": project_info,
-        "scope": {"history": False, "evidence": False, "attachments": False},
+        "scope": {"history": False, "evidence": False, "attachments": False,
+                   "screenshots": include_shots},
         "counts": counts,
     }
     buffer = io.BytesIO()
@@ -98,6 +130,10 @@ def export_package(conn: sqlite3.Connection, project_id: int) -> bytes:
                 f"data/{table}.json",
                 json.dumps(rows, ensure_ascii=False, indent=2),
             )
+        for bug_no, file_name, raw_file in shot_files:
+            archive.writestr(f"screenshots/{bug_no}/{file_name}", raw_file)
+        if shot_files:
+            manifest["counts"]["bug_screenshots"] = len(shot_files)
     return buffer.getvalue()
 
 
@@ -201,6 +237,7 @@ def import_package(
     new_project_id = int(cursor.lastrowid or 0)
     id_maps: dict[str, dict[int, int]] = {table: {} for table, _ in _CORE_TABLES}
     counts: dict[str, int] = {}
+    new_bugs_by_old_no: dict[str, dict[str, Any]] = {}
 
     for table, refs in _CORE_TABLES:
         columns = _columns(conn, table)
@@ -227,13 +264,24 @@ def import_package(
             # 自动化脚本编号是全局唯一；导入时按新项目重编号，避免与原项目撞号
             if table == "biz_automation_script":
                 payload["script_no"] = f"IMP{new_project_id}-{row.get('script_no') or count + 1}"[:64]
+            # 缺陷编号全局唯一且不复用；导入时按来源前缀重新取号
+            if table == "biz_bug":
+                from ..repositories.bug_repo import BugRepository
+
+                payload["bug_no"] = BugRepository(conn).next_bug_no(str(row.get("source") or "manual"))
             placeholders = ", ".join("?" for _ in payload)
             names = ", ".join(payload)
             cursor = conn.execute(
                 f"INSERT INTO {table} ({names}) VALUES ({placeholders})",
                 list(payload.values()),
             )
-            id_maps[table][int(row.get("id") or 0)] = int(cursor.lastrowid or 0)
+            new_id = int(cursor.lastrowid or 0)
+            id_maps[table][int(row.get("id") or 0)] = new_id
+            if table == "biz_bug":
+                old_no = str(row.get("bug_no") or "")
+                new_bugs_by_old_no[old_no] = {
+                    "id": new_id, "bug_no": str(payload.get("bug_no") or ""),
+                }
             count += 1
         counts[table] = count
 
@@ -247,6 +295,31 @@ def import_package(
         conn.execute(
             "UPDATE biz_module SET parent_id = ? WHERE id = ?", (new_parent, new_id)
         )
+
+    # 截图文件按旧编号归档；导入后按新缺陷号重新落盘并登记
+    if new_bugs_by_old_no:
+        from ..services import bug_screenshot_service
+
+        restored_shots = 0
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            for info in archive.infolist():
+                parts = info.filename.split("/")
+                if len(parts) != 3 or parts[0] != "screenshots":
+                    continue
+                bug = new_bugs_by_old_no.get(parts[1])
+                if not bug:
+                    continue
+                name = parts[2]
+                if not name or "/" in name or "\\" in name or name.startswith("."):
+                    continue
+                shot_bytes = archive.read(info)
+                try:
+                    bug_screenshot_service.save_screenshots(conn, bug, [(name, shot_bytes)])
+                    restored_shots += 1
+                except AppError:
+                    continue
+        if restored_shots:
+            counts["bug_screenshots"] = restored_shots
 
     return {"projectId": new_project_id, "code": code, "counts": counts}
 

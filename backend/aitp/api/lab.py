@@ -648,7 +648,9 @@ def adopt_capability_output() -> Response:
         bug_repo = BugRepository(conn)
         new_id = bug_repo.insert({
             "project_id": project_id,
-            "bug_no": bug_repo.next_bug_no(project_id),
+            "bug_no": bug_repo.next_bug_no("ai"),
+            "source": "ai",
+            "source_ref": f"ai-workspace:{target}",
             "title": title,
             "severity": "P2",
             "status": "open",

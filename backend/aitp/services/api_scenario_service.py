@@ -17,7 +17,6 @@ from typing import Any
 
 from ..repositories.api_scenario_repo import ApiScenarioRunRepository
 from ..repositories.base import loads
-from ..repositories.numbering import next_no
 from . import (
     assertion_schema,
     auto_bug_service,
@@ -428,11 +427,14 @@ def create_bug_from_run(conn: sqlite3.Connection, scenario: dict[str, Any],
         for a in s.get("assertions") or []:
             if not a.get("passed"):
                 lines.append(f"  ✗ {a.get('name')}：{a.get('message')}")
-    bug_no = next_no(conn, "biz_bug", "bug_no", "BUG")
     from ..repositories.bug_repo import BugRepository
-    bug_id = BugRepository(conn).insert({
+    bug_repo = BugRepository(conn)
+    bug_no = bug_repo.next_bug_no("automation")
+    bug_id = bug_repo.insert({
         "project_id": int(scenario["project_id"]),
         "bug_no": bug_no,
+        "source": "automation",
+        "source_ref": f"scenario:{scenario.get('scenario_no')}/run:{run_row.get('run_no')}",
         "title": f"[接口场景] {scenario.get('name')} 执行失败",
         "severity": "P2", "priority": "P2", "status": "open", "bug_type": "interface",
         "description": "\n".join(lines),

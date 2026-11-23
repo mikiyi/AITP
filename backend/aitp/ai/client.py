@@ -14,6 +14,7 @@ from ..common.constants import (
     DEGRADE_TIMEOUT,
     DEGRADE_UNREACHABLE,
 )
+from .adapters.anthropic import AnthropicAdapter
 from .adapters.base import BaseAdapter
 from .adapters.ollama_native import OllamaNativeAdapter
 from .adapters.openai_compat import OpenAICompatAdapter
@@ -32,6 +33,7 @@ from .types import ChatResult, Message, ModelInfo, ResolvedAIConfig, StreamEvent
 ADAPTERS: dict[str, BaseAdapter] = {
     OpenAICompatAdapter.protocol: OpenAICompatAdapter(),
     OllamaNativeAdapter.protocol: OllamaNativeAdapter(),
+    AnthropicAdapter.protocol: AnthropicAdapter(),
 }
 
 

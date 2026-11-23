@@ -6,7 +6,7 @@ from typing import Any, Iterator
 
 from flask import Blueprint, Response, request
 
-from ..common.enums import CASE_PRIORITY, CASE_STATUS, CASE_TYPE
+from ..common.enums import CASE_PRIORITY, CASE_STATUS, CASE_TYPE, is_case_no
 from ..common.validators import check_choice, optional_int, optional_str, require_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
@@ -553,8 +553,8 @@ def import_cases() -> Response:
             extra["关联需求"] = requirement_text
 
         case_no = str(item.get("caseNo") or "").strip()
-        if not case_no or case_no in used_numbers:
-            # 编号冲突不丢数据，改成自动编号，但要告知用户改了哪些
+        if not is_case_no(case_no) or case_no in used_numbers:
+            # 空号、草稿号、冲突号都不落库，改成系统正式编号并告知用户
             case_no = repo.next_case_no(project_id_int, case_type)
             renumbered += 1
         used_numbers.add(case_no)

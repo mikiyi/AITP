@@ -50,6 +50,47 @@
         <div class="pre">{{ detail.expectedResult || '无' }}</div>
       </div>
 
+      <div class="panel panel-pad">
+        <div class="section-title screenshot-head">
+          <span>
+            缺陷截图
+            <el-tag size="small" effect="plain">{{ screenshots.length }} 张</el-tag>
+          </span>
+          <div>
+            <el-button size="small" :loading="uploading" :disabled="screenshots.length >= maxShots" @click="pickScreenshots">
+              上传截图
+            </el-button>
+            <input ref="fileInput" class="hidden-file" type="file" multiple accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" @change="onPickScreenshots" />
+          </div>
+        </div>
+        <p class="muted screenshot-hint">
+          截图存放在 data/bug-screenshots/&lt;缺陷编号&gt;/，文件名按 pic_&lt;缺陷编号&gt;_001 递增；单张 ≤ 10MB、每个缺陷最多 {{ maxShots }} 张。
+          默认不进备份/项目资产包/留存归档，需要时在「备份设置」打开「备份包含缺陷截图」。
+        </p>
+        <el-empty v-if="!screenshots.length" description="还没有截图" :image-size="56" />
+        <div v-else class="screenshot-grid">
+          <div v-for="shot in screenshots" :key="shot.id" class="screenshot-item">
+            <el-image
+              :src="bugApi.screenshotUrl(detail.id, shot.id)"
+              :preview-src-list="previewUrls"
+              :initial-index="previewIndex(shot.id)"
+              fit="cover"
+              preview-teleported
+              class="screenshot-item__img"
+            >
+              <template #error>
+                <div class="screenshot-item__error">加载失败</div>
+              </template>
+            </el-image>
+            <div class="screenshot-item__meta" :title="shot.fileName">{{ shot.fileName }}</div>
+            <div class="screenshot-item__actions">
+              <el-button link type="primary" size="small" @click="downloadScreenshot(shot)">下载</el-button>
+              <el-button link type="danger" size="small" @click="removeScreenshot(shot)">删除</el-button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div v-if="detail.linkedCases?.length" class="panel panel-pad">
         <div class="section-title">关联用例</div>
         <el-table :data="detail.linkedCases" size="small" border>
@@ -146,14 +187,19 @@ import EvidenceDrawer from '@/components/EvidenceDrawer.vue'
 import { bugApi } from '@/api'
 import DetailNotFound from '@/components/DetailNotFound.vue'
 import { ApiError, ErrorCode } from '@/api/request'
-import type { Bug, BugLog, ExecutionEvidence } from '@/api/types'
+import type { Bug, BugLog, BugScreenshot, ExecutionEvidence } from '@/api/types'
 import { dateTimeText } from '@/utils/format'
 
 const route = useRoute()
 const router = useRouter()
 const detail = ref<Bug | null>(null)
 const logs = ref<BugLog[]>([])
+const screenshots = ref<BugScreenshot[]>([])
 const evidences = ref<ExecutionEvidence[]>([])
+const fileInput = ref<HTMLInputElement | null>(null)
+const uploading = ref(false)
+const maxShots = 30
+const maxShotBytes = 10 * 1024 * 1024
 const evidenceHint = ref('')
 const evidenceVisible = ref(false)
 const notFound = ref(false)
@@ -258,6 +304,70 @@ function openEvidence(row: ExecutionEvidence): void {
   evidenceVisible.value = true
 }
 
+const previewUrls = computed(() =>
+  screenshots.value.map((shot) => bugApi.screenshotUrl(Number(detail.value?.id ?? 0), shot.id)),
+)
+
+function previewIndex(id: number): number {
+  return Math.max(0, screenshots.value.findIndex((shot) => shot.id === id))
+}
+
+function pickScreenshots(): void {
+  fileInput.value?.click()
+}
+
+async function onPickScreenshots(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  input.value = ''
+  if (!detail.value || !files.length) {
+    return
+  }
+  if (screenshots.value.length + files.length > maxShots) {
+    ElMessage.warning(`每个缺陷最多 ${maxShots} 张截图（当前已有 ${screenshots.value.length} 张）`)
+    return
+  }
+  const oversize = files.find((file) => file.size > maxShotBytes)
+  if (oversize) {
+    ElMessage.warning(`截图「${oversize.name}」超过 10MB 限制`)
+    return
+  }
+  uploading.value = true
+  try {
+    const form = new FormData()
+    files.forEach((file) => form.append('files', file))
+    const res = await bugApi.uploadScreenshots(detail.value.id, form)
+    screenshots.value = [...screenshots.value, ...res.list].sort((a, b) => a.seq - b.seq)
+    ElMessage.success(`已上传 ${res.list.length} 张截图`)
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '上传截图失败')
+  } finally {
+    uploading.value = false
+  }
+}
+
+function downloadScreenshot(shot: BugScreenshot): void {
+  const link = document.createElement('a')
+  link.href = bugApi.screenshotUrl(Number(detail.value?.id ?? 0), shot.id)
+  link.download = shot.fileName
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+}
+
+async function removeScreenshot(shot: BugScreenshot): Promise<void> {
+  if (!detail.value) {
+    return
+  }
+  try {
+    await bugApi.removeScreenshot(detail.value.id, shot.id)
+    screenshots.value = screenshots.value.filter((item) => item.id !== shot.id)
+    ElMessage.success(`已删除 ${shot.fileName}`)
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '删除截图失败')
+  }
+}
+
 async function doTransition(): Promise<void> {
   if (!nextStatus.value) {
     ElMessage.warning('请选择目标状态')
@@ -286,6 +396,7 @@ async function loadDetail(): Promise<void> {
   notFound.value = false
   try {
     detail.value = await bugApi.get(Number(route.params.id))
+    screenshots.value = detail.value.screenshots ?? []
     await loadLogs()
     await loadEvidences()
   } catch (err) {
@@ -337,5 +448,65 @@ onMounted(() => {
   border: 1px solid var(--aitp-border);
   border-radius: 6px;
   padding: 10px 12px;
+}
+
+.screenshot-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 0;
+}
+
+.screenshot-hint {
+  margin: 0 0 10px;
+  line-height: 1.6;
+}
+
+.hidden-file {
+  display: none;
+}
+
+.screenshot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.screenshot-item {
+  border: 1px solid var(--aitp-border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--aitp-subtle);
+}
+
+.screenshot-item__img {
+  width: 100%;
+  height: 110px;
+  display: block;
+  cursor: zoom-in;
+}
+
+.screenshot-item__error {
+  height: 110px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.screenshot-item__meta {
+  padding: 6px 8px 0;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.screenshot-item__actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 2px 6px 6px;
 }
 </style>

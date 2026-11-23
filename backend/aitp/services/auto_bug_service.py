@@ -14,7 +14,6 @@ import sqlite3
 from typing import Any
 
 from ..repositories.bug_repo import BugRepository
-from ..repositories.numbering import next_no
 from ..repositories.sys_config_repo import SysConfigRepository
 
 CONFIG_AUTO_BUG = "automation.auto_bug"
@@ -45,12 +44,15 @@ def _create_bug(
     actual_result: str,
     bug_type: str,
     reporter: str,
+    source_ref: str = "",
     case_ids: list[int] | None = None,
 ) -> int:
     repo = BugRepository(conn)
     bug_id = repo.insert({
         "project_id": int(project_id),
-        "bug_no": next_no(conn, "biz_bug", "bug_no", "BUG"),
+        "bug_no": repo.next_bug_no("automation"),
+        "source": "automation",
+        "source_ref": source_ref[:200],
         "title": title[:500],
         "severity": "P2",
         "priority": "P2",
@@ -108,6 +110,7 @@ def from_scenario(
         actual_result=str(first.get("message") or f"{len(failed)} 个步骤失败"),
         bug_type="interface",
         reporter="自动转缺陷 · 接口场景",
+        source_ref=f"scenario-run:{run_no}",
     )
 
 
@@ -149,5 +152,6 @@ def from_automation(
         actual_result=str(error_message or run_row.get("status") or "执行失败"),
         bug_type="functional",
         reporter="自动转缺陷 · 自动化执行",
+        source_ref=f"automation-run:{run_no}",
         case_ids=case_ids,
     )

@@ -276,7 +276,9 @@ class KnowledgeDraftRepository(BaseRepository):
         title = str(draft.get("title") or "探索性测试发现")[:500]
         bug_id = bug_repo.insert({
             "project_id": project_id,
-            "bug_no": bug_repo.next_bug_no(project_id),
+            "bug_no": bug_repo.next_bug_no("ai"),
+            "source": "ai",
+            "source_ref": f"knowledge-draft:{draft.get('id')}",
             "title": title,
             "severity": "P2",
             "status": "open",

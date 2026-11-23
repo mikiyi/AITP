@@ -43,6 +43,7 @@ import type {
   BatchReviewResult,
   Bug,
   BugLog,
+  BugScreenshot,
   CapabilitySpec,
   CaseTreeNode,
   CiSettings,
@@ -554,6 +555,17 @@ export const bugApi = {
     ),
   linkCases: (id: number, caseIds: number[]) => post(`/bugs/${id}/cases`, { caseIds }),
   unlinkCases: (id: number, caseIds: number[]) => del(`/bugs/${id}/cases`, { caseIds }),
+  screenshots: (id: number) => get<{ list: BugScreenshot[] }>(`/bugs/${id}/screenshots`),
+  uploadScreenshots: (id: number, form: FormData) =>
+    request<{ list: BugScreenshot[] }>(`/bugs/${id}/screenshots`, {
+      method: 'POST',
+      body: form,
+      timeoutMs: LONG_TIMEOUT_MS,
+    }),
+  removeScreenshot: (id: number, shotId: number) =>
+    del<{ deleted: boolean; id: number }>(`/bugs/${id}/screenshots/${shotId}`),
+  screenshotUrl: (id: number, shotId: number) =>
+    scopedUrl(`/api/v1/bugs/${id}/screenshots/${shotId}/file`),
   stats: () => get('/bugs/stats'),
   exportUrl: (query: Record<string, unknown>) => exportUrl('bugs/export', query),
 }

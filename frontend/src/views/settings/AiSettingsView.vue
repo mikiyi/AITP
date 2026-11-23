@@ -9,16 +9,6 @@
     </div>
 
     <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      title="优先级数值越大越优先"
-      class="page-alert"
-    >
-      首选模型不可用时按优先级自动降级，页面只弹 3 秒提示，不阻塞主流程。
-    </el-alert>
-
-    <el-alert
       v-if="!status.configured"
       type="warning"
       show-icon
@@ -31,6 +21,8 @@
       </template>
     </el-alert>
 
+    <el-tabs v-model="activeTab" class="ai-settings-tabs">
+      <el-tab-pane label="LLM设置" name="llm">
     <div class="panel panel-pad">
       <div class="section-head">
         <h3>当前生效AI配置</h3>
@@ -69,6 +61,15 @@
           </div>
         </div>
       </div>
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="优先级数值越大越优先"
+        class="page-alert priority-alert"
+      >
+        首选模型不可用时按优先级自动降级，页面只弹 3 秒提示，不阻塞主流程。
+      </el-alert>
       <div v-if="status.error" class="muted status-error">{{ status.error }}</div>
     </div>
 
@@ -171,18 +172,6 @@
             </span>
           </div>
         </el-form-item>
-        <el-form-item label="外发脱敏">
-          <el-radio-group v-model="aiMaskEnabled">
-            <el-radio :value="true">true</el-radio>
-            <el-radio :value="false">false</el-radio>
-          </el-radio-group>
-          <div class="ai-config-hint">
-            <el-icon class="ai-config-hint__icon"><InfoFilled /></el-icon>
-            <span class="ai-config-hint__text">
-              true：调用云端模型前自动把手机号、身份证、邮箱、银行卡号、API Key、账号口令替换成占位文本，AI 记录只留类型与数量；false：原样发送。本地模型不出本机，始终不脱敏。
-            </span>
-          </div>
-        </el-form-item>
         <el-form-item label="默认超时（秒）">
           <el-input v-model="aiTimeoutDefault" placeholder="整数，单位秒，默认 60" style="width: 200px" />
           <div class="ai-config-hint">
@@ -274,6 +263,37 @@
         </template>
       </div>
     </div>
+      </el-tab-pane>
+
+      <el-tab-pane label="外发脱敏" name="mask">
+        <div class="panel panel-pad ai-mask-panel">
+          <div class="section-head">
+            <h3>外发脱敏</h3>
+            <el-button type="primary" size="small" :loading="savingMask" @click="saveMaskSetting">保存</el-button>
+          </div>
+          <el-form label-width="160px">
+            <el-form-item label="外发脱敏">
+              <el-radio-group v-model="aiMaskEnabled">
+                <el-radio :value="true">true</el-radio>
+                <el-radio :value="false">false</el-radio>
+              </el-radio-group>
+              <div class="ai-config-hint">
+                <el-icon class="ai-config-hint__icon"><InfoFilled /></el-icon>
+                <span class="ai-config-hint__text">
+                  true：调用云端模型前自动把手机号、身份证、邮箱、银行卡号、API Key、账号口令替换成占位文本，AI 记录只留类型与数量；false：原样发送。本地模型不出本机，始终不脱敏。
+                </span>
+              </div>
+              <div class="ai-config-hint">
+                <el-icon class="ai-config-hint__icon"><InfoFilled /></el-icon>
+                <span class="ai-config-hint__text">
+                  开关为全局策略，对所有云端模型档案生效；在 AI 实验室或问答助手发起云端调用前，还可通过「数据外发确认」里的「先检查数据是否脱敏」预览本次正文的脱敏结果。
+                </span>
+              </div>
+            </el-form-item>
+          </el-form>
+        </div>
+      </el-tab-pane>
+    </el-tabs>
 
     <el-dialog v-model="dialogVisible" :title="editing ? '编辑 AI 档案' : '新增 AI 档案'" width="720px">
       <el-form :model="form" label-width="110px">
@@ -285,14 +305,33 @@
             <el-option v-for="item in providers" :key="item.name" :label="item.label" :value="item.name" />
           </el-select>
         </el-form-item>
+        <el-form-item v-if="activePlan" label="接入方式">
+          <el-radio-group v-model="form.accessMode" @change="applyAccessMode">
+            <el-radio-button value="api">按量 API</el-radio-button>
+            <el-radio-button value="plan">{{ activePlan.label }}</el-radio-button>
+          </el-radio-group>
+          <div class="field-hint">
+            <el-icon><InfoFilled /></el-icon>
+            <span v-if="form.accessMode === 'plan'">
+              「{{ activePlan.label }}」与按量 API 的地址 / Key 往往不同，已按套餐带出对应地址；
+              Key 请填{{ activePlan.keyHint || '套餐专用 Key' }}。
+            </span>
+            <span v-else>按量计费：使用标准 API 地址与 API Key。</span>
+          </div>
+        </el-form-item>
         <el-form-item label="协议">
           <el-select v-model="form.protocol">
-            <el-option label="openai_compat" value="openai_compat" />
-            <el-option label="ollama_native" value="ollama_native" />
+            <el-option label="openai_compat（OpenAI 兼容）" value="openai_compat" />
+            <el-option label="anthropic（Messages 兼容）" value="anthropic" />
+            <el-option label="ollama_native（Ollama 原生）" value="ollama_native" />
           </el-select>
         </el-form-item>
-        <el-form-item label="Base URL">
+        <el-form-item label="接口地址">
           <el-input v-model="form.baseUrl" />
+          <div v-if="activePlan && form.accessMode === 'plan'" class="field-hint">
+            <el-icon><InfoFilled /></el-icon>
+            <span>已按「{{ activePlan.label }}」带出套餐地址；若控制台给的地址不同，可在此修改。</span>
+          </div>
         </el-form-item>
         <el-form-item label="模型">
           <div class="model-field">
@@ -310,6 +349,50 @@
           </div>
           <div class="muted form-hint">本地模型走 /api/tags，OpenAI 兼容接口走 /models。</div>
         </el-form-item>
+        <el-form-item v-if="!isLocalProvider" :label="keyLabel">
+          <el-input v-model="newApiKey" type="password" show-password :placeholder="keyPlaceholder" />
+          <div class="field-hint">
+            <el-icon><InfoFilled /></el-icon>
+            <span v-if="editing">留空则保持已保存的 Key；也可用列表里的「设置 Key」单独修改。</span>
+            <span v-else>保存时写入系统密钥库，数据库只留掩码、不回显明文。</span>
+          </div>
+        </el-form-item>
+        <el-form-item>
+          <el-button link type="primary" @click="showAdvanced = !showAdvanced">
+            {{ showAdvanced ? '收起高级设置' : '展开高级设置（优先级 / 温度 / 超时 / 环境变量 Key / 套餐额度等）' }}
+          </el-button>
+        </el-form-item>
+        <template v-if="showAdvanced">
+        <el-form-item label="启用本地 Key">
+          <el-switch v-model="form.useEnvKey" :disabled="isLocalProvider" />
+          <div class="field-hint">
+            <el-icon><InfoFilled /></el-icon>
+            <span v-if="isLocalProvider">配置本地大模型时无需配置本地 Key，本地模型不校验 API Key。</span>
+            <span v-else>
+              开启后不再使用已保存的 Key，改为从本机环境变量读取：变量名必须与本机环境变量完全一致（区分大小写），
+              用户变量只对当前用户生效、系统变量对所有用户生效；设置完无需重启服务。
+            </span>
+          </div>
+        </el-form-item>
+        <template v-if="form.useEnvKey && !isLocalProvider">
+          <el-form-item label="变量名" required>
+            <el-input v-model="form.envKeyName" placeholder="例如 OPENAI_API_KEY" />
+            <div class="field-hint">
+              <el-icon><InfoFilled /></el-icon>
+              <span>只能包含字母、数字与下划线，且不能以数字开头，不能用连字符（-）。例如 mysensenva_key。</span>
+            </div>
+          </el-form-item>
+          <el-form-item label="变量范围">
+            <el-radio-group v-model="form.envKeyScope">
+              <el-radio value="user">用户变量</el-radio>
+              <el-radio value="system">系统变量</el-radio>
+            </el-radio-group>
+            <div class="field-hint">
+              <el-icon><InfoFilled /></el-icon>
+              <span>用户变量位于 HKEY_CURRENT_USER\Environment，系统变量位于 HKEY_LOCAL_MACHINE；不确定时先用「用户变量」。</span>
+            </div>
+          </el-form-item>
+        </template>
         <el-form-item label="优先级">
           <el-input-number v-model="form.priority" :min="0" :max="1000" />
           <span class="muted form-hint">数值越大越优先</span>
@@ -352,16 +435,6 @@
             <span>单次调用最长等待秒数，默认 60。本地大模型首次加载较慢，建议 120~300；云端接口 30~60 即可。</span>
           </div>
         </el-form-item>
-        <el-form-item v-if="!isLocalProvider" label="计费模式">
-          <el-radio-group v-model="form.billingMode">
-            <el-radio-button value="api">API 按量</el-radio-button>
-            <el-radio-button value="token_plan">Token 套餐</el-radio-button>
-          </el-radio-group>
-          <div class="field-hint">
-            <el-icon><InfoFilled /></el-icon>
-            <span>API 按量：按档案单价折算金额；Token 套餐：预购 token 额度，按额度扣减、显示剩余，不按量计金额。接口与鉴权方式不变。</span>
-          </div>
-        </el-form-item>
         <el-form-item v-if="!isLocalProvider && form.billingMode === 'token_plan'" label="套餐额度(token)">
           <el-input-number v-model="form.tokenQuota" :min="0" :step="10000" />
           <div class="field-hint">
@@ -376,60 +449,19 @@
             <span>开启后新请求优先使用这个档案；同一时间只会保留一个默认档案，开启会自动取消其他档案的默认标记。</span>
           </div>
         </el-form-item>
-
-        <el-form-item label="启用本地 Key">
-          <el-switch v-model="form.useEnvKey" :disabled="isLocalProvider" />
-          <div class="field-hint">
-            <el-icon><InfoFilled /></el-icon>
-            <span v-if="isLocalProvider">配置本地大模型时无需配置本地 Key，本地模型不校验 API Key。</span>
-            <span v-else>
-              开启后不再使用「设置 Key」保存的密钥，改为从本机环境变量读取：填写的变量名必须与本机环境变量完全一致（区分大小写）。
-              用户变量只对当前登录用户生效，系统变量对所有用户生效；本工具直接读取注册表，设置完变量无需重启服务。
-              变量不存在时，调用模型会提示「未读取到环境变量」。
-            </span>
-          </div>
-        </el-form-item>
-        <template v-if="form.useEnvKey && !isLocalProvider">
-          <el-form-item label="变量名" required>
-            <el-input v-model="form.envKeyName" placeholder="例如 OPENAI_API_KEY" />
-            <div class="field-hint">
-              <el-icon><InfoFilled /></el-icon>
-              <span>只能包含字母、数字与下划线，且不能以数字开头，不能用连字符（-）。例如 mysensenva_key。</span>
-            </div>
-          </el-form-item>
-          <el-form-item label="变量范围">
-            <el-radio-group v-model="form.envKeyScope">
-              <el-radio value="user">用户变量</el-radio>
-              <el-radio value="system">系统变量</el-radio>
-            </el-radio-group>
-            <div class="field-hint">
-              <el-icon><InfoFilled /></el-icon>
-              <span>用户变量位于 HKEY_CURRENT_USER\Environment，系统变量位于 HKEY_LOCAL_MACHINE；不确定时先用「用户变量」。</span>
-            </div>
-          </el-form-item>
         </template>
-
-        <el-form-item v-if="!form.useEnvKey && !isLocalProvider" label="临时 Key">
-          <el-input
-            v-model="draftApiKey"
-            type="password"
-            show-password
-            placeholder="仅用于本次连通性测试，不保存、不落库"
-          />
-          <div class="field-hint">
-            <el-icon><InfoFilled /></el-icon>
-            <span>连通性测试可以使用未保存的配置与临时 Key；正式 Key 请用列表里的「设置 Key」写入系统密钥库。</span>
-          </div>
-        </el-form-item>
-        <el-form-item>
+      </el-form>
+      <template #footer>
+        <div class="dialog-footer">
+          <span class="dialog-footer__spacer" />
           <el-button type="primary" plain :icon="Connection" :loading="checkingDraft" @click="checkDraft">
             测试大模型配置是否连通
           </el-button>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+          <span class="dialog-footer__actions">
+            <el-button @click="dialogVisible = false">取消</el-button>
+            <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+          </span>
+        </div>
       </template>
     </el-dialog>
 
@@ -508,6 +540,14 @@ import type {
   SelfCheckResult,
 } from '@/api/types'
 
+interface ProviderPlanSpec {
+  label: string
+  baseUrl: string
+  protocol: string
+  defaultModel: string
+  keyHint: string
+}
+
 interface ProviderSpec {
   name: string
   label: string
@@ -518,6 +558,8 @@ interface ProviderSpec {
   /** 本地自托管模型（Ollama 等）无需 API Key */
   isLocal: boolean
   envKeys: string[]
+  /** 订阅套餐预设（Agent / Coding / Token Plan）；为空表示该厂商只支持按量 API */
+  plan?: ProviderPlanSpec | null
 }
 
 function emptyStatus(): AiStatus {
@@ -551,6 +593,10 @@ const aiDegradeEnabled = ref(true)
 const aiTimeoutDefault = ref('60')
 const aiMaskEnabled = ref(true)
 const savingConfig = ref(false)
+const savingMask = ref(false)
+
+/** AI 设置页签：llm=模型档案与调用参数，mask=外发脱敏策略 */
+const activeTab = ref<'llm' | 'mask'>('llm')
 
 const dialogVisible = ref(false)
 const saving = ref(false)
@@ -562,6 +608,8 @@ const form = reactive({
   protocol: 'openai_compat',
   baseUrl: '',
   model: '',
+  // 接入方式：api=按量 API；plan=订阅套餐（Agent / Coding / Token Plan）
+  accessMode: 'api' as 'api' | 'plan',
   priority: 0,
   temperature: 0.7,
   maxTokens: 4096,
@@ -574,6 +622,11 @@ const form = reactive({
   billingMode: 'api' as 'api' | 'token_plan',
   tokenQuota: 0,
 })
+
+/** 主表单里直接填写的 Key（保存时进系统密钥库；编辑时留空表示不改） */
+const newApiKey = ref('')
+/** 高级设置是否展开 */
+const showAdvanced = ref(false)
 
 /** 行内启用开关的加载态 */
 const activeBusyId = ref<number | null>(null)
@@ -588,7 +641,6 @@ const checkVisible = ref(false)
 const checkResult = ref<SelfCheckResult | null>(null)
 const checkingId = ref<number | null>(null)
 const checkingDraft = ref(false)
-const draftApiKey = ref('')
 const modelOptions = ref<AiModelInfo[]>([])
 const loadingModels = ref(false)
 
@@ -597,6 +649,38 @@ const isLocalProvider = computed(() => {
   const spec = providers.value.find((item) => item.name === form.provider)
   return Boolean(spec?.isLocal)
 })
+
+/** 当前供应商的套餐预设（无则只支持按量 API） */
+const activePlan = computed<ProviderPlanSpec | null>(() => {
+  const spec = providers.value.find((item) => item.name === form.provider)
+  return spec?.plan ?? null
+})
+
+const keyLabel = computed(() => (activePlan.value && form.accessMode === 'plan' ? '套餐 Key' : 'API Key'))
+const keyPlaceholder = computed(() =>
+  activePlan.value && form.accessMode === 'plan'
+    ? (activePlan.value.keyHint || '粘贴套餐/计划专用 Key')
+    : '粘贴 API Key（保存后不回显）',
+)
+
+/** 切换接入方式：按量 / 套餐自动带出对应协议、地址与模型 */
+function applyAccessMode(mode: 'api' | 'plan'): void {
+  const spec = providers.value.find((item) => item.name === form.provider)
+  if (!spec) return
+  const plan = spec.plan
+  if (mode === 'plan' && plan) {
+    form.protocol = plan.protocol
+    form.baseUrl = plan.baseUrl
+    if (plan.defaultModel) form.model = plan.defaultModel
+    form.billingMode = 'token_plan'
+  } else {
+    form.protocol = spec.protocol
+    form.baseUrl = spec.defaultBaseUrl
+    form.model = spec.defaultModel
+    form.billingMode = 'api'
+  }
+  modelOptions.value = []
+}
 
 const sourceText = computed(() => {
   const labels = status.value?.sourceLabels ?? {}
@@ -671,7 +755,6 @@ async function saveAiConfig(): Promise<void> {
   try {
     await settingsApi.updateConfig([
       { key: AI_DEGRADE_KEY, value: aiDegradeEnabled.value ? 'true' : 'false', valueType: 'bool' },
-      { key: AI_MASK_KEY, value: aiMaskEnabled.value ? 'true' : 'false', valueType: 'bool' },
       { key: AI_TIMEOUT_KEY, value: aiTimeoutDefault.value.trim(), valueType: 'int' },
     ])
     ElMessage.success('已保存')
@@ -680,6 +763,22 @@ async function saveAiConfig(): Promise<void> {
     ElMessage.error(err instanceof Error ? err.message : '保存失败')
   } finally {
     savingConfig.value = false
+  }
+}
+
+/** 外发脱敏页签独立保存，只写 ai.mask.enabled 一个键 */
+async function saveMaskSetting(): Promise<void> {
+  savingMask.value = true
+  try {
+    await settingsApi.updateConfig([
+      { key: AI_MASK_KEY, value: aiMaskEnabled.value ? 'true' : 'false', valueType: 'bool' },
+    ])
+    ElMessage.success('脱敏策略已保存')
+    await loadAiConfig()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '保存失败')
+  } finally {
+    savingMask.value = false
   }
 }
 
@@ -835,6 +934,8 @@ function onProviderChange(name: string): void {
   if (!spec) {
     return
   }
+  form.accessMode = 'api'
+  form.billingMode = 'api'
   form.protocol = spec.protocol
   form.baseUrl = spec.defaultBaseUrl
   form.model = spec.defaultModel
@@ -858,8 +959,8 @@ async function loadModels(): Promise<void> {
     payload.useEnvKey = form.useEnvKey
     payload.envKeyName = form.envKeyName.trim()
     payload.envKeyScope = form.envKeyScope
-    if (!form.useEnvKey && draftApiKey.value.trim()) {
-      payload.apiKey = draftApiKey.value.trim()
+    if (!form.useEnvKey && newApiKey.value.trim()) {
+      payload.apiKey = newApiKey.value.trim()
     }
     modelOptions.value = await settingsApi.models(payload)
     if (!modelOptions.value.length) {
@@ -881,6 +982,7 @@ function openCreate(): void {
     protocol: providers.value[0]?.protocol ?? 'openai_compat',
     baseUrl: providers.value[0]?.defaultBaseUrl ?? '',
     model: providers.value[0]?.defaultModel ?? '',
+    accessMode: 'api',
     priority: 0,
     temperature: 0.7,
     maxTokens: 4096,
@@ -893,7 +995,8 @@ function openCreate(): void {
     billingMode: 'api',
     tokenQuota: 0,
   })
-  draftApiKey.value = ''
+  newApiKey.value = ''
+  showAdvanced.value = false
   modelOptions.value = []
   dialogVisible.value = true
 }
@@ -918,7 +1021,14 @@ function openEdit(row: AiProfile): void {
     billingMode: row.billingMode ?? 'api',
     tokenQuota: row.tokenQuota ?? 0,
   })
-  draftApiKey.value = ''
+  // 反推接入方式：协议与地址都与套餐预设一致时视为「套餐」
+  const plan = providers.value.find((item) => item.name === row.provider)?.plan ?? null
+  form.accessMode =
+    plan && row.protocol === plan.protocol && row.baseUrl === plan.baseUrl ? 'plan' : 'api'
+  // 计费模式跟随接入方式：套餐=token_plan，按量=api
+  form.billingMode = form.accessMode === 'plan' ? 'token_plan' : (row.billingMode ?? 'api')
+  newApiKey.value = ''
+  showAdvanced.value = false
   modelOptions.value = []
   dialogVisible.value = true
 }
@@ -939,7 +1049,7 @@ async function save(): Promise<void> {
   } else {
     delete extra.thinking
   }
-  const payload = {
+  const payload: Record<string, unknown> = {
     name: form.name,
     provider: form.provider,
     protocol: form.protocol,
@@ -957,15 +1067,19 @@ async function save(): Promise<void> {
     billingMode: form.billingMode,
     tokenQuota: Math.max(0, Math.round(Number(form.tokenQuota) || 0)),
   }
+  const pendingKey = !isLocalProvider.value && !form.useEnvKey ? newApiKey.value.trim() : ''
   saving.value = true
   try {
     if (editing.value) {
       await settingsApi.updateProfile(editing.value.id, payload)
+      if (pendingKey) await settingsApi.setApiKey(editing.value.id, pendingKey)
     } else {
+      if (pendingKey) payload.apiKey = pendingKey
       await settingsApi.createProfile(payload)
     }
     ElMessage.success('保存成功')
     dialogVisible.value = false
+    newApiKey.value = ''
     await load()
     await loadStatus()
   } catch (err) {
@@ -1052,8 +1166,8 @@ async function checkDraft(): Promise<void> {
     payload.useEnvKey = form.useEnvKey
     payload.envKeyName = form.envKeyName.trim()
     payload.envKeyScope = form.envKeyScope
-    if (!form.useEnvKey && draftApiKey.value.trim()) {
-      payload.apiKey = draftApiKey.value.trim()
+    if (!form.useEnvKey && newApiKey.value.trim()) {
+      payload.apiKey = newApiKey.value.trim()
     }
     checkResult.value = await settingsApi.selfCheck(payload)
     checkVisible.value = true
@@ -1108,6 +1222,14 @@ onActivated(() => {
 <style scoped>
 .page-alert {
   margin-bottom: 12px;
+}
+
+.ai-settings-tabs :deep(.el-tabs__header) {
+  margin-bottom: 12px;
+}
+
+.ai-mask-panel {
+  max-width: 880px;
 }
 
 .ai-config-panel {
@@ -1211,6 +1333,10 @@ onActivated(() => {
   margin-top: 10px;
 }
 
+.priority-alert {
+  margin-top: 10px;
+}
+
 .candidates__list {
   display: flex;
   flex-direction: column;
@@ -1299,6 +1425,24 @@ onActivated(() => {
 
 .key-input {
   margin-top: 12px;
+}
+
+/* 档案弹窗底栏：左空 / 居中连通测试 / 右侧取消+保存 */
+.dialog-footer {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  width: 100%;
+}
+
+.dialog-footer__spacer {
+  justify-self: start;
+}
+
+.dialog-footer__actions {
+  justify-self: end;
+  display: flex;
+  gap: 8px;
 }
 
 .check-result__head {

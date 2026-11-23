@@ -147,6 +147,26 @@
 
     <div class="panel panel-pad settings-block">
       <div class="settings-block__head">
+        <h3>备份内容</h3>
+        <el-button type="primary" size="small" :loading="shotSaving" @click="saveShotOption">
+          保存
+        </el-button>
+      </div>
+      <el-form label-width="150px" class="auto-backup__form">
+        <el-form-item label="备份包含缺陷截图">
+          <el-switch v-model="includeBugScreenshots" />
+          <span class="muted auto-backup__inline">默认关闭</span>
+        </el-form-item>
+      </el-form>
+      <p class="muted settings-block__hint">
+        缺陷截图存放在 data/bug-screenshots/&lt;缺陷编号&gt;/，文件名为 pic_&lt;缺陷编号&gt;_001.png 递增。
+        打开后，整包备份、项目资产包与留存归档都会带上截图；关闭时三者都不包含，
+        截图仍保留在本机目录，也不参与留存清理。
+      </p>
+    </div>
+
+    <div class="panel panel-pad settings-block">
+      <div class="settings-block__head">
         <h3>备份列表</h3>
         <div class="settings-block__actions">
           <el-upload
@@ -227,6 +247,8 @@ const backups = ref<DbBackup[]>([])
 const bundles = ref<DbBackup[]>([])
 const backupDir = ref('')
 const dbPath = ref('')
+const includeBugScreenshots = ref(false)
+const shotSaving = ref(false)
 const loading = ref(false)
 const backupCreating = ref(false)
 const bundleCreating = ref(false)
@@ -317,6 +339,38 @@ async function loadBackups(): Promise<void> {
     ElMessage.error(err instanceof Error ? err.message : '加载备份列表失败')
   } finally {
     loading.value = false
+  }
+}
+
+async function loadShotOption(): Promise<void> {
+  try {
+    const configs = await settingsApi.config()
+    includeBugScreenshots.value =
+      configs.find((item) => item.key === 'backup.include_bug_screenshots')?.value === 'true'
+  } catch {
+    includeBugScreenshots.value = false
+  }
+}
+
+async function saveShotOption(): Promise<void> {
+  shotSaving.value = true
+  try {
+    await settingsApi.updateConfig([
+      {
+        key: 'backup.include_bug_screenshots',
+        value: includeBugScreenshots.value ? 'true' : 'false',
+        valueType: 'boolean',
+      },
+    ])
+    ElMessage.success(
+      includeBugScreenshots.value
+        ? '已开启：整包备份、项目资产包与留存归档都包含缺陷截图'
+        : '已关闭：三处备份都不包含缺陷截图',
+    )
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '保存失败')
+  } finally {
+    shotSaving.value = false
   }
 }
 
@@ -460,6 +514,7 @@ async function removeBackup(name: string): Promise<void> {
 
 onMounted(() => {
   void loadBackups()
+  void loadShotOption()
 })
 </script>
 

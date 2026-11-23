@@ -9,7 +9,14 @@ from ..common.pagination import RowDict, RowList
 from ..common.time_utils import utcnow_iso
 from ..errors import AppError, ErrorCode
 from .base import BaseRepository, loads
-from .numbering import next_no
+from .numbering import next_no_monotonic
+
+#: 缺陷号三类前缀：人工=Bug，AI 处理=AI_Bug，自动化=Auto_Bug
+BUG_NO_PREFIX = {
+    "manual": "BUG",
+    "ai": "AI_BUG",
+    "automation": "Auto_BUG",
+}
 
 
 class BugRepository(BaseRepository):
@@ -21,8 +28,9 @@ class BugRepository(BaseRepository):
     }
     searchable = ["bug_no", "title", "description", "module", "assignee"]
 
-    def next_bug_no(self, project_id: int) -> str:
-        return next_no(self.conn, self.table, "bug_no", "BUG", project_id)
+    def next_bug_no(self, source: str = "manual") -> str:
+        prefix = BUG_NO_PREFIX.get(source, BUG_NO_PREFIX["manual"])
+        return next_no_monotonic(self.conn, self.table, "bug_no", prefix)
 
     def get_detail(self, pk: int) -> RowDict | None:
         row = self.get(pk)

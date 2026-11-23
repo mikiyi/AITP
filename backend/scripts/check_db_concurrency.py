@@ -320,7 +320,7 @@ def check_long_task(project: Project, project_id: int) -> None:
 
 def claim_guarded_nodes() -> list[str]:
     """所有 next_* 型取号函数必须真的做了串行化（直接 begin_claim，或委托给已加固的入口）。"""
-    guarded_calls = ("begin_claim", "next_no", "next_case_no")
+    guarded_calls = ("begin_claim", "next_no", "next_no_monotonic", "next_case_no")
     suspicious: list[str] = []
     for path in sorted((ROOT / "backend" / "aitp" / "repositories").glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))

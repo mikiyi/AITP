@@ -48,6 +48,21 @@ BUNDLE_MANIFEST_NAME = "manifest.json"
 BUNDLE_KNOWLEDGE_DIR = "knowledge"
 #: 库里只存引用，正文、凭据与模板原文件在这些目录里，缺了就无法完整恢复
 BUNDLE_ASSET_DIRS = ("attachments", "automation", "generated", "secrets", "doc_templates")
+#: 缺陷截图默认不进整包；开关打开后随包备份与恢复
+CONFIG_INCLUDE_BUG_SHOTS = "backup.include_bug_screenshots"
+
+
+def _include_bug_screenshots(conn: sqlite3.Connection) -> bool:
+    from ..repositories.sys_config_repo import SysConfigRepository
+
+    raw = str(SysConfigRepository(conn).get_value(CONFIG_INCLUDE_BUG_SHOTS, "0") or "").strip().lower()
+    return raw not in ("", "0", "false", "off", "no")
+
+
+def _bundle_asset_dirs(conn: sqlite3.Connection) -> tuple[str, ...]:
+    if _include_bug_screenshots(conn):
+        return (*BUNDLE_ASSET_DIRS, "bug-screenshots")
+    return BUNDLE_ASSET_DIRS
 
 
 def _db_path() -> Path:
@@ -301,7 +316,7 @@ def create_bundle(conn: sqlite3.Connection, prefix: str = BUNDLE_PREFIX) -> dict
             zf.write(snapshot, BUNDLE_DB_NAME)
             files = 1
             members: dict[str, int] = {}
-            for name in BUNDLE_ASSET_DIRS:
+            for name in _bundle_asset_dirs(conn):
                 members[name] = _add_tree(zf, data_root / name, name)
                 files += members[name]
             members[BUNDLE_KNOWLEDGE_DIR] = _add_tree(zf, knowledge_root, BUNDLE_KNOWLEDGE_DIR)
@@ -409,7 +424,10 @@ def restore_bundle(conn: sqlite3.Connection, name: str) -> dict[str, Any]:
 
         data_root = _db_path().parent
         restored_files: dict[str, int] = {}
-        for asset in BUNDLE_ASSET_DIRS:
+        restore_dirs = list(BUNDLE_ASSET_DIRS)
+        if (workdir / "bug-screenshots").is_dir():
+            restore_dirs.append("bug-screenshots")
+        for asset in restore_dirs:
             count = _replace_tree(workdir / asset, data_root / asset)
             if count:
                 restored_files[asset] = count

@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 from flask import Blueprint, Response, current_app, request, send_file
 
 from ..ai import cost as ai_cost
-from ..common.constants import AI_DEFAULT_TIMEOUT, PROVIDERS
+from ..common.constants import AI_DEFAULT_TIMEOUT, PLANS, PROVIDERS
 from ..common.env_scope import normalize_scope
 from ..common.time_utils import utcnow_iso
 from ..common.validators import (
@@ -75,6 +75,10 @@ CONFIG_HINTS: dict[str, str] = {
     ),
     "backup.auto.min_free_mb": (
         "磁盘剩余空间低于该值时跳过本次自动备份并发出通知，默认 512，填 0 表示不检查。"
+    ),
+    "backup.include_bug_screenshots": (
+        "可填 true 或 false，默认 false。true：整包备份、项目资产包与留存归档都包含缺陷截图；"
+        "false：三处都不包含（截图仍保留在 data/bug-screenshots/<缺陷编号>/ 下，不受留存清理）。"
     ),
     "home.cards": (
         "首页卡片的显示与顺序，由「设置 → 首页卡片定制」写入，形如 "
@@ -238,6 +242,7 @@ def list_profiles() -> Response:
 def list_providers() -> Response:
     result = []
     for name, spec in PROVIDERS.items():
+        plan = PLANS.get(name)
         result.append({
             "name": spec.name,
             "label": spec.label,
@@ -247,6 +252,13 @@ def list_providers() -> Response:
             "requiresApiKey": spec.requires_api_key,
             "isLocal": spec.is_local,
             "envKeys": list(spec.env_key),
+            "plan": None if plan is None else {
+                "label": plan.label,
+                "baseUrl": plan.base_url,
+                "protocol": plan.protocol,
+                "defaultModel": plan.default_model,
+                "keyHint": plan.key_hint,
+            },
         })
     return ok(result)
 

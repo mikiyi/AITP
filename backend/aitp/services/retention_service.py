@@ -39,9 +39,10 @@ TYPE_AUTOMATION_RUN = "automation_run"
 TYPE_EVIDENCE = "evidence"
 TYPE_LOG = "log"
 TYPE_TODO = "todo"
+TYPE_BUG_SCREENSHOT = "bug_screenshot"
 
 DATA_TYPES: tuple[str, ...] = (
-    TYPE_TEST_RUN, TYPE_AUTOMATION_RUN, TYPE_EVIDENCE, TYPE_LOG, TYPE_TODO,
+    TYPE_TEST_RUN, TYPE_AUTOMATION_RUN, TYPE_EVIDENCE, TYPE_BUG_SCREENSHOT, TYPE_LOG, TYPE_TODO,
 )
 TYPE_LABELS = {
     TYPE_TEST_RUN: "测试轮次",
@@ -49,6 +50,7 @@ TYPE_LABELS = {
     TYPE_EVIDENCE: "执行证据",
     TYPE_LOG: "操作日志",
     TYPE_TODO: "已完成待办",
+    TYPE_BUG_SCREENSHOT: "缺陷截图",
 }
 ACTION_LABELS = {
     ACTION_ARCHIVE: "归档后清理",
@@ -62,7 +64,16 @@ TYPE_ACTIONS: dict[str, tuple[str, ...]] = {
     TYPE_EVIDENCE: (ACTION_ARCHIVE, ACTION_DELETE, ACTION_SUMMARY),
     TYPE_LOG: (ACTION_ARCHIVE, ACTION_DELETE),
     TYPE_TODO: (ACTION_ARCHIVE, ACTION_DELETE),
+    TYPE_BUG_SCREENSHOT: (ACTION_ARCHIVE, ACTION_DELETE),
 }
+
+#: 缺陷截图是否纳入留存：与整包备份/项目资产包共用同一个开关，默认不纳入
+CONFIG_INCLUDE_BUG_SHOTS = "backup.include_bug_screenshots"
+
+
+def _include_bug_screenshots(conn: sqlite3.Connection) -> bool:
+    raw = str(SysConfigRepository(conn).get_value(CONFIG_INCLUDE_BUG_SHOTS, "0") or "").strip().lower()
+    return raw not in ("", "0", "false", "off", "no")
 
 CONFIG_AUTO = "retention.cleanup.auto"
 CONFIG_LAST_RUN = "retention.cleanup.last_run"
@@ -202,6 +213,16 @@ def _due_rows_with_protected(
              "referencedBy": f"缺陷 {row['bug_no'] or row['bug_id']} {row['bug_title'] or ''}".strip()}
             for row in protected
         ]
+    if data_type == TYPE_BUG_SCREENSHOT:
+        if not _include_bug_screenshots(conn):
+            return [], []
+        rows = conn.execute(
+            "SELECT s.*, b.bug_no, b.title AS bug_title FROM biz_bug_screenshot s"
+            " JOIN biz_bug b ON b.id = s.bug_id"
+            " WHERE s.is_deleted = 0 AND s.created_at < ? ORDER BY s.id LIMIT ?",
+            (cutoff, _MAX_DUE),
+        ).fetchall()
+        return [dict(row) for row in rows], []
     if data_type == TYPE_LOG:
         rows = conn.execute(
             "SELECT * FROM sys_audit_log WHERE created_at < ? ORDER BY id LIMIT ?",
@@ -253,6 +274,8 @@ def _item_title(data_type: str, row: dict[str, Any]) -> str:
         return f"{row.get('action') or ''} {row.get('resource_type') or ''} {row.get('resource_label') or ''}".strip()
     if data_type == TYPE_TODO:
         return str(row.get("title") or f"待办 #{row.get('id')}")
+    if data_type == TYPE_BUG_SCREENSHOT:
+        return f"{row.get('bug_no') or ''} {row.get('file_name') or ''}".strip()
     return str(row.get("title") or "")
 
 
@@ -267,6 +290,8 @@ def _item_summary(data_type: str, row: dict[str, Any]) -> str:
         return f"actor={row.get('actor') or ''} result={row.get('result') or ''}"
     if data_type == TYPE_TODO:
         return f"状态 {row.get('status') or ''} 优先级 {row.get('priority') or ''}"
+    if data_type == TYPE_BUG_SCREENSHOT:
+        return f"{row.get('mime') or ''} {int(row.get('size_bytes') or 0)} 字节"
     return ""
 
 
@@ -343,6 +368,14 @@ def _write_bundle(
         }, ensure_ascii=False, indent=2))
         lines = [json.dumps(_row_to_public(data_type, row), ensure_ascii=False) for row in rows]
         archive.writestr("items.jsonl", "\n".join(lines))
+        if data_type == TYPE_BUG_SCREENSHOT:
+            # 归档截图要把图片本体一起带走，否则清理磁盘后只剩一条元数据。
+            for row in rows:
+                bug_no = str(row.get("bug_no") or "")
+                file_name = str(row.get("file_name") or "")
+                source = db_path.parent / "bug-screenshots" / bug_no / file_name
+                if bug_no and file_name and source.is_file():
+                    archive.write(source, f"files/{bug_no}/{file_name}")
 
     bundle_id = bundle_repo.insert({
         "bundle_no": bundle_no,
@@ -417,7 +450,24 @@ def _apply_archive(conn: sqlite3.Connection, data_type: str, rows: list[dict[str
         ids = [int(row["id"]) for row in rows]
         marks = ",".join("?" for _ in ids)
         conn.execute(f"UPDATE biz_todo SET is_deleted = 1 WHERE id IN ({marks})", ids)
+    elif data_type == TYPE_BUG_SCREENSHOT:
+        _delete_screenshot_files(conn, rows)
     return len(rows)
+
+
+def _delete_screenshot_files(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> None:
+    row = conn.execute("PRAGMA database_list").fetchone()
+    db_file = str((row[2] if row else "") or "")
+    root = Path(db_file).parent if db_file else Path("data")
+    for item in rows:
+        bug_no = str(item.get("bug_no") or "")
+        file_name = str(item.get("file_name") or "")
+        if bug_no and file_name:
+            (root / "bug-screenshots" / bug_no / file_name).unlink(missing_ok=True)
+    ids = [int(item["id"]) for item in rows]
+    if ids:
+        marks = ",".join("?" for _ in ids)
+        conn.execute(f"UPDATE biz_bug_screenshot SET is_deleted = 1 WHERE id IN ({marks})", ids)
 
 
 def _apply_delete(conn: sqlite3.Connection, data_type: str, rows: list[dict[str, Any]]) -> int:

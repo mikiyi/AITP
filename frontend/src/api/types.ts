@@ -330,6 +330,10 @@ export interface Bug {
   env: string
   module: string
   aiTaskId: Id | null
+  /** 缺陷来源：manual=手工 / ai=AI 处理 / automation=自动化 / import=外部导入 */
+  source?: string
+  sourceRef?: string
+  screenshots?: BugScreenshot[]
   /** 由轮次失败用例转缺陷时写入的关联用例。 */
   linkedCaseIds?: Id[]
   linkedCases?: BugLinkedCase[]
@@ -344,6 +348,19 @@ export interface BugLinkedCase {
   title: string
   status: string
   priority: string
+}
+
+export interface BugScreenshot {
+  id: Id
+  bugId: Id
+  seq: number
+  fileName: string
+  originalName: string
+  mime: string
+  sizeBytes: number
+  sha256: string
+  createdAt: string
+  url: string
 }
 
 export interface BugLog {

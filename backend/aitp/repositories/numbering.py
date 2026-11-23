@@ -17,7 +17,8 @@ import sqlite3
 from typing import Any
 
 NO_WIDTH = 3
-NO_PATTERN = re.compile(r"^[A-Za-z]+-(\d+)$")
+#: 前缀允许下划线：缺陷号分 BUG / AI_BUG / Auto_BUG 三类
+NO_PATTERN = re.compile(r"^([A-Za-z][A-Za-z0-9_]*)-(\d+)$")
 
 #: 事务未开时先手工开一个写事务；已经开了就沿用，重复 BEGIN 会直接报错
 _ALREADY_IN_TXN = "within a transaction"
@@ -88,6 +89,27 @@ def next_no(
 
     used = _used_sequences(conn.execute(sql, params).fetchall(), prefix)
     return f"{prefix}-{_first_gap(used):0{NO_WIDTH}d}"
+
+
+def next_no_monotonic(
+    conn: sqlite3.Connection,
+    table: str,
+    column: str,
+    prefix: str,
+) -> str:
+    """只增不复用的取号：取该前缀已出现过的最大序号 + 1（软删记录也占号）。
+
+    缺陷号用这个口径：编号一旦被截图文件名引用，复用会造成旧截图被覆盖。
+    仍然是「读-改-写」，所以与 next_no 一样先拿写事务。
+    """
+    begin_claim(conn)
+    rows = conn.execute(
+        f"SELECT {column} FROM {table} WHERE {column} LIKE ?",
+        (f"{prefix}-%",),
+    ).fetchall()
+    used = _used_sequences(rows, prefix)
+    seq = (max(used) if used else 0) + 1
+    return f"{prefix}-{seq:0{NO_WIDTH}d}"
 
 
 def next_case_no(

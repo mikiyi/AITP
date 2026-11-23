@@ -13,7 +13,13 @@ from ..errors import AppError, ErrorCode
 from ..repositories.base import dumps, loads
 from ..repositories.bug_repo import BugRepository
 from ..repositories.test_case_repo import TestCaseRepository
-from ..services import audit_service, execution_protocol, export_jobs, tabular_export
+from ..services import (
+    audit_service,
+    bug_screenshot_service,
+    execution_protocol,
+    export_jobs,
+    tabular_export,
+)
 from .helpers import (
     attach_version_codes,
     audit,
@@ -101,6 +107,8 @@ def _to_public(row: dict[str, Any]) -> dict[str, Any]:
         "moduleId": row.get("module_id"),
         "versionId": row.get("version_id"),
         "bugNo": row.get("bug_no"),
+        "source": row.get("source") or "manual",
+        "sourceRef": row.get("source_ref") or "",
         "title": row.get("title"),
         "severity": row.get("severity"),
         "status": row.get("status"),
@@ -224,6 +232,7 @@ def get_bug(pk: str) -> Response:
     payload["linkedCases"] = _linked_cases(conn, linked_case_ids, row.get("project_id"))
     payload["logs"] = repo.list_logs(path_int(pk))
     payload["evidenceCount"] = len(execution_protocol.evidence_for_bug(conn, path_int(pk)))
+    payload["screenshots"] = bug_screenshot_service.list_screenshots(conn, path_int(pk))
     return ok(payload)
 
 
@@ -253,6 +262,79 @@ def list_bug_evidence(pk: str) -> Response:
     })
 
 
+@bp.get("/<pk>/screenshots")
+def list_bug_screenshots(pk: str) -> Response:
+    conn = db()
+    target = path_int(pk)
+    row = BugRepository(conn).get(target)
+    if not row:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "缺陷不存在")
+    guard_project_scope(row, scope_arg(), "缺陷")
+    return ok({"list": bug_screenshot_service.list_screenshots(conn, target)})
+
+
+@bp.post("/<pk>/screenshots")
+def upload_bug_screenshots(pk: str) -> Response:
+    conn = db()
+    target = path_int(pk)
+    row = BugRepository(conn).get(target)
+    if not row:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "缺陷不存在")
+    guard_project_scope(row, scope_arg(), "缺陷")
+    uploads = request.files.getlist("files")
+    created = bug_screenshot_service.save_screenshots(
+        conn, row, [(item.filename or "screenshot", item.read()) for item in uploads],
+    )
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_CREATE, audit_service.RESOURCE_BUG, target,
+          str(row.get("title") or ""), {"screenshots": [item["fileName"] for item in created]})
+    return ok({"list": created})
+
+
+@bp.get("/<pk>/screenshots/<sid>/file")
+def get_bug_screenshot_file(pk: str, sid: str) -> Response:
+    conn = db()
+    target = path_int(pk)
+    row = BugRepository(conn).get(target)
+    if not row:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "缺陷不存在")
+    guard_project_scope(row, scope_arg(), "缺陷")
+    shot = bug_screenshot_service.get_screenshot(conn, target, path_int(sid))
+    if not shot:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "截图不存在或已删除")
+    path = bug_screenshot_service.file_path(conn, {**shot, "bug_no": row.get("bug_no")})
+    if not path.is_file():
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "截图文件已丢失")
+    from urllib.parse import quote
+
+    return Response(
+        path.read_bytes(),
+        mimetype=str(shot.get("mime") or "application/octet-stream"),
+        headers={
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(str(shot.get('file_name') or ''))}",
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
+@bp.delete("/<pk>/screenshots/<sid>")
+def delete_bug_screenshot(pk: str, sid: str) -> Response:
+    conn = db()
+    target = path_int(pk)
+    row = BugRepository(conn).get(target)
+    if not row:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "缺陷不存在")
+    guard_project_scope(row, scope_arg(), "缺陷")
+    shot = bug_screenshot_service.get_screenshot(conn, target, path_int(sid))
+    if not shot:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "截图不存在或已删除")
+    bug_screenshot_service.delete_screenshot(conn, row, shot)
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_BUG, target,
+          str(row.get("title") or ""), {"screenshot": shot.get("file_name")})
+    return ok({"deleted": True, "id": int(shot["id"])})
+
+
 @bp.post("")
 def create_bug() -> Response:
     conn = db()
@@ -271,7 +353,9 @@ def create_bug() -> Response:
     repo = BugRepository(conn)
     new_id = repo.insert({
         "project_id": project_id,
-        "bug_no": repo.next_bug_no(project_id),
+        "bug_no": repo.next_bug_no("manual"),
+        "source": "manual",
+        "source_ref": optional_str(data.get("sourceRef"), "sourceRef", 200) or "",
         "version_id": version_id,
         "title": title,
         "severity": severity,

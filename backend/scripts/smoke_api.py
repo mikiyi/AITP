@@ -674,6 +674,28 @@ def check_settings(api: Api, workdir: pathlib.Path) -> None:
 
     providers = api.data("GET", "/api/v1/settings/ai/providers")
     check("供应商清单可读", len(providers) >= 4, str(len(providers)))
+    names = {str(p.get("name")) for p in providers}
+    expected_vendors = {
+        "openai", "dashscope", "deepseek", "sensenova",
+        "minimax-cn", "minimax-global", "bigmodel", "xiaomi-mimo",
+        "kimi-cn", "kimi-global", "volcengine-ark", "tencent-hunyuan",
+        "siliconflow", "openrouter", "moark", "custom", "ollama",
+    }
+    check("内置供应商齐全", expected_vendors.issubset(names),
+          f"缺 {expected_vendors - names}")
+    cloud_missing_url = [
+        str(p.get("name")) for p in providers
+        if not p.get("isLocal") and p.get("name") != "custom"
+        and not str(p.get("defaultBaseUrl") or "").startswith("http")
+    ]
+    check("云端供应商均带 http(s) Base URL", not cloud_missing_url, str(cloud_missing_url))
+    check("套餐厂商带套餐预设（地址/协议/Key 提示）",
+          any(bool(p.get("plan")) for p in providers)
+          and all(bool((p.get("plan") or {}).get("baseUrl")) for p in providers if p.get("plan")),
+          str([p.get("name") for p in providers if p.get("plan")]))
+    from aitp.ai.client import ADAPTERS as _ADAPTERS
+
+    check("Anthropic 兼容协议适配器已注册", "anthropic" in _ADAPTERS, str(sorted(_ADAPTERS)))
 
     status = api.data("GET", "/api/v1/settings/ai/status")
     check("AI 生效状态含来源层与候选",

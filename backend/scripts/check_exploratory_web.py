@@ -349,7 +349,7 @@ def main() -> int:
                           f"{V1}/exploratory/sessions/{sess['id']}/steps/{second['id']}/to-bug")
         check("去重跳过的异常也能一键登记缺陷",
               bool(direct["bugId"]) and not direct["alreadyLinked"], str(direct))
-        check("直接登记带出缺陷编号", str(direct["bugNo"]).startswith("BUG-"), str(direct["bugNo"]))
+        check("直接登记带出 AI 缺陷编号", str(direct["bugNo"]).startswith("AI_BUG-"), str(direct["bugNo"]))
         again = api.data("POST",
                          f"{V1}/exploratory/sessions/{sess['id']}/steps/{second['id']}/to-bug")
         check("重复登记幂等返回同一缺陷",

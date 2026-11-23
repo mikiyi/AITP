@@ -199,7 +199,7 @@ def main() -> int:
         check("HTML 报告可分享", resp.mimetype == "text/html" and "场景报告" in resp.get_data(as_text=True),
               str(resp.mimetype))
         bug = api.data("POST", f"/api/v1/api-scenarios/{bad['id']}/runs/{run3['runId']}/to-bug", {})
-        check("失败转缺陷", str(bug["bugNo"]).startswith("BUG"), str(bug))
+        check("失败转缺陷带自动化前缀", str(bug["bugNo"]).startswith("Auto_BUG-"), str(bug))
     finally:
         server.shutdown()
         shutil.rmtree(workdir, ignore_errors=True)
