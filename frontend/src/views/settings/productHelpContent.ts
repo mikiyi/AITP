@@ -128,6 +128,8 @@ export const RELEASE_NOTES: ReleaseNote[] = [
       '缺陷编号全局唯一：手工 BUG-xxx、AI 处理 AI_BUG-xxx、自动化脚本/场景/矩阵 Auto_BUG-xxx 各自自增，软删后编号永不复用；老库跨项目重号在启动迁移时自动顺延',
       '缺陷详情支持截图上传、预览、下载、删除：文件存 data/bug-screenshots/<缺陷编号>/，命名 pic_<缺陷编号>_001 递增，单张 ≤10MB、每个缺陷 ≤30 张，只收常见位图',
       '「设置 → 数据备份与还原 → 备份内容」新增「备份包含缺陷截图」开关（默认关闭）；打开后整包备份、项目资产包、留存归档都带上截图，关闭时三处都不包含',
+      'AI 供应商扩容与接入方式：内置厂商选「按量 API / 订阅套餐（Agent / Coding / Token Plan）」后自动带出接口地址、协议与 Key 格式提示；新增 Anthropic Messages 协议适配，套餐档案按额度扣减',
+      'AI 设置页拆为「LLM设置 / 外发脱敏」两个 Tab：脱敏开关独立成页；档案弹窗去掉临时 Key 与计费模式单选（由接入方式自动派生），「启用本地 Key」前移、「测试大模型配置是否连通」居中放在底栏',
       '新增 check_bug_screenshots 门禁与端到端 spec 12，覆盖编号前缀、全局唯一、不复用、截图命名与上限、删除后序号不回退、三处开关',
     ],
   },
@@ -338,7 +340,7 @@ export const FEATURE_GROUPS: FeatureGroup[] = [
     entries: [
       { entry: '首页卡片定制', path: '/settings/home-cards', desc: '卡片显隐/排序/置顶草稿，「保存布局」才生效；两块固定卡片不参与定制；隐藏卡片不再请求额外数据。' },
       { entry: '访问口令', path: '/settings/security', desc: '可选本机访问门（Cookie 会话 12 小时、重启失效、错 5 次锁 60 秒）；口令只存加盐哈希；启用/改口令/关闭/立即锁定。' },
-      { entry: 'AI 设置', path: '/settings/ai', desc: '供应商档案 CRUD + 启停 + 真实自检 + 优先级降级；支持 15+ 内置厂商，选厂商后可切「按量 API / 订阅套餐（Agent / Coding / Token Plan）」——切套餐自动带出对应接口地址、协议与 Key 格式提示（小米 token-plan-cn + tp-/ttp-、MiniMax / Kimi Coding 套餐走 Anthropic 兼容端点）；协议支持 OpenAI 兼容 / Anthropic Messages 兼容 / Ollama 原生；主表单填名称/供应商/地址/模型/Key，其余（协议/温度/超时/计费/环境变量 Key 等）收在「高级设置」。另有外发脱敏开关与预览、成本与预算、计费模式（API 按量 / Token 套餐额度），本地模型不计费；档案可勾「关闭思考模式」让推理模型直出答案。' },
+      { entry: 'AI 设置', path: '/settings/ai', desc: '供应商档案 CRUD + 启停 + 真实自检 + 优先级降级；支持 15+ 内置厂商，选厂商后可切「按量 API / 订阅套餐（Agent / Coding / Token Plan）」——切套餐自动带出对应接口地址、协议与 Key 格式提示（小米 token-plan-cn + tp-/ttp-、MiniMax / Kimi Coding 套餐走 Anthropic 兼容端点）；协议支持 OpenAI 兼容 / Anthropic Messages 兼容 / Ollama 原生；主表单填名称/供应商/接入方式/协议/地址/模型/Key，其余（启用本地 Key 与环境变量、优先级/温度/最大 Token/超时/套餐额度等）收在「高级设置」，「测试大模型配置是否连通」在弹窗底栏居中。页面分两个页签：「LLM设置」聚合生效配置、档案列表、调用参数与成本预算；「外发脱敏」单独放全局脱敏开关（云端调用前自动替换敏感信息，可在数据外发确认里预览本次正文）。本地模型不计费；档案可勾「关闭思考模式」让推理模型直出答案。' },
       { entry: '测试文档模板', path: '/settings/templates', desc: '上传 docx/xlsx/csv/md/txt/json（≤5MB）解析正文/列名/版式；原件可下载、换/删清理旧原件、只上传未保存自动清理；导出列配置；损坏文件给中文提示。' },
       { entry: '数据备份与还原', path: '/settings/backup', desc: '库快照 + 整包 zip；每天/每周定时、保留 1–90 份、磁盘阈值跳过告警；恢复前自动 pre-restore；高版本 schema 拒绝导入。「备份内容 → 备份包含缺陷截图」默认关闭，打开后整包备份/项目资产包/留存归档都带截图，关闭时三处都不包含（截图仍保留在 data/bug-screenshots/<缺陷编号>/，不参与留存清理）。' },
       { entry: 'CI 与通知', path: '/settings/ci', desc: 'CI 令牌生成/吊销（只存哈希）驱动 POST /api/v1/ci/runs；Webhook 渠道全局/按项目，订阅六类事件，测试发送/失败重试/发送记录。' },

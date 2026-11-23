@@ -75,7 +75,7 @@
 
     <div class="panel panel-pad">
       <el-table v-loading="loading" :data="profiles" border stripe>
-        <el-table-column prop="name" label="名称" min-width="120" />
+        <el-table-column prop="name" label="名称" min-width="120" show-overflow-tooltip />
         <el-table-column prop="provider" label="供应商" width="100" />
         <el-table-column label="模型" min-width="140" show-overflow-tooltip>
           <template #default="scope">{{ scope.row.model || '-' }}</template>
@@ -347,7 +347,7 @@
             </el-select>
             <el-button :loading="loadingModels" @click="loadModels">拉取模型列表</el-button>
           </div>
-          <div class="muted form-hint">本地模型走 /api/tags，OpenAI 兼容接口走 /models。</div>
+          <div class="muted form-hint">本地模型走 /api/tags，OpenAI 兼容接口走 /models；Anthropic 协议接口不提供模型列表，需手动填写模型名。</div>
         </el-form-item>
         <el-form-item v-if="!isLocalProvider" :label="keyLabel">
           <el-input v-model="newApiKey" type="password" show-password :placeholder="keyPlaceholder" />
@@ -810,11 +810,16 @@ interface CostPriceRow {
   priceOutputMicros: number
   priceCurrency: string
   calls: number
-  costMicros: number
+  costMicros: number | null
   billingMode: 'api' | 'token_plan'
   tokenQuota: number
   tokenUsed: number
   tokenRemaining: number
+}
+
+/** 两项单价都为 0 = 未配价，与后端 TokenPrice.is_priced 同口径。 */
+function isPricedProfile(row: { priceInputMicros?: number; priceOutputMicros?: number }): boolean {
+  return Number(row.priceInputMicros ?? 0) > 0 || Number(row.priceOutputMicros ?? 0) > 0
 }
 
 const priceRows = ref<CostPriceRow[]>([])
@@ -851,7 +856,8 @@ function rebuildPriceRows(): void {
       priceOutputMicros: local ? 0 : Number(row.priceOutputMicros ?? 0),
       priceCurrency: row.priceCurrency || 'CNY',
       calls: used?.calls ?? 0,
-      costMicros: used?.costMicros ?? 0,
+      // null = 未配价（口径来自后端）；档案还没有任何调用记录时，配了价才是 0，没配价仍是 null
+      costMicros: used ? used.costMicros : isPricedProfile(row) ? 0 : null,
       billingMode: local ? 'api' : row.billingMode ?? 'api',
       tokenQuota: local ? 0 : Number(row.tokenQuota ?? 0),
       tokenUsed: Number(row.tokenUsed ?? 0),

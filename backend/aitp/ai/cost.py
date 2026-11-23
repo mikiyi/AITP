@@ -206,6 +206,8 @@ def price_table(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             plan_row["billing_mode"] = BILLING_API
             plan_row["token_quota"] = 0
         item = usage.get(profile_id) or Spend()
+        # 未配价档案的累计金额报 None（未配价），不能让 0 被界面读成「免费」；只报 token 与次数
+        micros: int | None = item.micros if price.is_priced else None
         result.append({
             "profileId": profile_id,
             "profileName": str(row.get("name") or ""),
@@ -215,8 +217,8 @@ def price_table(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             **price.as_dict(),
             **token_plan_summary(plan_row),
             "calls": item.calls,
-            "costMicros": item.micros,
-            "costYuan": micros_to_yuan(item.micros),
+            "costMicros": micros,
+            "costYuan": micros_to_yuan(micros),
         })
     return result
 

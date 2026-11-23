@@ -2739,7 +2739,8 @@ export interface AiProfilePrice {
   priceInputYuan: number | null
   priceOutputYuan: number | null
   calls: number
-  costMicros: number
+  /** 未配价档案为 null（界面显示「未配价」），不能塌成 0 被读成「免费」。 */
+  costMicros: number | null
   costYuan: number | null
 }
 
