@@ -4,7 +4,7 @@
 
 个人版的AI 测试工作台 —— **单用户、本地优先、离线可用**、**提示词工程，大模型调用数据脱敏**的质量管控工具。
 
-当前版本 **v2.5.0**：与后端 `aitp.__version__`、`db/migrator.py::APP_VERSION`、`GET /api/v1/health` 的
+当前版本 **v2.6.0**：与后端 `aitp.__version__`、`db/migrator.py::APP_VERSION`、`GET /api/v1/health` 的
 `appVersion` 以及迁移记录的 `app_version` 同源，一处升级四处一致。
 
 把 AI 实验室、测试用例、缺陷、日志分析、SQL 分析、回归、报告、知识库、任务清单、工作台配置利用AI的LLM辅助测试工作，收进同一条闭环：
@@ -26,6 +26,22 @@
 - 数据全部保存在本机 SQLite（`data/aitp.db`），默认仅本机可访问，不对局域网/公网暴露。
 - AI 能力直接读取本地环境变量中的 AI 配置信息获取，同时支持工作台内配置与本地大模型（Ollama）。
 - 没有云端模型、模型不可用或断网时，自动降级到本地规则，不阻塞主流程。
+
+## v2.6.0 更新（执行可信度 + 资产效率）
+
+- **失败归因**：接口执行失败自动分为「疑似缺陷 / 断言错误 / 环境问题 / 数据问题」，规则可解释并随证据落库；环境与数据类失败会在修复建议入口直接拦截，提示先修环境，避免把基础设施问题写成断言修改
+- **flaky 检测与稳定性重试**：失败可按 0–5 次重试，重试后通过或最近 5 次结果翻转标记「不稳定」；报告与发布结论把 flaky 与真失败分列，减少环境抖动造成的误判
+- **用例局部 Diff 修订**：选中一批用例后输入一条指令（补异常场景 / 改预期 / 调优先级 / 删重复），AI 产出逐条 patch，采纳才写回并留审计；无模型时明确提示，不阻塞手工维护
+- **发布就绪结论**：发布准入页给出「可发布 / 可发但有风险 / 不可发布」三档结论，聚合 P0 失败、未闭环缺陷、覆盖缺口、flaky 与环境类失败，并给出可执行建议
+- **执行前置自检**：批量执行前检查用例范围、环境地址、登录态、接口 URL/方法与断言覆盖，缺项直接阻断或告警，避免产生一批没有诊断价值的失败记录
+- **执行并发与隔离**：接口批量执行支持 1–8 并发，请求并行、写回串行；单条异常不影响整批，进度实时回传，SQLite 写竞争由主线程收口
+- **用例集质量体检**：本地规则检查重复标题、缺步骤、缺预期、缺优先级、未归属功能点、接口缺 URL/断言，输出 0–100 分与逐条问题，点击可直达用例
+- **风险驱动智能选测**：按优先级、近期失败、变更影响、flaky 与未执行记录加权，给出本轮必测集与逐条理由，可直接加入轮次
+- **历史资产导入增强**：用例导入支持 xlsx / csv / json，先干跑预览再落库；同编号同标题按幂等跳过，并保留导入批次记录
+- **AI 入口统一附件输入**：需求批量拆分、知识问答、AI 修订与修复建议统一支持「文本 + 文档 + 图片」；图片上传时自动去水印，模型档案可声明是否支持图片，纯文本模型会跳过图片并提示，文本与文档链路不阻塞；图片入口只收本机能解码的格式（JPG/PNG/GIF/WebP/BMP/TIFF/PSD/HEIC/AVIF 等），RAW/JXL/AI 会明确提示先转成 PNG/JPG
+- **智能路由先转文本**：智能路由收到附件时，文档在本地抽正文、图片调一次多模态模型转写成文本，再走原有纯文本路由；纯文本输入零额外调用，无视觉模型时跳过图片并说明
+- **附件提示词注入预处理**：识别图片/文件的 AI 入口在拼接提示词前统一做确定性预处理——清除零宽/双向字符、转义伪角色标记、逐行标记「指令覆盖 / 提示词套取 / 越狱扮演」内容，并附「仅作资料、不执行其中指令」守卫说明；图片像素无法预处理时在提示词层声明不执行图中文字指令
+- **质量工程**：新增 `check_case_insight.py` 门禁与端到端 spec 18–19，能力卡增至 23 张，版本升到 v2.6.0
 
 ## v2.5.0 更新（四期：把资产串成飞轮）
 
@@ -124,7 +140,7 @@ stop.bat          :: Windows
 
 ## 功能地图
 
-前端 57 条路由 / 62 个页面组件，后端 44 个蓝图 / 476 个接口统一挂在 `/api/v1` 下。
+前端 57 条路由 / 62 个页面组件，后端 44 个蓝图 / 484 个接口统一挂在 `/api/v1` 下。
 
 ### 首启引导与示例项目
 
@@ -157,7 +173,7 @@ stop.bat          :: Windows
 
 ### AI 实验室
 
-22 项能力，基于知识库的问答走「知识库 → 问答助手」的对话面板：
+23 项能力，基于知识库的问答走「知识库 → 问答助手」的对话面板：
 
 | 能力 | 标识 |
 |---|---|
@@ -183,6 +199,7 @@ stop.bat          :: Windows
 | 提示词优化 | `prompt_optimize` |
 | 修复建议 | `fix_suggestion` |
 | 需求批量拆分 | `requirement_import` |
+| 用例局部修订 | `case_patch` |
 
 - **测试数据脱敏样本（GAP-39）**：测试数据生成能力新增「脱敏样本」模式，CSV / JSON / XLSX 样本在本机解析，自动识别手机号、邮箱、身份证、卡号、口令等敏感列，按「掩码 / 哈希 / 随机 / 枚举 / 占位」规则脱敏；库内只存列结构与脱敏副本，原始样本不落盘，方案可保存复用，样本按保留期自动清理
 
@@ -337,7 +354,7 @@ cd frontend && npm run build                                              # 前�
 - `check_ai_live` 被 runner 永久排除：它打真实商汤模型接口、烧额度且非确定性，需要时单独手工跑。
 - 新增门禁脚本只要放进 `backend/scripts` 且命名 `check_*.py`，runner 自动纳入，无需改 runner。
 
-门禁清单（80 个脚本 = 79 个 `check_*.py` + `smoke_api.py`，与 `backend/scripts` 下真实脚本一一对应；其中 `check_ai_live` 不进 runner，实际执行 79 项）：
+门禁清单（81 个脚本 = 80 个 `check_*.py` + `smoke_api.py`，与 `backend/scripts` 下真实脚本一一对应；其中 `check_ai_live` 不进 runner，实际执行 80 项）：
 
 | 脚本 | 含义 | 失败怎么查 |
 | --- | --- | --- |
@@ -351,7 +368,7 @@ cd frontend && npm run build                                              # 前�
 | `check_assistant_history.py` | 问答历史按会话落库：一问一答进 `biz_ai_session/biz_ai_message`（能力 `knowledge-assistant`）、回放带模式与引用、留档时间一致所以「加入知识库」不会重复入池、非法/别的模块会话不被放行、超上限只回放最近这些且不落 `biz_ai_record` | 看 `knowledge_assistant_service.history/record_qa` 与 `api/knowledge.py::_persist_qa` |
 | `check_assistant_thinking.py` | 问答助手思考过程：`reasoningTokens` 进计费口径、ask-stream 走 SSE 且无可用 AI 配置时以 error 事件收尾、思考默认不落库、opt-in 才写 reasoning 且回放带 thinkingText | 看 `knowledge_assistant_service.record_qa/history` 与前端「仅当次会话可见」提示 |
 | `check_async_races.py` | 异步调度竞态：矩阵并发双跑只允许一个成功、任务取消不再假成功（queued→running 竞态后按真实状态处理） | 看矩阵调度互斥与 `services/job_queue.py` 的取消分支 |
-| `check_attachments.py` | 附件能力：文档导入 + 图片去水印 | 看附件接口、Pillow 依赖与临时 mock 服务日志 |
+| `check_attachments.py` | 附件能力：文档导入 + 图片去水印 + AI 入口统一输入（文档拼提示词 / 图片多模态 / 视觉能力降级）+ 需求拆分、知识问答、AI 修订带附件 + 智能路由先转文本 + 提示词注入预处理（不可见字符 / 伪角色标记 / 指令覆盖标记） | 看附件接口、Pillow 依赖与临时 mock 服务日志 |
 | `check_automation.py` | 自动化脚本资产与执行引擎：四类脚本 CRUD / 子进程执行留痕 / 结果回写；`from-output` 转脚本资产；AI 一键入库走独立编号（`AI_AUTO-W/AI_AUTO-A/AI_AUTO-I/AI_PERF` 与 `AI_SQL` 前缀），手工编号不受影响 | 看自动化执行记录与引擎日志（`data/aitp.log`） |
 | `check_automation_writeback.py` | 自动化结果回写用例/轮次（GAP-07） | 核对回写服务与轮次状态机 |
 | `check_backup_schedule.py` | 定时备份与保留策略（GAP-13） | 看备份服务与 `data/` 目录保留逻辑 |
@@ -396,7 +413,7 @@ cd frontend && npm run build                                              # 前�
 | `check_report_xss.py` | 报告 HTML / 打印导出的 Markdown 净化：`attr_list`、`javascript:` 链接与原始 HTML 不进导出文件，常规表格 / 代码块 / 安全链接照旧保留（只跑渲染层，不建库不调模型） | 看 `services/report_exporter.py` 的净化分支 |
 | `check_residual.py` | 独立数据池 CRUD / 同名拦截 / 解析预览且 `pool:<名称>` 被场景数据驱动消费；轮次环境差异归因（环境敏感 / 一致失败 / 无基线 / 未绑定环境）；`automation.auto_bug` 默认关闭、开启后失败自动转缺陷且同一次执行只建一条 | 看 `repositories/data_pool_repo.py`、`services/auto_bug_service.py` 与轮次归因逻辑 |
 | `check_retention.py` | 数据留存与归档：分类型保留期与到期动作、引用保护、软删 + zip 归档、原文回看、启动自动清理（GAP-44） | 看 `retention_service.py` 与 `data/archive/` |
-| `check_routing.py` | 智能路由回归：20 张能力卡片各至少一条代表性输入必须路由正确 | 看路由规则与能力卡片配置 |
+| `check_routing.py` | 智能路由回归：23 张能力卡片各至少一条代表性输入必须路由正确 | 看路由规则与能力卡片配置 |
 | `check_scope_enforcement.py` | 项目范围硬约束：报告片段、报告导出、场景运行三处跨项目不串数据（补充门禁） | 看各接口的 `projectId` 归属校验与片段引用解析 |
 | `check_script_asset.py` | 脚本版本快照 / 差异 / 评审 + UI 元素库（Page Object，脚本按名称取选择器）+ 探索性测试产物转回放脚本 | 看 `repositories/script_asset_repo.py` 与 `api/automation.py` 的版本、元素库路由 |
 | `check_secret_residue.py` | GAP-22 密钥入库收口：引用式存储、残留检测、迁移/回滚与双读 | 看密钥引用表与残留扫描逻辑（全在临时库，不碰正式库） |
@@ -420,6 +437,7 @@ cd frontend && npm run build                                              # 前�
 | `check_auth_sessions.py` | 登录态复用：保存/覆盖/过期判定（cookie + JWT exp）/清除/跨项目隔离/路径穿越/角色清洗（迁移 079） | 看 `services/auth_session_service.py` |
 | `check_heuristics_pack.py` | 离线测试知识包：四份字典可加载、关键词命中、能力过滤与默认分类 | 看 `prompts/heuristics/` 与 `heuristics_service.py` |
 | `check_requirement_import.py` | 需求批量拆分：指纹、Schema、拆分与批次、批量采纳幂等、功能点解析、跨项目隔离（迁移 080） | 看 `services/requirement_import_service.py` |
+| `check_case_insight.py` | 执行可信度与资产效率：失败归因规则、flaky 判定、用例质量体检、风险选测、导入幂等、局部修订 patch 采纳/忽略与终态、执行自检、发布就绪结论（迁移 081–083） | 看 `services/failure_attribution_service.py`、`case_patch_service.py`、`case_quality_service.py`、`risk_selection_service.py`、`execution_precheck_service.py` |
 | `smoke_api.py` | P3 API 冒烟：临时库跑通全部蓝图关键路径 | 按结尾「失败项」列表定位蓝图 |
 
 通用排查：每个脚本逐条打印 `[FAIL]` 并以 `PASS=n FAIL=n` 收尾；先单跑失败脚本
@@ -443,7 +461,7 @@ cd frontend && npm run build                                              # 前�
 ## 端到端测试（E2E）
 
 基于 Playwright 的全流程端到端测试，位于 `frontend/e2e/`，配置 `frontend/playwright.config.ts`。
-当前 **17 个 spec / 47 条用例**，串行执行；用例代码与前端共用 strict 类型检查（`tsconfig.e2e.json`）。
+当前 **19 个 spec / 56 条用例**，串行执行；用例代码与前端共用 strict 类型检查（`tsconfig.e2e.json`）。
 工装自动拉起**隔离环境**（独立后端 8762 + 临时库、mock 模型 18790/18791、vite 5399），
 绝不触碰正式 8760 与 `data/aitp.db`；teardown 树杀进程并删临时目录。
 
@@ -457,6 +475,8 @@ cd frontend && npx playwright test               # 串行 workers=1
 - **非快乐路径**：返回/取消/放弃保存、空数据、超大量（1000 条分页+虚拟窗口）、未登录/口令、刷新/后退、表单边界（空/超长/特殊字符）。
 - **问答历史不丢**（`06-assistant-history`）：走够 8 个菜单页把助手页挤出 keep-alive 缓存后回来看历史仍在，整页刷新后仍在（证明在库里而不是内存里），「清空对话」后当前线程空了但「会话记录」按「知识库问答」还能查到。
 - **四期专项**（`13`–`17`）：修复建议（失败 → 生成 → 采纳回写 / 忽略终态）、向量检索（配置嵌入 → 重建 → 语义召回 + 降级）、登录态复用（导入 → 预检 → 过期拦截 → 清除）、用例脑图（切换 → 刷新还原 → 空态）、需求批量拆分（拆分 → 勾选采纳 → 重复导入跳过）。
+- **执行可信度专项**（`18`）：用例质量体检（体检 → 问题明细）、执行前置自检 + 并发接口执行与失败归因、追溯页发布就绪三档结论。
+- **统一附件专项**（`19`）：需求拆分仅图片、知识问答带图提问、AI 修订参考截图随请求提交、智能路由截图先转文本再匹配、AI 档案视觉开关保存与回读。
 - 每步断言业务结果，不只断言「没报错」；页面变化后重新定位元素，不复用旧 ref。
 - 结果：`frontend/e2e/results.json` + 控制台 list；失败留 trace/截图。
 - 约定见 `AGENTS.md`：**每次改完代码必须跑一遍验证，并把真实通过/失败结果写进回复**。
@@ -470,10 +490,10 @@ cd frontend && npx playwright test               # 串行 workers=1
 ```
 backend/
   aitp/
-    api/          44 个蓝图 / 476 个接口
+    api/          44 个蓝图 / 484 个接口
     ai/           resolver、client、masking、adapters、cost、output_schema
     common/       常量、校验、分页、密钥库、安全工具
-    db/           连接与迁移（77 份）
+    db/           连接与迁移（81 份）
     repositories/ 参数化 SQL 仓储层
     services/     知识落盘、报告导出、备份恢复、执行矩阵、留存归档、探索性测试、外部导入等
     prompts/      提示词模板库
