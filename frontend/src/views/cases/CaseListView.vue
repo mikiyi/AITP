@@ -1,23 +1,44 @@
 <template>
   <div class="page">
-    <div class="page-header">
+    <div class="page-header case-page-header">
       <h2 class="page-title">测试用例</h2>
-      <div class="toolbar" style="margin: 0">
+      <div class="toolbar case-page-header__main" style="margin: 0">
         <el-radio-group v-model="viewMode" size="small" @change="onViewModeChange">
           <el-radio-button value="list">列表</el-radio-button>
           <el-radio-button value="mindmap">脑图</el-radio-button>
         </el-radio-group>
         <ProjectSwitcher />
-        <el-button :icon="Upload" @click="importVisible = true">导入 xlsx</el-button>
+      </div>
+    </div>
+
+    <div class="case-actions">
+      <div class="case-actions__group">
+        <el-button :icon="Upload" @click="openImport">导入用例</el-button>
         <BaseExportMenu
           :formats="['xlsx', 'csv', 'json']"
           :resolve-url="resolveExportUrl"
           :guard="exportGuard"
         />
         <el-button :icon="DataAnalysis" @click="openCoverage">覆盖矩阵</el-button>
-        <el-button type="primary" :icon="Plus" @click="openCreate">新建用例</el-button>
+        <el-button :icon="DocumentChecked" @click="openQuality">质量体检</el-button>
+        <el-button :icon="MagicStick" @click="openPatch">AI 修订</el-button>
+        <el-button :icon="Aim" @click="openRiskSelection">智能选测</el-button>
       </div>
+      <el-button class="case-actions__primary" type="primary" :icon="Plus" @click="openCreate">新建用例</el-button>
     </div>
+
+    <el-alert
+      v-if="riskFilterIds.length"
+      class="risk-filter-hint"
+      type="success"
+      :closable="false"
+      show-icon
+    >
+      <template #default>
+        已按智能选测结果筛选 {{ riskFilterIds.length }} 条。
+        <el-button link type="primary" @click="clearRiskFilter">清除筛选</el-button>
+      </template>
+    </el-alert>
 
     <div class="case-layout">
       <div class="panel panel-pad case-nav">
@@ -230,24 +251,307 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="importVisible" title="导入 xlsx 用例" width="520px">
+    <el-dialog v-model="importVisible" title="导入用例" width="760px" class="case-import-dialog">
       <el-upload
         drag
         :auto-upload="false"
         :limit="1"
-        accept=".xlsx"
+        accept=".xlsx,.csv,.json"
         :on-change="onFileChange"
+        :on-remove="onFileRemove"
         :file-list="fileList"
       >
         <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
-        <div class="el-upload__text">拖拽 xlsx 文件到此处，或<em>点击选择</em></div>
+        <div class="el-upload__text">拖拽 xlsx / csv / json 文件到此处，或<em>点击选择</em></div>
       </el-upload>
       <p class="muted import-hint">
-        导入前请确保已在「项目」中选择目标项目；编号冲突的用例会自动重排编号后导入，不会跳过。
+        导入前请确保已在「项目」中选择目标项目。选择文件后会先预览，确认后才写入；编号冲突的用例会自动重排编号。
       </p>
+      <p v-if="importPreviewing" class="muted import-hint">正在解析文件并生成预览…</p>
+
+      <div v-if="importPreview" class="import-preview" v-loading="importPreviewing">
+        <div class="import-preview__summary">
+          <el-tag size="small" effect="plain">{{ (importPreview.format || '').toUpperCase() }}</el-tag>
+          <span>共 {{ importPreview.summary.total }} 行</span>
+          <span class="import-preview__ok">新增 {{ importPreview.summary.created }}</span>
+          <span class="import-preview__bad">失败 {{ importPreview.summary.failed }}</span>
+          <span class="muted">跳过 {{ importPreview.summary.skipped }}</span>
+          <span class="muted">重排编号 {{ importPreview.summary.renumbered }}</span>
+        </div>
+        <el-table :data="importPreview.rows" size="small" border max-height="280">
+          <el-table-column prop="line" label="行号" width="64" align="right" />
+          <el-table-column label="动作" width="90">
+            <template #default="{ row }">
+              <el-tag size="small" :type="importActionTag(row.action)" effect="plain">
+                {{ importActionLabel(row.action) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="caseNo" label="编号" width="120" />
+          <el-table-column prop="reason" label="问题" min-width="180" show-overflow-tooltip />
+        </el-table>
+        <p v-if="importPreview.truncated" class="muted import-hint">
+          预览最多展示 200 行，确认导入仍会处理文件内全部行。
+        </p>
+      </div>
       <template #footer>
-        <el-button @click="importVisible = false">取消</el-button>
-        <el-button type="primary" :loading="importing" @click="doImport">开始导入</el-button>
+        <el-button @click="closeImport">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="importing"
+          :disabled="!importPreview || importPreviewing"
+          @click="doImport"
+        >
+          确认导入
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-drawer
+      v-model="qualityVisible"
+      title="用例质量体检"
+      size="820px"
+      class="case-quality-drawer"
+    >
+      <div v-loading="qualityLoading">
+        <template v-if="quality">
+          <div class="quality-summary">
+            <div class="quality-score">
+              <span>评分</span>
+              <strong>{{ quality.score }}</strong>
+            </div>
+            <el-tag :type="qualityGradeTag(quality.grade)" effect="dark">等级 {{ quality.grade }}</el-tag>
+            <div class="quality-metric">
+              <span>检查用例</span>
+              <strong>{{ quality.checked }}</strong>
+            </div>
+            <div class="quality-metric">
+              <span>问题总数</span>
+              <strong>{{ quality.issueCount }}</strong>
+            </div>
+            <div class="quality-metric bad">
+              <span>高危</span>
+              <strong>{{ quality.severity.high }}</strong>
+            </div>
+            <div class="quality-metric warn">
+              <span>中危</span>
+              <strong>{{ quality.severity.medium }}</strong>
+            </div>
+            <div class="quality-metric">
+              <span>低危</span>
+              <strong>{{ quality.severity.low }}</strong>
+            </div>
+          </div>
+
+          <div class="quality-toolbar">
+            <el-radio-group v-model="qualitySeverity" size="small">
+              <el-radio-button value="">全部</el-radio-button>
+              <el-radio-button value="high">高危</el-radio-button>
+              <el-radio-button value="medium">中危</el-radio-button>
+              <el-radio-button value="low">低危</el-radio-button>
+            </el-radio-group>
+            <span class="muted">点击行打开用例详情</span>
+          </div>
+
+          <el-table
+            :data="filteredQualityIssues"
+            size="small"
+            border
+            max-height="520"
+            row-key="caseId"
+            @row-click="openQualityIssue"
+          >
+            <el-table-column prop="caseNo" label="用例编号" width="120" />
+            <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip />
+            <el-table-column prop="label" label="问题" width="140" show-overflow-tooltip />
+            <el-table-column label="级别" width="86">
+              <template #default="{ row }">
+                <el-tag size="small" :type="severityTag(row.severity)" effect="plain">
+                  {{ row.severityLabel }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="detail" label="说明" min-width="220" show-overflow-tooltip />
+            <template #empty>
+              <span class="muted">当前筛选下没有质量问题</span>
+            </template>
+          </el-table>
+
+          <el-alert
+            :title="quality.recommendation"
+            type="info"
+            :closable="false"
+            show-icon
+            class="quality-recommend"
+          />
+        </template>
+      </div>
+      <template #footer>
+        <el-button @click="qualityVisible = false">关闭</el-button>
+        <el-button type="primary" :loading="qualityLoading" @click="loadQuality">刷新</el-button>
+      </template>
+    </el-drawer>
+
+    <el-dialog
+      v-model="patchDialogVisible"
+      title="AI 修订"
+      width="560px"
+      class="case-patch-form"
+      @closed="onPatchClosed"
+    >
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        :title="`已选 ${patchCaseIds.length} 条用例，AI 只产出待审修订，不会直接改用例`"
+        style="margin-bottom: 12px"
+      />
+      <el-form label-width="90px">
+        <el-form-item label="修订指令" required>
+          <el-input
+            v-model="patchInstruction"
+            type="textarea"
+            :rows="4"
+            placeholder="例如：把步骤拆得更细，并补齐可验证的预期结果"
+          />
+        </el-form-item>
+        <el-form-item label="参考附件">
+          <AiAttachmentInput ref="patchAttachmentRef" v-model:attachment-ids="patchAttachmentIds" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="patchDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="patchGenerating" @click="submitPatch">生成修订</el-button>
+      </template>
+    </el-dialog>
+
+    <el-drawer
+      v-model="patchDetailVisible"
+      :title="patchDetail ? `修订批次 ${patchDetail.patchNo}` : '修订详情'"
+      size="860px"
+      class="case-patch-dialog"
+    >
+      <div v-loading="patchLoading">
+        <template v-if="patchDetail">
+          <div class="patch-head">
+            <el-tag size="small" :type="patchStatusTag(patchDetail.status)" effect="plain">
+              {{ patchDetail.statusLabel }}
+            </el-tag>
+            <span class="muted">待审 {{ patchDetail.counts.pending ?? 0 }} · 已采纳 {{ patchDetail.counts.applied ?? 0 }} · 已忽略 {{ patchDetail.counts.dismissed ?? 0 }}</span>
+          </div>
+          <p class="patch-instruction">指令：{{ patchDetail.instruction || '-' }}</p>
+
+          <div v-for="item in patchDetail.items" :key="item.id" class="patch-item">
+            <div class="patch-item__head">
+              <el-button link type="primary" @click="openCaseDetailById(item.caseId)">
+                {{ item.caseNo }}
+              </el-button>
+              <span class="patch-item__title">{{ item.caseTitle }}</span>
+              <el-tag size="small" effect="plain">{{ item.actionLabel }}</el-tag>
+              <el-tag size="small" effect="plain">{{ item.targetLabel }}</el-tag>
+              <el-tag size="small" :type="patchStatusTag(item.status)" effect="plain">
+                {{ item.statusLabel }}
+              </el-tag>
+            </div>
+            <p class="patch-item__reason">理由：{{ item.reason || '-' }}</p>
+            <pre class="patch-diff">{{ item.diff || '（无差异文本）' }}</pre>
+            <div class="patch-item__actions">
+              <el-button
+                size="small"
+                type="primary"
+                :disabled="item.status !== 'pending'"
+                :loading="patchActing === item.id"
+                @click="adoptPatch(item)"
+              >采纳</el-button>
+              <el-button
+                size="small"
+                :disabled="item.status !== 'pending'"
+                :loading="patchActing === item.id"
+                @click="dismissPatch(item)"
+              >忽略</el-button>
+            </div>
+          </div>
+
+          <el-empty v-if="!patchDetail.items.length" description="这一批没有可落地的修订" />
+        </template>
+      </div>
+    </el-drawer>
+
+    <el-dialog v-model="riskDialogVisible" title="智能选测" width="860px" class="risk-selection-dialog">
+      <el-form label-width="100px">
+        <el-form-item label="变更范围" required>
+          <el-input
+            v-model="riskScope"
+            type="textarea"
+            :rows="3"
+            placeholder="例如：登录与权限校验改造、支付回调重试"
+          />
+        </el-form-item>
+        <el-form-item label="目标版本">
+          <el-select v-model="riskVersionId" placeholder="全部版本" clearable filterable style="width: 100%">
+            <el-option v-for="item in versionOptions" :key="item.value" :label="item.label" :value="item.value" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+
+      <div v-if="riskResult" class="risk-result">
+        <div class="risk-summary">
+          <span>候选 {{ riskResult.total }} 条</span>
+          <span>选出 {{ riskResult.selected }} 条</span>
+          <el-tag size="small" type="danger" effect="plain">P0 必测 {{ riskResult.mandatoryP0 }}</el-tag>
+        </div>
+        <el-table
+          ref="riskTableRef"
+          :data="riskResult.items"
+          size="small"
+          border
+          max-height="360"
+          row-key="caseId"
+          @selection-change="onRiskSelectionChange"
+        >
+          <el-table-column type="selection" width="42" reserve-selection />
+          <el-table-column label="优先级" width="82">
+            <template #default="{ row }">
+              <el-tag size="small" :type="priorityTag(row.priority)" effect="plain">{{ row.priority }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="用例" min-width="220">
+            <template #default="{ row }">
+              <span class="text-mono">{{ row.caseNo }}</span>
+              <span class="risk-case-title">{{ row.title }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="score" label="分值" width="76" align="right" />
+          <el-table-column label="理由" min-width="260">
+            <template #default="{ row }">
+              <el-tag
+                v-for="reason in row.reasons"
+                :key="reason"
+                size="small"
+                effect="plain"
+                class="risk-reason"
+              >{{ reason }}</el-tag>
+              <span v-if="!row.reasons.length" class="muted">-</span>
+            </template>
+          </el-table-column>
+        </el-table>
+        <p class="muted risk-hint">
+          “按此筛选列表”只在当前页做本地展示筛选，不会直接创建执行。
+        </p>
+      </div>
+      <el-empty v-else description="填写变更范围后开始选测" :image-size="72" />
+
+      <template #footer>
+        <el-button @click="riskDialogVisible = false">关闭</el-button>
+        <el-button type="primary" :loading="riskLoading" @click="loadRiskSelection">开始选测</el-button>
+        <el-button
+          type="success"
+          :disabled="!riskResult || !riskSelectedIds.length"
+          @click="applyRiskFilter"
+        >
+          按此筛选列表（{{ riskSelectedIds.length }}）
+        </el-button>
       </template>
     </el-dialog>
 
@@ -353,11 +657,12 @@
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { DataAnalysis, Plus, Upload, UploadFilled } from '@element-plus/icons-vue'
-import type { UploadFile, UploadFiles } from 'element-plus'
+import { DataAnalysis, DocumentChecked, Aim, MagicStick, Plus, Upload, UploadFilled } from '@element-plus/icons-vue'
+import type { TableInstance, UploadFile, UploadFiles } from 'element-plus'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
+import AiAttachmentInput from '@/components/AiAttachmentInput.vue'
 import ModuleTree, { type ModuleTreeExpose } from '@/components/ModuleTree.vue'
 import CaseMindmapPanel from './CaseMindmapPanel.vue'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
@@ -365,6 +670,11 @@ import { caseApi, knowledgeApi, moduleApi, projectVersionApi, requirementApi, te
 import type { PagePayload } from '@/api/request'
 import { NODE_CASE_PAGE_SIZE } from '@/composables/useNodeCases'
 import type {
+  CaseImportPreview,
+  CasePatchDetail,
+  CasePatchItem,
+  CaseQualityIssue,
+  CaseQualityResult,
   CaseStep,
   CaseTreeNode,
   ModuleCoverage,
@@ -372,6 +682,8 @@ import type {
   ModuleNode,
   ModuleOption,
   Requirement,
+  RiskSelectionItem,
+  RiskSelectionResult,
   RoundMeta,
   TestCase,
   TestDataPreview,
@@ -671,6 +983,11 @@ async function loadModuleNav(): Promise<void> {
 watch(
   () => route.query.versionId,
   () => {
+    // 版本切换后旧的智能选测结果已不属于当前范围，先退出本地筛选
+    if (riskFilterIds.value.length) {
+      riskFilterIds.value = []
+      tableRef.value?.reload()
+    }
     void loadModuleNav()
     if (viewMode.value === 'mindmap') {
       void loadMindmapCases()
@@ -722,7 +1039,18 @@ const searchFields = computed<SearchField[]>(() => [
   { prop: 'moduleId', label: '功能点', hidden: true },
 ])
 
-function fetcher(query: Record<string, unknown>) {
+/** 智能选测结果作为本地展示筛选：有值时不再走服务端分页，只展示选中的用例。 */
+const riskFilterIds = ref<number[]>([])
+
+async function fetcher(query: Record<string, unknown>) {
+  if (riskFilterIds.value.length) {
+    // 选测结果来自本地筛选，单条用例被删掉时不影响其余行展示
+    const results = await Promise.all(
+      riskFilterIds.value.map((id) => caseApi.get(id).catch(() => null)),
+    )
+    const list = results.filter((item): item is TestCase => item !== null)
+    return { list, pageNum: 1, pageSize: list.length || 1, total: list.length, pages: 1 }
+  }
   return caseApi.list(query)
 }
 
@@ -1198,35 +1526,107 @@ async function batchRemove(rows: Record<string, any>[]): Promise<void> {
 
 const importVisible = ref(false)
 const importing = ref(false)
+const importPreviewing = ref(false)
+const importPreview = ref<CaseImportPreview | null>(null)
 const fileList = ref<UploadFiles>([])
 let pickedFile: UploadFile | null = null
+
+/** 每次打开都从干净状态开始，避免上一份文件的预览混进来。 */
+function openImport(): void {
+  fileList.value = []
+  pickedFile = null
+  importPreview.value = null
+  importVisible.value = true
+}
+
+/** 统一拼装导入表单：dryRun=true 只预览，false 才真正落库。 */
+function buildImportForm(dryRun: boolean): FormData | null {
+  if (!pickedFile?.raw) {
+    ElMessage.warning('请先选择用例文件')
+    return null
+  }
+  if (!appStore.currentProjectId) {
+    ElMessage.warning('请先在本页「项目」下拉选择项目')
+    return null
+  }
+  const data = new FormData()
+  data.append('file', pickedFile.raw)
+  data.append('projectId', String(appStore.currentProjectId))
+  data.append('dryRun', dryRun ? 'true' : 'false')
+  return data
+}
+
+async function previewImport(): Promise<void> {
+  importPreview.value = null
+  const data = buildImportForm(true)
+  if (!data) return
+  importPreviewing.value = true
+  try {
+    const result = await caseApi.importExcel(data)
+    if ('dryRun' in result && result.dryRun) {
+      importPreview.value = result
+    } else {
+      ElMessage.warning('预览返回格式异常，请重试')
+    }
+  } catch (err) {
+    importPreview.value = null
+    ElMessage.error(err instanceof Error ? err.message : '解析文件失败')
+  } finally {
+    importPreviewing.value = false
+  }
+}
 
 function onFileChange(file: UploadFile, files: UploadFiles): void {
   pickedFile = file
   fileList.value = files.slice(-1)
+  void previewImport()
+}
+
+function onFileRemove(): void {
+  pickedFile = null
+  fileList.value = []
+  importPreview.value = null
+}
+
+function closeImport(): void {
+  importVisible.value = false
+  fileList.value = []
+  pickedFile = null
+  importPreview.value = null
+}
+
+function importActionLabel(action: string): string {
+  return { create: '新增', skip: '跳过', failed: '失败' }[action] ?? action
+}
+
+function importActionTag(action: string): 'success' | 'warning' | 'danger' | 'info' {
+  if (action === 'create') return 'success'
+  if (action === 'skip') return 'warning'
+  if (action === 'failed') return 'danger'
+  return 'info'
 }
 
 async function doImport(): Promise<void> {
-  if (!pickedFile?.raw) {
-    ElMessage.warning('请先选择 xlsx 文件')
+  if (!importPreview.value) {
+    ElMessage.warning('请先选择文件完成预览')
     return
   }
-  if (!appStore.currentProjectId) {
-    ElMessage.warning('请先在本页「项目」下拉选择项目')
-    return
-  }
+  const data = buildImportForm(false)
+  if (!data) return
   importing.value = true
   try {
-    const data = new FormData()
-    data.append('file', pickedFile.raw)
-    data.append('projectId', String(appStore.currentProjectId))
     const result = await caseApi.importExcel(data)
+    if ('dryRun' in result) {
+      ElMessage.warning('服务端仍返回预览结果，未写入用例，请重试')
+      return
+    }
     const renumbered = result.renumbered ?? 0
     ElMessage.success(
       `导入完成：新增 ${result.created ?? 0} 条，跳过 ${result.skipped ?? 0} 条` +
+        (result.failed ? `，失败 ${result.failed} 条` : '') +
         (renumbered ? `，${renumbered} 条编号冲突已自动重排` : ''),
     )
-    importVisible.value = false
+    closeImport()
     tableRef.value?.reload()
     void loadModuleNav()
   } catch (err) {
@@ -1319,6 +1719,278 @@ function openCoverage(): void {
   void loadCoverage()
 }
 
+// ---- V2.6.0：用例质量体检 ----
+const qualityVisible = ref(false)
+const qualityLoading = ref(false)
+const quality = ref<CaseQualityResult | null>(null)
+const qualitySeverity = ref<'' | 'high' | 'medium' | 'low'>('')
+
+const filteredQualityIssues = computed<CaseQualityIssue[]>(() => {
+  const issues = quality.value?.issues ?? []
+  if (!qualitySeverity.value) return issues
+  return issues.filter((item) => item.severity === qualitySeverity.value)
+})
+
+function qualityGradeTag(grade: string): 'success' | 'primary' | 'warning' | 'danger' {
+  if (grade === 'A') return 'success'
+  if (grade === 'B') return 'primary'
+  if (grade === 'C') return 'warning'
+  return 'danger'
+}
+
+function severityTag(severity: string): 'danger' | 'warning' | 'info' {
+  if (severity === 'high') return 'danger'
+  if (severity === 'medium') return 'warning'
+  return 'info'
+}
+
+function openQualityIssue(row: CaseQualityIssue): void {
+  openCaseDetailById(row.caseId)
+}
+
+async function loadQuality(): Promise<void> {
+  const projectId = appStore.currentProjectId
+  if (!projectId) {
+    ElMessage.warning('请先在本页「项目」下拉选择项目')
+    return
+  }
+  const filter = tableRef.value?.filterQuery() ?? {}
+  const moduleText = String(filter.moduleId ?? '')
+  qualityLoading.value = true
+  try {
+    quality.value = await caseApi.quality({
+      projectId,
+      // 左侧面板的 moduleId 可能是子树 id 串，只有单个数字才符合接口参数
+      moduleId: /^\d+$/.test(moduleText) ? Number(moduleText) : undefined,
+      versionId: Number(filter.versionId) || undefined,
+    })
+  } catch (err) {
+    quality.value = null
+    ElMessage.error(err instanceof Error ? err.message : '质量体检失败')
+  } finally {
+    qualityLoading.value = false
+  }
+}
+
+function openQuality(): void {
+  if (!appStore.currentProjectId) {
+    ElMessage.warning('请先在本页「项目」下拉选择项目')
+    return
+  }
+  qualityVisible.value = true
+  qualitySeverity.value = ''
+  void loadQuality()
+}
+
+// ---- V2.6.0：AI 局部修订 ----
+const patchDialogVisible = ref(false)
+const patchCaseIds = ref<number[]>([])
+const patchInstruction = ref('')
+const patchAttachmentIds = ref<string[]>([])
+const patchAttachmentRef = ref<InstanceType<typeof AiAttachmentInput> | null>(null)
+const patchGenerating = ref(false)
+const patchDetailVisible = ref(false)
+const patchLoading = ref(false)
+const patchActing = ref<number | null>(null)
+const patchDetail = ref<CasePatchDetail | null>(null)
+
+function patchStatusTag(status: string): 'success' | 'warning' | 'danger' | 'info' | 'primary' {
+  if (status === 'applied') return 'success'
+  if (status === 'dismissed') return 'info'
+  if (status === 'partial') return 'warning'
+  if (status === 'pending') return 'primary'
+  return 'info'
+}
+
+function openPatch(): void {
+  const rows = tableRef.value?.selectedRows() ?? []
+  const ids = rows
+    .map((row) => Number(row.id))
+    .filter((id) => Number.isInteger(id) && id > 0)
+  if (!ids.length) {
+    ElMessage.warning('请先勾选要修订的用例')
+    return
+  }
+  patchCaseIds.value = ids
+  patchInstruction.value = ''
+  patchAttachmentIds.value = []
+  patchAttachmentRef.value?.reset()
+  patchDialogVisible.value = true
+}
+
+/** 关闭修订弹窗后删除参考附件，避免残留文件。 */
+function onPatchClosed(): void {
+  if (patchGenerating.value) return
+  void patchAttachmentRef.value?.dispose()
+}
+
+async function submitPatch(): Promise<void> {
+  const projectId = appStore.currentProjectId
+  if (!projectId) {
+    ElMessage.warning('请先在本页「项目」下拉选择项目')
+    return
+  }
+  if (!patchInstruction.value.trim() && !patchAttachmentIds.value.length) {
+    ElMessage.warning('请填写修订指令或上传参考附件')
+    return
+  }
+  patchGenerating.value = true
+  try {
+    const result = await caseApi.generatePatch({
+      projectId,
+      caseIds: patchCaseIds.value,
+      instruction: patchInstruction.value.trim() || '请根据所附附件修改这批用例',
+      attachmentIds: patchAttachmentIds.value,
+    })
+    if ('generated' in result && result.generated === false) {
+      ElMessage.warning(result.message || '暂无可用 AI 模型，未生成修订')
+      patchDialogVisible.value = false
+      return
+    }
+    patchDialogVisible.value = false
+    patchDetail.value = result as CasePatchDetail
+    patchDetailVisible.value = true
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '生成修订失败')
+  } finally {
+    patchGenerating.value = false
+  }
+}
+
+function replacePatchItem(updated: CasePatchItem): void {
+  const detail = patchDetail.value
+  if (!detail) return
+  const index = detail.items.findIndex((item) => item.id === updated.id)
+  if (index >= 0) {
+    detail.items.splice(index, 1, updated)
+  }
+  detail.counts = detail.items.reduce<Record<string, number>>((counts, item) => {
+    counts[item.status] = (counts[item.status] ?? 0) + 1
+    return counts
+  }, { pending: 0, applied: 0, dismissed: 0 })
+  detail.status = detail.counts.pending ? 'pending'
+    : detail.counts.applied && detail.counts.dismissed ? 'partial'
+      : detail.counts.applied ? 'applied' : 'dismissed'
+  detail.statusLabel = patchStatusTagText(detail.status)
+}
+
+function patchStatusTagText(status: string): string {
+  return { pending: '待审', applied: '已采纳', dismissed: '已忽略', partial: '部分处理' }[status] ?? status
+}
+
+async function adoptPatch(item: CasePatchItem): Promise<void> {
+  const projectId = appStore.currentProjectId
+  if (!projectId) return
+  try {
+    await ElMessageBox.confirm(
+      `确认采纳「${item.caseNo} ${item.caseTitle}」的修订？将直接写回用例${item.targetLabel}。`,
+      '采纳确认',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  patchActing.value = item.id
+  try {
+    const result = await caseApi.adoptPatchItem(item.id, projectId)
+    replacePatchItem(result.item)
+    ElMessage.success('已采纳并写回用例')
+    tableRef.value?.reload()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '采纳失败')
+  } finally {
+    patchActing.value = null
+  }
+}
+
+async function dismissPatch(item: CasePatchItem): Promise<void> {
+  const projectId = appStore.currentProjectId
+  if (!projectId) return
+  patchActing.value = item.id
+  try {
+    const result = await caseApi.dismissPatchItem(item.id, projectId)
+    replacePatchItem(result.item)
+    ElMessage.success('已忽略该条修订')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '忽略失败')
+  } finally {
+    patchActing.value = null
+  }
+}
+
+// ---- V2.6.0：风险驱动选测 ----
+const riskDialogVisible = ref(false)
+const riskScope = ref('')
+const riskVersionId = ref<number | null>(null)
+const riskResult = ref<RiskSelectionResult | null>(null)
+const riskLoading = ref(false)
+const riskSelectedIds = ref<number[]>([])
+const riskTableRef = ref<TableInstance>()
+
+function openRiskSelection(): void {
+  riskDialogVisible.value = true
+  riskScope.value = ''
+  riskVersionId.value = Number(tableRef.value?.filterQuery().versionId) || null
+  riskResult.value = null
+  riskSelectedIds.value = []
+}
+
+async function loadRiskSelection(): Promise<void> {
+  const projectId = appStore.currentProjectId
+  if (!projectId) {
+    ElMessage.warning('请先在本页「项目」下拉选择项目')
+    return
+  }
+  if (!riskScope.value.trim()) {
+    ElMessage.warning('请填写变更范围描述')
+    return
+  }
+  riskLoading.value = true
+  try {
+    const result = await caseApi.riskSelection({
+      projectId,
+      versionId: riskVersionId.value ?? undefined,
+      changeScope: riskScope.value.trim(),
+      limit: 50,
+    })
+    riskResult.value = result
+    riskSelectedIds.value = result.items.map((item) => item.caseId)
+    await nextTick()
+    riskTableRef.value?.clearSelection()
+    riskTableRef.value?.toggleAllSelection()
+  } catch (err) {
+    riskResult.value = null
+    riskSelectedIds.value = []
+    ElMessage.error(err instanceof Error ? err.message : '智能选测失败')
+  } finally {
+    riskLoading.value = false
+  }
+}
+
+function onRiskSelectionChange(rows: RiskSelectionItem[]): void {
+  riskSelectedIds.value = rows.map((row) => row.caseId)
+}
+
+function applyRiskFilter(): void {
+  const ids = riskSelectedIds.value.length
+    ? [...riskSelectedIds.value]
+    : (riskResult.value?.items ?? []).map((item) => item.caseId)
+  if (!ids.length) {
+    ElMessage.warning('请先勾选要展示的用例')
+    return
+  }
+  riskFilterIds.value = ids
+  riskDialogVisible.value = false
+  tableRef.value?.clearSelection()
+  tableRef.value?.reload()
+  ElMessage.success(`已按智能选测结果筛选 ${ids.length} 条`)
+}
+
+function clearRiskFilter(): void {
+  riskFilterIds.value = []
+  tableRef.value?.reload()
+}
+
 useProjectScope({
   load: () => {
     void loadModuleOptions()
@@ -1333,6 +2005,9 @@ useProjectScope({
     // 旧项目的版本、功能点筛选在新项目里不存在，留着会把列表筛成空。
     tableRef.value?.clearFilter(['versionId', 'moduleId'])
     mindmapCases.value = []
+    riskFilterIds.value = []
+    riskResult.value = null
+    quality.value = null
   },
 })
 
@@ -1351,6 +2026,35 @@ watch(
 </script>
 
 <style scoped>
+.case-page-header {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.case-page-header__main {
+  justify-content: flex-end;
+}
+
+/* 操作栏：次要操作连续排列，主操作固定靠右，避免中间出现大段空白或换行错位 */
+.case-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.case-actions__group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.case-actions__primary {
+  margin-left: auto;
+}
+
 .case-layout {
   display: grid;
   grid-template-columns: minmax(200px, 236px) minmax(0, 1fr);
@@ -1472,6 +2176,167 @@ watch(
 .coverage-table :deep(.coverage-table__row--unassigned) {
   color: var(--el-text-color-secondary);
   font-style: italic;
+}
+
+.risk-filter-hint {
+  margin-bottom: 12px;
+}
+
+.quality-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.quality-score,
+.quality-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--el-fill-color-lighter);
+  min-width: 74px;
+}
+
+.quality-score strong {
+  font-size: 24px;
+}
+
+.quality-metric strong {
+  font-size: 18px;
+}
+
+.quality-score span,
+.quality-metric span {
+  font-size: 12px;
+  color: var(--aitp-text-weak);
+}
+
+.quality-metric.bad strong {
+  color: var(--el-color-danger);
+}
+
+.quality-metric.warn strong {
+  color: var(--el-color-warning);
+}
+
+.quality-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.quality-recommend {
+  margin-top: 12px;
+}
+
+.patch-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.patch-instruction {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+}
+
+.patch-item {
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+}
+
+.patch-item__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.patch-item__title {
+  font-weight: 600;
+}
+
+.patch-item__reason {
+  margin: 8px 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.patch-diff {
+  max-height: 220px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--el-fill-color-light);
+  font-family: var(--aitp-font-mono, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.patch-item__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.risk-result {
+  margin-top: 4px;
+}
+
+.risk-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.risk-case-title {
+  margin-left: 8px;
+}
+
+.risk-reason {
+  margin: 0 6px 4px 0;
+}
+
+.risk-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+.import-preview {
+  margin-top: 12px;
+}
+
+.import-preview__summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.import-preview__ok {
+  color: var(--el-color-success);
+}
+
+.import-preview__bad {
+  color: var(--el-color-danger);
 }
 </style>
 

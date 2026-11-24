@@ -127,6 +127,14 @@ SAMPLES: dict[str, dict[str, Any]] = {
         "projectName": "示例电商", "maxItems": "10",
         **_ctx("modules"),
     },
+    "case-patch": {
+        "projectName": "示例电商",
+        "instruction": "补全登录验证码异常场景，并修正标题",
+        "casesJson": "[{\"caseId\": 1, \"caseNo\": \"IT-001\", \"title\": \"登录成功\","
+                     " \"priority\": \"P1\", \"steps\": [\"提交正确验证码\"],"
+                     " \"expectedResult\": \"登录成功\"}]",
+        "caseCount": "1",
+    },
 }
 
 

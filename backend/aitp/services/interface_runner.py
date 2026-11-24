@@ -20,9 +20,12 @@ import re
 import socket
 import sqlite3
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Any, Callable
 
 from ..common.time_utils import utcnow_iso
+from ..db.connection import get_standalone_conn
 from ..errors import AppError, ErrorCode
 from ..repositories.base import dumps, loads
 from ..repositories.case_execution_repo import CaseExecutionRepository
@@ -1060,6 +1063,8 @@ def record_detail(
     env_id: int | None,
     detail: Detail,
     executed_by: str = "",
+    retry_count: int = 0,
+    flaky: bool = False,
 ) -> int:
     request = detail.get("request") or {}
     response = detail.get("response") or {}
@@ -1090,6 +1095,14 @@ def record_detail(
         ),
     )
     execution_id = int(cursor.lastrowid or 0)
+    # V2.6.0：失败归因与 flaky 标记随执行落库，报告/修复建议共用同一份结论
+    from . import failure_attribution_service
+
+    detail["attribution"] = failure_attribution_service.attribute_detail(
+        conn, execution_id, detail, retry_count=retry_count, flaky=flaky,
+    )
+    detail["retryCount"] = int(retry_count)
+    detail["flaky"] = bool(flaky)
     # GAP-32：在同一条收口链路上补一份统一证据快照（同一次执行 = 同一份证据 id）
     detail["executionId"] = execution_id
     detail["evidenceId"] = execution_protocol.capture_interface_execution(
@@ -1179,6 +1192,17 @@ def run_case(
     return detail
 
 
+def _case_extra(conn: sqlite3.Connection, case_id: int) -> dict[str, Any]:
+    """轮次快照不存扩展字段，执行时回查用例当前定义（URL/请求方式/断言）。"""
+    row = conn.execute(
+        "SELECT extra_json FROM biz_test_case WHERE id = ?", (int(case_id),),
+    ).fetchone()
+    if row is None:
+        return {}
+    data = loads(row["extra_json"], {}) or {}
+    return data if isinstance(data, dict) else {}
+
+
 def _run_run_case(
     conn: sqlite3.Connection,
     run: dict[str, Any],
@@ -1188,32 +1212,69 @@ def _run_run_case(
     executed_by: str,
     *,
     writeback: bool = True,
+    retry: int = 0,
 ) -> Detail:
     extra = row.get("extra")
     if not isinstance(extra, dict):
         extra = loads(row.get("extra_json"), {}) or {}
-    detail = execute(
-        extra, env, timeout=timeout,
-        conn=conn, project_id=run.get("project_id"), module_id=row.get("module_id"),
-        test_data=case_test_data.for_case(conn, int(row["case_id"])),
-    )
-    record_detail(
-        conn,
-        case_id=int(row["case_id"]),
-        run_id=int(run["id"]),
-        run_case_id=int(row["id"]),
-        env_id=int(env["id"]),
-        detail=detail,
-        executed_by=executed_by,
-    )
+    if not extra:
+        extra = _case_extra(conn, int(row["case_id"]))
+    test_data = case_test_data.for_case(conn, int(row["case_id"]))
+    attempts = max(0, int(retry)) + 1
+    detail: Detail = {}
+    retried = 0
+    flaky = False
+    for attempt in range(attempts):
+        detail = execute(
+            extra, env, timeout=timeout,
+            conn=conn, project_id=run.get("project_id"), module_id=row.get("module_id"),
+            test_data=test_data,
+        )
+        passed = detail["result"] == RUN_PASSED
+        if passed and attempt > 0:
+            flaky = True
+        record_detail(
+            conn,
+            case_id=int(row["case_id"]),
+            run_id=int(run["id"]),
+            run_case_id=int(row["id"]),
+            env_id=int(env["id"]),
+            detail=detail,
+            executed_by=executed_by,
+            retry_count=attempt,
+            flaky=flaky and passed,
+        )
+        retried = attempt
+        if passed:
+            break
+    # 历史结果翻转也算 flaky：本轮首次通过但近期不稳定，同样标出来供人判断
+    from . import case_stability_service
+
+    observed = case_stability_service.observe(conn, int(row["case_id"]), str(detail.get("result") or ""))
+    if observed.get("flaky"):
+        flaky = True
+    if flaky:
+        detail["flaky"] = True
+        detail["retryCount"] = retried
+        execution_id = int(detail.get("executionId") or 0)
+        if execution_id:
+            conn.execute(
+                "UPDATE biz_interface_execution SET flaky = 1 WHERE id = ?", (execution_id,),
+            )
     if writeback:
+        remark = f"重试 {retried} 次后通过（flaky）" if flaky and retried else ""
         result = test_run_service.record_result(
             conn,
             int(run["id"]),
             int(row["id"]),
             result=RUN_PASSED if detail["result"] == RUN_PASSED else RUN_FAILED,
             actual_result=_actual_text(detail),
+            remark=remark,
             executed_by=executed_by,
+        )
+        conn.execute(
+            "UPDATE biz_test_run_case SET retry_count = ?, flaky = ? WHERE id = ?",
+            (retried, int(flaky), int(row["id"])),
         )
         detail["runCase"] = result["runCase"]
         detail["run"] = result["run"]
@@ -1244,6 +1305,45 @@ def run_run_case(
     return _run_run_case(conn, run, row, env, timeout, executed_by)
 
 
+def _parallel_execute_one(
+    row: dict[str, Any],
+    run: dict[str, Any],
+    env: dict[str, Any],
+    timeout: int,
+    retry: int,
+    db_path: str,
+) -> tuple[Detail, int]:
+    """并发分支：只发请求与算断言，不写库，返回明细与重试次数。"""
+    extra = loads(row.get("extra_json"), {}) or {}
+    if not isinstance(extra, dict):
+        extra = {}
+    thread_conn = get_standalone_conn(Path(db_path))
+    if not extra:
+        extra = _case_extra(thread_conn, int(row["case_id"]))
+    detail: Detail = {}
+    retried = 0
+    try:
+        test_data = case_test_data.for_case(thread_conn, int(row["case_id"]))
+        for attempt in range(max(0, int(retry)) + 1):
+            retried = attempt
+            try:
+                detail = execute(
+                    extra, env, timeout=timeout,
+                    conn=thread_conn, project_id=run.get("project_id"),
+                    module_id=row.get("module_id"), test_data=test_data,
+                )
+            except AppError as exc:
+                detail = {
+                    "result": RUN_FAILED, "statusCode": None, "durationMs": 0,
+                    "message": str(exc), "assertions": [],
+                }
+            if str(detail.get("result") or "") == RUN_PASSED:
+                break
+    finally:
+        thread_conn.close()
+    return detail, retried
+
+
 def run_batch(
     conn: sqlite3.Connection,
     run_id: int,
@@ -1254,13 +1354,17 @@ def run_batch(
     on_progress: Callable[[int, int], None] | None = None,
     base_url: str | None = None,
     writeback: bool = True,
+    retry: int = 0,
+    workers: int = 1,
 ) -> dict[str, Any]:
-    """顺序执行轮次内全部接口用例；单条配置错误只失败该条，不中断整批。
+    """执行轮次内全部接口用例；单条配置错误只失败该条，不中断整批。
 
     ``base_url`` 只给执行矩阵用：同一环境下按不同应用服务器（端）逐个跑，
     环境档案本身不改，回写仍记真实 env_id。
     ``writeback=False`` 同样只给执行矩阵用：旁路执行不回写轮次结论，
     否则第一格跑完整轮就被判完成，其余格子全被冻结拒绝；执行流水与证据照留。
+    ``retry``：失败后最多重试几次，重试后通过标记 flaky。
+    ``workers``：并发请求数；写回仍在主线程串行，避免 SQLite 写竞争。
     """
     run = TestRunRepository(conn).get(run_id)
     if run is None:
@@ -1275,15 +1379,110 @@ def run_batch(
     if not rows:
         raise AppError(ErrorCode.ILLEGAL_OPERATION, "轮次里没有「接口测试」类型的用例")
 
+    workers = max(1, min(8, int(workers or 1)))
+    if workers > 1 and len(rows) > 1:
+        db_row = conn.execute("PRAGMA database_list").fetchone()
+        db_path = str(db_row[2] or "") if db_row is not None else ""
+        if db_path:
+            from . import case_stability_service
+
+            total = len(rows)
+            passed = 0
+            failed = 0
+            parallel_details: list[dict[str, Any]] = []
+            with ThreadPoolExecutor(max_workers=min(workers, len(rows))) as pool:
+                futures = {
+                    pool.submit(
+                        _parallel_execute_one, row, run, env, timeout, retry, db_path,
+                    ): row
+                    for row in rows
+                }
+                for done, future in enumerate(as_completed(futures), start=1):
+                    row = futures[future]
+                    try:
+                        detail, retried = future.result()
+                    except Exception as exc:  # noqa: BLE001 - 单条异常不能中断整批
+                        detail = {
+                            "result": RUN_FAILED, "statusCode": None, "durationMs": 0,
+                            "message": str(exc), "assertions": [],
+                        }
+                        retried = 0
+                    result = str(detail.get("result") or RUN_FAILED)
+                    history = case_stability_service.evaluate(
+                        case_stability_service.recent_results(conn, int(row["case_id"]))
+                    )
+                    flaky = result == RUN_PASSED and (
+                        retried > 0 or bool(history.get("flaky"))
+                    )
+                    record_detail(
+                        conn,
+                        case_id=int(row["case_id"]),
+                        run_id=int(run["id"]),
+                        run_case_id=int(row["id"]),
+                        env_id=int(env["id"]),
+                        detail=detail,
+                        executed_by=executed_by,
+                        retry_count=retried,
+                        flaky=flaky,
+                    )
+                    if writeback:
+                        result_payload = test_run_service.record_result(
+                            conn, run_id, int(row["id"]),
+                            result=RUN_PASSED if result == RUN_PASSED else RUN_FAILED,
+                            actual_result=_actual_text(detail),
+                            remark=f"重试 {retried} 次后通过（flaky）" if flaky and retried else "",
+                            executed_by=executed_by,
+                        )
+                        conn.execute(
+                            "UPDATE biz_test_run_case SET retry_count = ?, flaky = ? WHERE id = ?",
+                            (retried, int(flaky), int(row["id"])),
+                        )
+                        detail["runCase"] = result_payload["runCase"]
+                    if result == RUN_PASSED:
+                        passed += 1
+                    else:
+                        failed += 1
+                    parallel_details.append({
+                        "runCaseId": int(row["id"]),
+                        "caseId": int(row["case_id"]),
+                        "caseNo": row.get("case_no"),
+                        "title": row.get("title"),
+                        "result": result,
+                        "statusCode": detail.get("statusCode"),
+                        "durationMs": detail.get("durationMs"),
+                        "message": str(detail.get("message") or ""),
+                        "assertions": detail.get("assertions") or [],
+                        "flaky": flaky,
+                        "retryCount": retried,
+                        "attribution": detail.get("attribution") or {},
+                    })
+                    if on_progress is not None:
+                        on_progress(done, total)
+                    conn.commit()
+            parallel_details.sort(key=lambda item: item["runCaseId"])
+            return {
+                "runId": run_id,
+                "envId": int(env["id"]),
+                "envName": str(env.get("name") or ""),
+                "total": total,
+                "passed": passed,
+                "failed": failed,
+                "workers": workers,
+                "details": parallel_details,
+            }
+
     total = len(rows)
     passed = 0
     failed = 0
     details: list[dict[str, Any]] = []
     for index, row in enumerate(rows, start=1):
         duration_ms: int | None = None
-        detail: Detail = {}
+        detail = {}
         try:
-            detail = _run_run_case(conn, run, row, env, timeout, executed_by, writeback=writeback)
+            detail = _run_run_case(
+                conn, run, row, env, timeout, executed_by,
+                writeback=writeback, retry=retry,
+            )
             result = str(detail.get("result") or RUN_FAILED)
             status_code = detail.get("statusCode")
             duration_ms = detail.get("durationMs")
@@ -1315,6 +1514,9 @@ def run_batch(
             "durationMs": duration_ms,
             "message": message,
             "assertions": detail.get("assertions") or [],
+            "flaky": bool(detail.get("flaky")),
+            "retryCount": int(detail.get("retryCount") or 0),
+            "attribution": detail.get("attribution") or {},
         })
         if on_progress is not None:
             on_progress(index, total)
@@ -1328,6 +1530,12 @@ def run_batch(
         "failed": failed,
         "details": details,
     }
+
+
+def failure_attribution_summary(row: dict[str, Any]) -> dict[str, Any]:
+    from . import failure_attribution_service
+
+    return failure_attribution_service.attribution_of(row)
 
 
 def execution_summary(row: dict[str, Any]) -> dict[str, Any]:
@@ -1348,6 +1556,9 @@ def execution_summary(row: dict[str, Any]) -> dict[str, Any]:
         "message": row.get("error_message") or "",
         "executedBy": row.get("executed_by"),
         "createdAt": row.get("created_at"),
+        "flaky": bool(row.get("flaky")),
+        "retryCount": int(row.get("retry_count") or 0),
+        "attribution": failure_attribution_summary(row),
     }
 
 

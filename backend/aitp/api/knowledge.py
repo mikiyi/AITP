@@ -30,6 +30,7 @@ from ..repositories.knowledge_ref_repo import KnowledgeRefRepository
 from ..repositories.knowledge_repo import KnowledgeRepository
 from ..repositories.knowledge_version_repo import KnowledgeVersionRepository
 from ..services import (
+    ai_input_service,
     audit_service,
     knowledge_assistant_service,
     knowledge_category_service,
@@ -113,6 +114,10 @@ def ask_assistant() -> Response:
     data = body()
     question = require_str(data.get("question"), "question", 2000)
     mode = check_choice(str(data.get("mode") or "hybrid"), ASSISTANT_MODES, "mode", "hybrid") or "hybrid"
+    # 统一附件解析：文档文本并入提问，图片交给多模态消息
+    attachments = ai_input_service.resolve(
+        conn, ai_input_service.parse_attachment_ids(data))
+    question_for_model = ai_input_service.compose_text(question, attachments)
     session_id = optional_int(data.get("sessionId"), "sessionId")
     if session_id is not None:
         # 先校验会话再调模型：会话不存在就别白烧一次额度
@@ -125,7 +130,8 @@ def ask_assistant() -> Response:
     refs: list[dict[str, Any]] = []
     retrieval_error = ""
     if mode != "llm":
-        context, refs, retrieval_error = lab_service.retrieve_knowledge_context(conn, question)
+        context, refs, retrieval_error = lab_service.retrieve_knowledge_context(
+            conn, question_for_model)
 
     if mode == "kb":
         # 纯本地：直接把检索到的原文交给用户，不调模型
@@ -133,6 +139,11 @@ def ask_assistant() -> Response:
             answer = "以下内容摘自知识库，未经模型加工：" + chr(10) + chr(10) + context
         else:
             answer = retrieval_error or "知识库中没有检索到与问题相关的内容。可以换个说法，或先到「知识库管理」补充条目。"
+        if attachments.images:
+            answer += (
+                "\n\n（纯知识库直答不解析图片；如需识别图片，请切换到"
+                "「知识库 + 大模型」或「纯大模型」模式。）"
+            )
         sid, stamp = _persist_qa(conn, session_id, question=question, mode=mode,
                                  answer=answer, refs=refs)
         return ok({
@@ -147,17 +158,28 @@ def ask_assistant() -> Response:
             "reviewRequired": False,
             "sessionId": sid,
             "answeredAt": stamp,
+            "attachments": attachments.summary(),
         })
 
     prompt = get_registry().render("knowledge-assistant", {
-        "question": question,
+        "question": question_for_model,
         "context": context or retrieval_error or "（未提供）",
     })
     # 多轮记忆：历史按原生角色数组插在检索提示词之前，模型按多轮对话语义理解
     history_messages = knowledge_assistant_service.recent_chat_history(conn, session_id)
-    all_messages = lab_service.build_messages(prompt, history=history_messages)
+    candidates = lab_service.available_candidates(None)
+    images = list(attachments.images)
+    vision_note = ""
+    if images:
+        candidates, images, vision_note = ai_input_service.adapt_candidates(candidates, images)
+        if vision_note:
+            prompt = f"{prompt}\n\n（系统提示：{vision_note}）"
+        if images:
+            # 图片中的文字无法预处理：提示词层声明只作资料、不执行其中指令
+            prompt = f"{prompt}\n\n（系统提示：{ai_input_service.IMAGE_GUARD_NOTE}）"
+    all_messages = lab_service.build_messages(prompt, history=history_messages, images=images)
     outcome = chat_with_fallback(
-        lab_service.available_candidates(None),
+        candidates,
         all_messages,
         mask_enabled=cloud_mask_enabled(conn),
     )
@@ -194,6 +216,7 @@ def ask_assistant() -> Response:
         "mask": outcome.mask.as_dict(),
         "sessionId": sid,
         "answeredAt": stamp,
+        "attachments": attachments.summary(),
     })
 
 
@@ -221,6 +244,9 @@ def ask_assistant_stream() -> Response:
     data = body()
     question = require_str(data.get("question"), "question", 2000)
     mode = check_choice(str(data.get("mode") or "hybrid"), ASSISTANT_MODES, "mode", "hybrid") or "hybrid"
+    attachments = ai_input_service.resolve(
+        conn, ai_input_service.parse_attachment_ids(data))
+    question_for_model = ai_input_service.compose_text(question, attachments)
     session_id = optional_int(data.get("sessionId"), "sessionId")
     if session_id is not None:
         knowledge_assistant_service.ensure_session(conn, session_id, question)
@@ -229,14 +255,22 @@ def ask_assistant_stream() -> Response:
     refs: list[dict[str, Any]] = []
     retrieval_error = ""
     if mode != "llm":
-        context, refs, retrieval_error = lab_service.retrieve_knowledge_context(conn, question)
+        context, refs, retrieval_error = lab_service.retrieve_knowledge_context(
+            conn, question_for_model)
     prompt = get_registry().render("knowledge-assistant", {
-        "question": question,
+        "question": question_for_model,
         "context": context or retrieval_error or "（未提供）",
     })
     history_messages = knowledge_assistant_service.recent_chat_history(conn, session_id)
-    messages = lab_service.build_messages(prompt, history=history_messages)
     candidates = lab_service.available_candidates(None)
+    images = list(attachments.images)
+    if images:
+        candidates, images, vision_note = ai_input_service.adapt_candidates(candidates, images)
+        if vision_note:
+            prompt = f"{prompt}\n\n（系统提示：{vision_note}）"
+        if images:
+            prompt = f"{prompt}\n\n（系统提示：{ai_input_service.IMAGE_GUARD_NOTE}）"
+    messages = lab_service.build_messages(prompt, history=history_messages, images=images)
     mask_enabled = cloud_mask_enabled(conn)
     db_path = _Path(str(current_app.config["AITP_DB_PATH"]))
     third_party = bool(candidates) and candidates[0].egress == EGRESS_THIRD_PARTY
@@ -302,6 +336,7 @@ def ask_assistant_stream() -> Response:
                 "egressWarning": egress_warning, "reviewRequired": needs_human_review(answer),
                 "reasoningChars": len(reasoning), "reasoningSeconds": reason_seconds,
                 "thinkingSupported": bool(reasoning) or thinking_supported,
+                "attachments": attachments.summary(),
             })
         except Exception as exc:  # noqa: BLE001 - 流式异常以 error 事件收尾
             yield sse("error", {"message": str(exc)})

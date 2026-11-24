@@ -400,6 +400,16 @@
             <span v-else>保存时写入系统密钥库，数据库只留掩码、不回显明文。</span>
           </div>
         </el-form-item>
+        <el-form-item label="支持图片输入">
+          <el-switch v-model="form.supportsVision" />
+          <div class="field-hint">
+            <el-icon><InfoFilled /></el-icon>
+            <span>
+              开启后，需求导入、知识问答、AI 修订等入口上传的截图会作为图片一起发给模型；
+              纯文本模型请关闭，带图请求会自动跳过图片并给出说明，文本与文档照常执行，不阻塞主流程。
+            </span>
+          </div>
+        </el-form-item>
         <el-form-item>
           <el-button link type="primary" @click="showAdvanced = !showAdvanced">
             {{ showAdvanced ? '收起高级设置' : '展开高级设置（优先级 / 温度 / 超时 / 环境变量 Key / 套餐额度等）' }}
@@ -716,6 +726,7 @@ const form = reactive({
   maxTokens: 4096,
   timeout: 60,
   disableThinking: false,
+  supportsVision: true,
   isDefault: false,
   useEnvKey: false,
   envKeyName: '',
@@ -1096,6 +1107,7 @@ function openCreate(): void {
     maxTokens: 4096,
     timeout: 60,
     disableThinking: false,
+    supportsVision: true,
     isDefault: false,
     useEnvKey: false,
     envKeyName: '',
@@ -1122,6 +1134,7 @@ function openEdit(row: AiProfile): void {
     maxTokens: row.maxTokens,
     timeout: row.timeout,
     disableThinking: String(row.extra?.thinking ?? '') === 'off',
+    supportsVision: row.supportsVision !== false,
     isDefault: row.isDefault,
     useEnvKey: row.useEnvKey,
     envKeyName: row.envKeyName,
@@ -1174,6 +1187,7 @@ async function save(): Promise<void> {
     envKeyScope: form.envKeyScope,
     billingMode: form.billingMode,
     tokenQuota: Math.max(0, Math.round(Number(form.tokenQuota) || 0)),
+    supportsVision: form.supportsVision,
   }
   const pendingKey = !isLocalProvider.value && !form.useEnvKey ? newApiKey.value.trim() : ''
   saving.value = true

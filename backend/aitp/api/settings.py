@@ -307,6 +307,8 @@ def create_profile() -> Response:
         # Token Plan（迁移 060）：计费模式与套餐额度随档案创建
         "billing_mode": "api" if is_local else _billing_mode(data.get("billingMode")),
         "token_quota": 0 if is_local else _token_quota(data.get("tokenQuota")),
+        # 迁移 084：是否支持图片输入，默认开启；关闭后带图请求会跳过图片并提示
+        "supports_vision": 0 if data.get("supportsVision") in (False, 0, "0", "false", "False") else 1,
         "timeout": require_float(data.get("timeout"), "timeout", _default_timeout(conn)),
         "is_default": 1 if data.get("isDefault") else 0,
         "is_active": 1 if data.get("isActive", True) else 0,
@@ -366,6 +368,10 @@ def update_profile(pk: str) -> Response:
         payload["billing_mode"] = _billing_mode(data.get("billing_mode", data.get("billingMode")))
     if "token_quota" in data or "tokenQuota" in data:
         payload["token_quota"] = _token_quota(data.get("token_quota", data.get("tokenQuota")))
+    # 迁移 084：视觉能力开关，没传保持现值
+    if "supports_vision" in data or "supportsVision" in data:
+        value = data.get("supports_vision", data.get("supportsVision"))
+        payload["supports_vision"] = 0 if value in (False, 0, "0", "false", "False") else 1
     for key in ("sort_order", "priority"):
         if key in payload:
             payload[key] = require_int(payload[key], key)

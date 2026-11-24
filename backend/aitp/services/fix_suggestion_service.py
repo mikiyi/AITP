@@ -107,6 +107,32 @@ def _load_execution(conn: sqlite3.Connection, execution_id: int) -> dict[str, An
     return dict(row)
 
 
+def _evidence_images(conn: sqlite3.Connection, execution: dict[str, Any]) -> list[str]:
+    """取执行证据里的图片（截图/回放封面），随提示词一起送给多模态模型。"""
+    evidence_id = execution.get("evidence_id")
+    if not evidence_id:
+        return []
+    row = conn.execute(
+        "SELECT attachments_json FROM biz_execution_evidence WHERE id = ?",
+        (int(evidence_id),),
+    ).fetchone()
+    if row is None:
+        return []
+    items = loads(row["attachments_json"], []) or []
+    ids = [
+        str(item.get("attachmentId") or "")
+        for item in items
+        if isinstance(item, dict)
+        and str(item.get("kind") or "image") == "image"
+        and item.get("attachmentId")
+    ]
+    if not ids:
+        return []
+    from . import ai_input_service
+
+    return ai_input_service.resolve(conn, ids).images
+
+
 def _failed_assertions(execution: dict[str, Any]) -> list[dict[str, Any]]:
     items = loads(execution.get("assertions_json"), []) or []
     return [item for item in items if isinstance(item, dict) and not item.get("passed")]
@@ -168,7 +194,8 @@ def build_variables(
 
 
 def _default_generator(conn: sqlite3.Connection, project_id: int | None,
-                       profile_id: int | None) -> Generator:
+                       profile_id: int | None,
+                       images: list[str] | None = None) -> Generator:
     """生产链路：走 lab_service 能力执行（含 Schema 校验与降级）。"""
 
     def run(variables: dict[str, Any]) -> dict[str, Any]:
@@ -180,6 +207,7 @@ def _default_generator(conn: sqlite3.Connection, project_id: int | None,
             variables,
             project_id=project_id,
             profile_id=profile_id,
+            images=images or [],
         )
         return result.as_dict()
 
@@ -224,6 +252,24 @@ def generate(
     if str(execution.get("result") or "") == "passed":
         raise AppError(ErrorCode.ILLEGAL_OPERATION, "该次执行已通过，无需生成修复建议")
 
+    # V2.6.0：环境/数据类失败先修环境，不建议直接改资产
+    from . import failure_attribution_service
+
+    verdict = failure_attribution_service.classify(
+        status_code=execution.get("status_code"),
+        message=str(execution.get("error_message") or ""),
+        assertions=loads(execution.get("assertions_json"), []) or [],
+    )
+    if verdict["kind"] in (
+        failure_attribution_service.KIND_ENVIRONMENT,
+        failure_attribution_service.KIND_DATA,
+    ) and float(verdict["confidence"]) >= 0.7:
+        raise AppError(
+            ErrorCode.ILLEGAL_OPERATION,
+            f"本次失败归因为「{failure_attribution_service.KIND_LABELS[verdict['kind']]}」："
+            f"{verdict['reason']}。请先修复环境或数据后重跑，不建议直接修改用例",
+        )
+
     case_row = conn.execute(
         "SELECT project_id FROM biz_test_case WHERE id = ?", (int(execution["case_id"]),)
     ).fetchone()
@@ -234,7 +280,8 @@ def generate(
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "执行记录不属于该项目")
 
     variables = build_variables(conn, execution)
-    run = generator or _default_generator(conn, owner, profile_id)
+    run = generator or _default_generator(
+        conn, owner, profile_id, images=_evidence_images(conn, execution))
     try:
         outcome = run(variables)
     except AppError as exc:

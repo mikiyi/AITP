@@ -260,6 +260,36 @@
           "priority": "P1"
         }
       ]
+    },
+    {
+      "id": "case_patch_login_exception",
+      "capability": "case_patch",
+      "title": "用例局部修订 · 补登录异常",
+      "variables": {
+        "projectName": "示例电商项目",
+        "instruction": "把选中的登录用例补全验证码错误与锁定的异常场景，并修正标题",
+        "casesJson": "[{\"caseId\": 101, \"caseNo\": \"IT-001\", \"title\": \"登录成功\", \"priority\": \"P1\", \"preconditions\": \"已注册手机号\", \"steps\": [\"输入正确手机号与验证码｜登录成功\"], \"expectedResult\": \"登录成功\"}]",
+        "caseCount": "1"
+      },
+      "fixture": {
+        "summary": "补全验证码错误与锁定异常，并让标题更明确",
+        "patches": [
+          {
+            "caseId": "101",
+            "action": "update",
+            "target": "title",
+            "after": "登录-正确验证码登录成功",
+            "reason": "标题补充前置条件，便于检索"
+          },
+          {
+            "caseId": "101",
+            "action": "update",
+            "target": "steps",
+            "after": "输入正确手机号\n输入有效验证码\n点击登录\n校验跳转首页",
+            "reason": "步骤细化到可执行粒度"
+          }
+        ]
+      }
     }
   ]
 }

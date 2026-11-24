@@ -369,6 +369,8 @@ def _build_config(
         token_quota=int((profile or {}).get("token_quota") or 0),
         token_used=int((profile or {}).get("token_used") or 0),
         disable_thinking=disable_thinking,
+        # 视觉能力：默认支持（迁移 084；老库缺列按支持处理），档案可显式关闭
+        supports_vision=str((profile or {}).get("supports_vision", 1)) not in ("0", "False", "false"),
     )
     if require_key:
         ensure_credential(config)

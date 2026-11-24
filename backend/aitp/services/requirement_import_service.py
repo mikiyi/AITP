@@ -23,7 +23,7 @@ from ..errors import AppError, ErrorCode
 from ..repositories.module_repo import ModuleRepository
 from ..repositories.project_repo import ProjectRepository
 from ..repositories.requirement_repo import RequirementRepository
-from . import lab_service
+from . import ai_input_service, lab_service
 
 #: 外部键平台名：与外部导入共用同一套唯一索引口径
 IMPORT_PLATFORM = "ai-import"
@@ -113,9 +113,11 @@ def _touch_batch(
 def _default_runner(
     conn: sqlite3.Connection, project_id: int, document: str,
     profile_id: int | None, max_items: int,
+    attachment_ids: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """生产链路：走实验室同一套「渲染 → 调用 → schema 校验 → 修正重试」。"""
     project = ProjectRepository(conn).get(project_id) or {}
+    resolved = ai_input_service.resolve(conn, list(attachment_ids))
     variables = {
         "documentText": document[:MAX_DOC_CHARS],
         "projectName": str(project.get("name") or ""),
@@ -125,6 +127,7 @@ def _default_runner(
         plan = lab_service.prepare_run(
             conn, CAP_REQUIREMENT_IMPORT, variables,
             profile_id=profile_id, project_id=project_id,
+            images=resolved.images,
         )
         run = lab_service.execute_run(plan, conn=conn)
     except AppError as exc:
@@ -155,17 +158,32 @@ def split(
     profile_id: int | None = None,
     max_items: Any = DEFAULT_MAX_ITEMS,
     runner: Runner | None = None,
+    attachment_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    """拆分需求文档：返回勾选用的条目、批次与指纹，不落需求。"""
+    """拆分需求文档：返回勾选用的条目、批次与指纹，不落需求。
+
+    ``attachment_ids`` 支持图片附件：图片随多模态消息一起送给模型，
+    文档附件则由统一解析层拼进 ``documentText``。
+    """
     _require_project(conn, project_id)
-    document = (text or "").strip()
-    if not document:
+    resolved = ai_input_service.resolve(conn, attachment_ids)
+    document = ai_input_service.compose_text((text or "").strip(), resolved)
+    if not document and not resolved.images:
         raise AppError(ErrorCode.PARAM_ERROR, "请粘贴或导入需求文档内容")
+    if not document:
+        # 只有图片时也要给提示词一个可读的说明
+        document = "（需求内容见所附截图，请从图片中提取需求）"
     limit = _clamp_items(max_items)
-    fp = fingerprint(document)
+    # 指纹把附件内容一起算进去，同一份“图片需求”重复上传也能识别
+    fp = fingerprint(document + (resolved.digest if resolved.digest else ""))
     batch = _find_batch(conn, project_id, fp)
 
-    result = (runner or _default_runner)(conn, project_id, document, profile_id, limit)
+    if runner is None:
+        result = _default_runner(
+            conn, project_id, document, profile_id, limit, tuple(attachment_ids or ())
+        )
+    else:
+        result = runner(conn, project_id, document, profile_id, limit)
     items = [
         item for item in (result.get("items") or [])
         if isinstance(item, dict) and str(item.get("title") or "").strip()

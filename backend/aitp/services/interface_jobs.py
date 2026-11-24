@@ -25,6 +25,10 @@ def run_interface_batch(
     raw_timeout = payload.get("timeoutSeconds")
     env_id = int(raw_env_id) if raw_env_id not in (None, "") else None
     timeout = int(raw_timeout) if raw_timeout not in (None, "") else interface_runner.DEFAULT_TIMEOUT
+    raw_retry = payload.get("retry")
+    retry = int(raw_retry) if raw_retry not in (None, "") else 0
+    raw_workers = payload.get("workers")
+    workers = int(raw_workers) if raw_workers not in (None, "") else 1
     task_id = int(task["id"])
     key = f"task:{task_id}"
 
@@ -45,6 +49,8 @@ def run_interface_batch(
         timeout=timeout,
         executed_by="任务队列",
         on_progress=on_progress,
+        retry=retry,
+        workers=workers,
     )
     audit_service.record(
         conn,

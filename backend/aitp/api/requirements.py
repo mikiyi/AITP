@@ -13,7 +13,7 @@ from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.module_repo import ModuleRepository
 from ..repositories.requirement_repo import RequirementRepository
-from ..services import audit_service, requirement_import_service, tabular_export
+from ..services import ai_input_service, audit_service, requirement_import_service, tabular_export
 from .helpers import (
     attach_version_codes,
     audit,
@@ -142,7 +142,7 @@ def split_requirement_import() -> Response:
     data = body()
     project_id = require_int(data.get("projectId"), "projectId")
     require_project(conn, project_id)
-    text = require_str(data.get("text"), "text", requirement_import_service.MAX_DOC_CHARS)
+    text = optional_str(data.get("text"), "text", requirement_import_service.MAX_DOC_CHARS) or ""
     file_name = optional_str(data.get("fileName"), "fileName", 200)
     result = requirement_import_service.split(
         conn,
@@ -151,6 +151,7 @@ def split_requirement_import() -> Response:
         file_name=file_name,
         profile_id=optional_int(data.get("profileId"), "profileId"),
         max_items=data.get("maxItems"),
+        attachment_ids=ai_input_service.parse_attachment_ids(data),
     )
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_IMPORT, audit_service.RESOURCE_REQUIREMENT, None,

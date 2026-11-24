@@ -53,6 +53,7 @@ CASES: tuple[tuple[str, str], ...] = (
     ("prompt_optimize", "帮我对下来语句进行“从需求拆解测试点，输出 JSON 树用于渲染脑图”提示词优化"),
     ("fix_suggestion", "这次接口断言失败了，帮我生成一版修复建议"),
     ("requirement_import", "对这个需求文档做需求拆分和批量导入"),
+    ("case_patch", "用例局部修订：对已选中的用例补全登录异常场景，删掉重复用例，输出可采纳的 patch"),
 )
 
 
@@ -87,7 +88,7 @@ def _top(text: str) -> tuple[str, float]:
 def check_coverage(checker: Checker) -> None:
     cards = set(LAB_CAPABILITIES)
     covered = {code for code, _ in CASES}
-    checker.check("能力卡片数量", len(LAB_CAPABILITIES) == 22, f"实际 {len(LAB_CAPABILITIES)} 张")
+    checker.check("能力卡片数量", len(LAB_CAPABILITIES) == 23, f"实际 {len(LAB_CAPABILITIES)} 张")
     checker.check(
         "用例覆盖全部卡片",
         cards == covered,

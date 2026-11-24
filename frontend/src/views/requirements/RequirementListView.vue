@@ -88,7 +88,13 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="importVisible" title="文档批量拆分导入" width="880px" class="req-import-dialog">
+    <el-dialog
+      v-model="importVisible"
+      title="文档批量拆分导入"
+      width="880px"
+      class="req-import-dialog"
+      @closed="onImportClosed"
+    >
       <el-alert
         type="info"
         :closable="false"
@@ -105,13 +111,11 @@
             placeholder="粘贴需求文档正文，或先上传 Word / Excel / PDF / Markdown 自动抽取文本"
           />
           <div class="req-import-actions">
-            <el-upload
-              :show-file-list="false"
-              accept=".docx,.xlsx,.pdf,.md,.txt,.html,.json"
-              :http-request="uploadImportDoc"
-            >
-              <el-button :loading="importUploading">上传文档</el-button>
-            </el-upload>
+            <AiAttachmentInput
+              ref="importAttachmentRef"
+              v-model:attachment-ids="importAttachmentIds"
+              @document="onImportDocument"
+            />
             <span v-if="importForm.fileName" class="req-import-file">已载入：{{ importForm.fileName }}</span>
           </div>
         </el-form-item>
@@ -169,15 +173,16 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox, type UploadRequestOptions } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Upload } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
+import AiAttachmentInput from '@/components/AiAttachmentInput.vue'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
-import { labApi, projectVersionApi, requirementApi } from '@/api'
+import { projectVersionApi, requirementApi } from '@/api'
 import { CASE_PRIORITY_OPTIONS } from '@/constants/enums'
-import type { Requirement, RequirementImportItem, RequirementImportSplit } from '@/api/types'
+import type { DocumentAttachment, Requirement, RequirementImportItem, RequirementImportSplit } from '@/api/types'
 import { useProjectScope } from '@/composables/useProjectScope'
 import { useProjectExtraQuery, useProjectVersionOptions } from '@/composables/useProjectOptions'
 import { useAppStore } from '@/stores/app'
@@ -419,7 +424,6 @@ async function batchRemove(rows: Record<string, any>[]): Promise<void> {
 // ---------------- 四期专项 D：文档批量拆分导入 ----------------
 
 const importVisible = ref(false)
-const importUploading = ref(false)
 const importSplitting = ref(false)
 const importAdopting = ref(false)
 const importRows = ref<RequirementImportItem[]>([])
@@ -427,9 +431,13 @@ const importSelection = ref<RequirementImportItem[]>([])
 const importMessage = ref('')
 const importResult = ref<RequirementImportSplit | null>(null)
 const importForm = reactive({ text: '', fileName: '', maxItems: 30 })
+const importAttachmentIds = ref<string[]>([])
+const importAttachmentRef = ref<InstanceType<typeof AiAttachmentInput> | null>(null)
 
 function openImport(): void {
   Object.assign(importForm, { text: '', fileName: '', maxItems: 30 })
+  importAttachmentIds.value = []
+  importAttachmentRef.value?.reset()
   importRows.value = []
   importSelection.value = []
   importMessage.value = ''
@@ -437,25 +445,20 @@ function openImport(): void {
   importVisible.value = true
 }
 
-async function uploadImportDoc(options: UploadRequestOptions): Promise<void> {
-  const form = new FormData()
-  form.append('file', options.file)
-  importUploading.value = true
-  try {
-    const result = await labApi.uploadDocument(form)
-    importForm.text = result.text
-    importForm.fileName = result.fileName
-    ElMessage.success('文档已抽取为文本，可直接开始拆分')
-  } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : '文档解析失败')
-  } finally {
-    importUploading.value = false
-  }
+function onImportDocument(result: DocumentAttachment): void {
+  importForm.fileName = result.fileName
+  ElMessage.success(`文档已作为附件，《${result.fileName}》拆分时自动读取正文`)
+}
+
+/** 关闭弹窗后删除未采用的附件，避免 data/attachments 越积越多。 */
+function onImportClosed(): void {
+  if (importSplitting.value) return
+  void importAttachmentRef.value?.dispose()
 }
 
 async function runSplit(): Promise<void> {
-  if (!importForm.text.trim()) {
-    ElMessage.warning('请先粘贴或上传需求文档')
+  if (!importForm.text.trim() && !importAttachmentIds.value.length) {
+    ElMessage.warning('请先粘贴需求文档，或上传文档/截图')
     return
   }
   if (!appStore.currentProjectId) {
@@ -469,6 +472,7 @@ async function runSplit(): Promise<void> {
       text: importForm.text,
       fileName: importForm.fileName || undefined,
       maxItems: importForm.maxItems,
+      attachmentIds: importAttachmentIds.value,
     })
     importResult.value = result
     importRows.value = result.items

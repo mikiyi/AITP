@@ -71,6 +71,7 @@ MUST_APPEAR = {
     "requirement_confirm": "验证码",
     "fix_suggestion": "JSONPath $.code",
     "requirement_import": "登录需求",
+    "case_patch": "验证码错误",
 }
 
 #: GAP-29 的比对基线只能从库内用例召回，工装库不种用例的话 dupRate 恒为 0，

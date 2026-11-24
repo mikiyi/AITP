@@ -17,6 +17,11 @@ test('切换脑图 → 渲染画布 → 刷新还原视图态 → 切回列表',
   await expect(page.locator('.mindmap-bar')).toContainText('以功能点树为骨架、用例为叶子')
   expect(page.url()).toContain('view=mindmap')
 
+  // 工具栏分层：视图切换在页头，资产/AI 操作与主操作在同一操作栏
+  await expect(page.locator('.case-page-header').getByText('脑图', { exact: true })).toBeVisible()
+  await expect(page.locator('.case-actions').getByRole('button', { name: '质量体检' })).toBeVisible()
+  await expect(page.locator('.case-actions').getByRole('button', { name: '新建用例' })).toBeVisible()
+
   await page.reload()
   await expect(page.getByTestId('case-mindmap')).toBeVisible()
   await expect(page.getByTestId('case-mindmap').locator('canvas')).toHaveCount(1)

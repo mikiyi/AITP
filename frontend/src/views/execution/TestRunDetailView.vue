@@ -92,6 +92,15 @@
           保存全部结果（{{ dirtyIds.length }}）
         </el-button>
         <el-button
+          class="precheck-button"
+          :icon="Finished"
+          :loading="precheckLoading"
+          @click="openPrecheck"
+        >
+          执行前自检
+        </el-button>
+        <el-button :icon="Aim" @click="openRunRiskSelection">智能加测</el-button>
+        <el-button
           type="primary"
           plain
           :icon="VideoPlay"
@@ -279,6 +288,14 @@
         <el-form-item label="超时（秒）">
           <el-input-number v-model="interfaceTimeout" :min="1" :max="60" />
         </el-form-item>
+        <template v-if="!interfaceTarget">
+          <el-form-item label="失败重试">
+            <el-input-number v-model="interfaceRetry" :min="0" :max="5" />
+          </el-form-item>
+          <el-form-item label="并发数">
+            <el-input-number v-model="interfaceWorkers" :min="1" :max="8" />
+          </el-form-item>
+        </template>
         <el-alert
           v-if="interfaceEnvKind === 'prod'"
           title="即将向生产环境发起真实请求，请确认接口无副作用。"
@@ -291,6 +308,124 @@
         <el-button @click="interfaceDialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="interfaceRunning" @click="runInterfaceConfirm">
           开始执行
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="precheckVisible" title="执行前自检" width="720px" class="execution-precheck-dialog">
+      <div v-loading="precheckLoading">
+        <el-alert v-if="precheckError" :title="precheckError" type="error" show-icon :closable="false" />
+        <template v-else-if="precheckResult">
+          <el-alert
+            :title="precheckResult.canRun
+              ? `自检通过：${precheckResult.summary.cases} 条接口用例可执行`
+              : `自检未通过：${precheckResult.blockers.length} 项阻塞，请先修复`"
+            :type="precheckResult.canRun ? 'success' : 'error'"
+            :closable="false"
+            show-icon
+            class="precheck-summary"
+          />
+          <el-table :data="precheckResult.items" size="small" border max-height="380">
+            <el-table-column prop="label" label="检查项" width="120" />
+            <el-table-column label="结论" width="86">
+              <template #default="{ row }">
+                <el-tag size="small" :type="precheckTagType(row.status)" effect="plain">
+                  {{ precheckStatusLabel(row.status) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="detail" label="说明" min-width="240" show-overflow-tooltip />
+            <el-table-column label="修复建议" min-width="180" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.fix || '-' }}</template>
+            </el-table-column>
+          </el-table>
+          <div v-if="precheckResult.warnings.length" class="precheck-warnings">
+            <el-alert
+              v-for="item in precheckResult.warnings"
+              :key="item"
+              :title="item"
+              type="warning"
+              :closable="false"
+              show-icon
+            />
+          </div>
+        </template>
+      </div>
+      <template #footer>
+        <el-button @click="precheckVisible = false">关闭</el-button>
+        <el-button
+          type="primary"
+          :disabled="!precheckResult?.canRun || !interfaceCaseCount"
+          @click="continueAfterPrecheck"
+        >
+          继续执行
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="runRiskVisible" title="智能加测" width="840px" class="risk-selection-dialog">
+      <el-form label-width="100px">
+        <el-form-item label="变更范围" required>
+          <el-input
+            v-model="runRiskScope"
+            type="textarea"
+            :rows="3"
+            placeholder="例如：登录与权限校验改造、支付回调重试"
+          />
+        </el-form-item>
+      </el-form>
+      <div v-if="runRiskResult" class="risk-result">
+        <div class="risk-summary">
+          <span>候选 {{ runRiskResult.total }} 条</span>
+          <span>选出 {{ runRiskResult.selected }} 条</span>
+          <el-tag size="small" type="danger" effect="plain">P0 必测 {{ runRiskResult.mandatoryP0 }}</el-tag>
+        </div>
+        <el-table
+          ref="runRiskTableRef"
+          :data="runRiskResult.items"
+          size="small"
+          border
+          max-height="340"
+          row-key="caseId"
+          @selection-change="onRunRiskSelectionChange"
+        >
+          <el-table-column type="selection" width="42" reserve-selection />
+          <el-table-column label="优先级" width="82">
+            <template #default="{ row }">
+              <el-tag size="small" effect="plain">{{ row.priority }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="用例" min-width="220">
+            <template #default="{ row }">
+              <span class="text-mono">{{ row.caseNo }}</span>
+              <span class="risk-case-title">{{ row.title }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="score" label="分值" width="76" align="right" />
+          <el-table-column label="理由" min-width="240">
+            <template #default="{ row }">
+              <el-tag
+                v-for="reason in row.reasons"
+                :key="reason"
+                size="small"
+                effect="plain"
+                class="risk-reason"
+              >{{ reason }}</el-tag>
+              <span v-if="!row.reasons.length" class="muted">-</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+      <el-empty v-else description="填写变更范围后开始选测" :image-size="72" />
+      <template #footer>
+        <el-button @click="runRiskVisible = false">关闭</el-button>
+        <el-button type="primary" :loading="runRiskLoading" @click="loadRunRiskSelection">开始选测</el-button>
+        <el-button
+          type="success"
+          :disabled="!runRiskResult || !runRiskSelectedIds.length"
+          @click="addRiskCases"
+        >
+          添加到本轮（{{ runRiskSelectedIds.length }}）
         </el-button>
       </template>
     </el-dialog>
@@ -422,18 +557,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onActivated, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { TableInstance } from 'element-plus'
-import { ArrowLeft, CircleCheck, Cpu, DataAnalysis, Document, Download, Refresh, VideoPlay } from '@element-plus/icons-vue'
-import { automationApi, fixSuggestionApi, reportApi, testEnvApi, testRunApi } from '@/api'
+import { Aim, ArrowLeft, CircleCheck, Cpu, DataAnalysis, Document, Download, Finished, Refresh, VideoPlay } from '@element-plus/icons-vue'
+import { automationApi, caseApi, fixSuggestionApi, reportApi, testEnvApi, testRunApi } from '@/api'
 import { ApiError, ErrorCode } from '@/api/request'
 import type {
   AutomationRun,
   AutomationScript,
   EnvDiffResult,
   InterfaceExecution,
+  RiskSelectionItem,
+  RiskSelectionResult,
   TestEnv,
   TestRun,
   TestRunCase,
@@ -471,8 +608,38 @@ const prodDialog = ref<InstanceType<typeof ProdConfirmDialog> | null>(null)
 const interfaceTarget = ref<TestRunCase | null>(null)
 const interfaceEnvId = ref<number | null>(null)
 const interfaceTimeout = ref(10)
+const interfaceRetry = ref(0)
+const interfaceWorkers = ref(1)
 const interfaceResult = ref<InterfaceExecution | null>(null)
 const fixGenerating = ref(false)
+
+interface PrecheckItem {
+  key: string
+  label: string
+  status: 'pass' | 'warn' | 'block'
+  detail: string
+  fix: string
+}
+
+interface PrecheckResult {
+  canRun: boolean
+  blockers: string[]
+  warnings: string[]
+  items: PrecheckItem[]
+  summary: { cases: number; blocked: number; warnings: number }
+}
+
+const precheckVisible = ref(false)
+const precheckLoading = ref(false)
+const precheckResult = ref<PrecheckResult | null>(null)
+const precheckError = ref('')
+
+const runRiskVisible = ref(false)
+const runRiskScope = ref('')
+const runRiskLoading = ref(false)
+const runRiskResult = ref<RiskSelectionResult | null>(null)
+const runRiskSelectedIds = ref<number[]>([])
+const runRiskTableRef = ref<TableInstance>()
 
 const automationRuns = ref<AutomationRun[]>([])
 const automationDialogVisible = ref(false)
@@ -683,7 +850,109 @@ function openInterface(row?: TestRunCase): void {
   interfaceTarget.value = row ?? null
   interfaceEnvId.value = run.value?.envId ?? envOptions.value[0]?.id ?? null
   interfaceTimeout.value = 10
+  interfaceRetry.value = 0
+  interfaceWorkers.value = 1
   interfaceDialogVisible.value = true
+}
+
+function precheckTagType(status: string): 'success' | 'warning' | 'danger' {
+  if (status === 'pass') return 'success'
+  if (status === 'warn') return 'warning'
+  return 'danger'
+}
+
+function precheckStatusLabel(status: string): string {
+  return { pass: '通过', warn: '预警', block: '阻塞' }[status] ?? status
+}
+
+async function openPrecheck(): Promise<void> {
+  precheckVisible.value = true
+  precheckLoading.value = true
+  precheckResult.value = null
+  precheckError.value = ''
+  try {
+    precheckResult.value = await testRunApi.precheck(runId.value, {
+      envId: run.value?.envId ?? undefined,
+    })
+  } catch (err) {
+    precheckError.value = err instanceof Error ? err.message : '执行前自检失败'
+  } finally {
+    precheckLoading.value = false
+  }
+}
+
+function continueAfterPrecheck(): void {
+  if (!precheckResult.value?.canRun) {
+    ElMessage.warning('自检仍有阻塞项，请先修复后再执行')
+    return
+  }
+  if (!interfaceCaseCount.value) {
+    ElMessage.warning('本轮没有接口用例可批量执行')
+    return
+  }
+  precheckVisible.value = false
+  openInterface()
+}
+
+function openRunRiskSelection(): void {
+  runRiskVisible.value = true
+  runRiskScope.value = ''
+  runRiskResult.value = null
+  runRiskSelectedIds.value = []
+}
+
+async function loadRunRiskSelection(): Promise<void> {
+  const projectId = run.value?.projectId
+  if (!projectId) {
+    ElMessage.warning('缺少项目上下文，无法智能选测')
+    return
+  }
+  if (!runRiskScope.value.trim()) {
+    ElMessage.warning('请填写变更范围描述')
+    return
+  }
+  runRiskLoading.value = true
+  try {
+    const result = await caseApi.riskSelection({
+      projectId,
+      versionId: run.value?.versionId ?? undefined,
+      changeScope: runRiskScope.value.trim(),
+      limit: 50,
+    })
+    runRiskResult.value = result
+    runRiskSelectedIds.value = result.items.map((item) => item.caseId)
+    await nextTick()
+    runRiskTableRef.value?.clearSelection()
+    runRiskTableRef.value?.toggleAllSelection()
+  } catch (err) {
+    runRiskResult.value = null
+    runRiskSelectedIds.value = []
+    ElMessage.error(err instanceof Error ? err.message : '智能选测失败')
+  } finally {
+    runRiskLoading.value = false
+  }
+}
+
+function onRunRiskSelectionChange(rows: RiskSelectionItem[]): void {
+  runRiskSelectedIds.value = rows.map((row) => row.caseId)
+}
+
+async function addRiskCases(): Promise<void> {
+  if (!runRiskSelectedIds.value.length) {
+    ElMessage.warning('请先勾选要加入本轮的用例')
+    return
+  }
+  try {
+    const payload = await testRunApi.addCases(runId.value, {
+      caseIds: runRiskSelectedIds.value,
+    })
+    const skipped = payload.skipped?.length ? `，跳过 ${payload.skipped.length} 条` : ''
+    ElMessage.success(`已向本轮添加 ${payload.count} 条用例${skipped}`)
+    runRiskVisible.value = false
+    await load()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '添加用例失败')
+  }
 }
 
 async function runInterfaceConfirm(): Promise<void> {
@@ -714,9 +983,15 @@ async function runInterfaceConfirm(): Promise<void> {
       const payload = await testRunApi.runInterfaceBatch(runId.value, {
         envId: interfaceEnvId.value,
         timeoutSeconds: interfaceTimeout.value,
+        retry: interfaceRetry.value,
+        workers: interfaceWorkers.value,
       })
       if ('total' in payload) {
-        ElMessage.success(`批量执行完成：通过 ${payload.passed} 条，失败 ${payload.failed} 条`)
+        const flakyCount = payload.details.filter((item) => item.flaky).length
+        ElMessage.success(
+          `批量执行完成：通过 ${payload.passed} 条，失败 ${payload.failed} 条` +
+            (flakyCount ? `，其中 ${flakyCount} 条重试后通过（flaky）` : ''),
+        )
         await load()
       } else {
         ElMessage.success(`已投递任务队列（任务 #${payload.task.id}），完成后刷新即可看到结果`)
@@ -947,6 +1222,38 @@ onActivated(() => {
   align-items: center;
   flex-wrap: wrap;
   margin-bottom: 12px;
+}
+
+.precheck-summary {
+  margin-bottom: 10px;
+}
+
+.precheck-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.risk-result {
+  margin-top: 4px;
+}
+
+.risk-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.risk-case-title {
+  margin-left: 8px;
+}
+
+.risk-reason {
+  margin: 0 6px 4px 0;
 }
 
 .envdiff-chip {

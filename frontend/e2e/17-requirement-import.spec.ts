@@ -99,7 +99,7 @@ test('空文档直接提示，不发起拆分', async ({ page }) => {
   await page.getByRole('button', { name: '文档批量导入' }).click()
   const dialog = page.locator('.req-import-dialog')
   await dialog.getByRole('button', { name: '开始拆分' }).click()
-  await expect(page.locator('.el-message', { hasText: '请先粘贴或上传需求文档' })).toBeVisible()
+  await expect(page.locator('.el-message', { hasText: '请先粘贴需求文档，或上传文档/截图' })).toBeVisible()
   await expect(dialog.locator('.req-import-table')).toHaveCount(0)
   assertHealthy(health)
 })

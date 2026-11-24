@@ -20,7 +20,15 @@ from ..repositories.test_case_repo import TestCaseRepository
 from ..repositories.test_env_repo import TestEnvRepository
 from ..services import assertion_schema, audit_service, case_test_data, execution_protocol, export_jobs, interface_runner
 from ..services import nav_badge_service
-from ..services import tabular_export, xlsx_exporter, xlsx_importer
+from ..services import (
+    ai_input_service,
+    case_import_service,
+    case_patch_service,
+    case_quality_service,
+    case_stability_service,
+    risk_selection_service,
+)
+from ..services import tabular_export, xlsx_exporter
 from .helpers import (
     attach_version_codes,
     audit,
@@ -423,6 +431,137 @@ def _case_export_name(conn: Any, filters: dict[str, Any], fmt: str) -> str:
     return f"{project_name or 'AITP'}测试用例"
 
 
+@bp.get("/quality")
+def case_quality_api() -> Response:
+    """用例集体检：缺失项、重复项与可执行性，返回评分与逐条问题。"""
+    conn = db()
+    project_id = require_int(request.args.get("projectId"), "projectId")
+    require_project(conn, project_id)
+    module_id = optional_int(request.args.get("moduleId"), "moduleId")
+    version_id = optional_int(request.args.get("versionId"), "versionId")
+    payload = case_quality_service.analyze(
+        conn, project_id=project_id, module_id=module_id, version_id=version_id,
+    )
+    return ok(payload)
+
+
+@bp.get("/stability")
+def case_stability_api() -> Response:
+    """批量取稳定性：最近 5 次结果里既有通过又有失败即标记 flaky。"""
+    conn = db()
+    project_id = require_int(request.args.get("projectId"), "projectId")
+    require_project(conn, project_id)
+    raw_ids = request.args.get("caseIds") or ""
+    case_ids = [int(item) for item in raw_ids.split(",") if item.strip().isdigit()]
+    if case_ids:
+        rows = conn.execute(
+            f"SELECT id FROM biz_test_case WHERE project_id = ? AND is_deleted = 0"
+            f" AND id IN ({','.join('?' for _ in case_ids)})",
+            [project_id, *case_ids],
+        ).fetchall()
+        case_ids = [int(row["id"]) for row in rows]
+    else:
+        rows = conn.execute(
+            "SELECT id FROM biz_test_case WHERE project_id = ? AND is_deleted = 0 LIMIT 500",
+            (project_id,),
+        ).fetchall()
+        case_ids = [int(row["id"]) for row in rows]
+    payload = case_stability_service.stability_map(conn, case_ids)
+    return ok({"items": [{"caseId": key, **value} for key, value in payload.items()]})
+
+
+@bp.post("/risk-selection")
+def risk_selection_api() -> Response:
+    """风险驱动选测：给出本轮最该跑的用例与逐条理由。"""
+    conn = db()
+    data = body()
+    project_id = require_int(data.get("projectId"), "projectId")
+    require_project(conn, project_id)
+    version_id = optional_int(data.get("versionId"), "versionId")
+    raw_modules = data.get("moduleIds") or []
+    module_ids = [int(item) for item in raw_modules if str(item).isdigit()] if isinstance(raw_modules, list) else []
+    limit = optional_int(data.get("limit"), "limit") or risk_selection_service.DEFAULT_LIMIT
+    change_scope = optional_str(data.get("changeScope"), "changeScope", 2000) or ""
+    payload = risk_selection_service.select(
+        conn, project_id=project_id, version_id=version_id,
+        change_scope=change_scope, module_ids=module_ids, limit=limit,
+    )
+    return ok(payload)
+
+
+@bp.post("/patches")
+def generate_case_patch_api() -> Response:
+    """对选中的用例集下达一条修订指令，产出待审 patch。"""
+    conn = db()
+    data = body()
+    project_id = require_int(data.get("projectId"), "projectId")
+    require_project(conn, project_id)
+    raw_ids = data.get("caseIds") or []
+    if not isinstance(raw_ids, list):
+        raise AppError(ErrorCode.PARAM_ERROR, "caseIds 必须是数组")
+    case_ids = [int(item) for item in raw_ids if str(item).isdigit()]
+    instruction = optional_str(data.get("instruction"), "instruction", 2000) or ""
+    if not case_ids:
+        raise AppError(ErrorCode.PARAM_ERROR, "请至少选择一条用例")
+    profile_id = optional_int(data.get("profileId"), "profileId")
+    payload = case_patch_service.generate(
+        conn, project_id=project_id, case_ids=case_ids,
+        instruction=instruction, profile_id=profile_id,
+        attachment_ids=ai_input_service.parse_attachment_ids(data),
+    )
+    audit(conn, audit_service.AUDIT_ACTION_CREATE, case_patch_service.RESOURCE,
+          payload.get("id") if isinstance(payload, dict) else None,
+          str(instruction or "用例局部修订"),
+          {"caseIds": case_ids, "patchNo": payload.get("patchNo") if isinstance(payload, dict) else ""})
+    commit(conn)
+    return ok(payload)
+
+
+@bp.get("/patches")
+def list_case_patches_api() -> Response:
+    conn = db()
+    project_id = require_int(request.args.get("projectId"), "projectId")
+    require_project(conn, project_id)
+    limit = optional_int(request.args.get("limit"), "limit") or 20
+    return ok(case_patch_service.list_patches(conn, project_id=project_id, limit=limit))
+
+
+@bp.get("/patches/<pk>")
+def get_case_patch_api(pk: str) -> Response:
+    conn = db()
+    project_id = require_int(request.args.get("projectId"), "projectId")
+    require_project(conn, project_id)
+    return ok(case_patch_service.get_patch(conn, path_int(pk), project_id=project_id))
+
+
+@bp.post("/patches/items/<pk>/adopt")
+def adopt_case_patch_api(pk: str) -> Response:
+    conn = db()
+    data = body()
+    project_id = require_int(data.get("projectId"), "projectId")
+    require_project(conn, project_id)
+    actor = optional_str(data.get("actor"), "actor", 64) or "local"
+    payload = case_patch_service.adopt_item(
+        conn, path_int(pk), project_id=project_id, actor=actor,
+    )
+    commit(conn)
+    return ok(payload)
+
+
+@bp.post("/patches/items/<pk>/dismiss")
+def dismiss_case_patch_api(pk: str) -> Response:
+    conn = db()
+    data = body()
+    project_id = require_int(data.get("projectId"), "projectId")
+    require_project(conn, project_id)
+    actor = optional_str(data.get("actor"), "actor", 64) or "local"
+    payload = case_patch_service.dismiss_item(
+        conn, path_int(pk), project_id=project_id, actor=actor,
+    )
+    commit(conn)
+    return ok(payload)
+
+
 @bp.get("/export")
 def export_cases() -> Response:
     """导出用例：xlsx 走 7 张表（格式对齐参考实现 generate_test_cases.py），csv/json 走单表摊平。
@@ -478,28 +617,42 @@ def _url_quote(value: str) -> str:
 
 @bp.post("/import")
 def import_cases() -> Response:
-    """导入 xlsx：按表头名取值，覆盖矩阵表忽略。"""
+    """导入 xlsx / csv / json：按表头名取值；dryRun=true 时只预览不落库。"""
     conn = db()
     uploaded = request.files.get("file")
     if uploaded is None or not uploaded.filename:
-        raise AppError(ErrorCode.PARAM_ERROR, "请选择要导入的 xlsx 文件")
-    if not uploaded.filename.lower().endswith(".xlsx"):
-        raise AppError(ErrorCode.PARAM_ERROR, "只支持 .xlsx 格式")
+        raise AppError(ErrorCode.PARAM_ERROR, "请选择要导入的用例文件")
+    suffix = uploaded.filename.lower().rsplit(".", 1)[-1]
+    if suffix not in case_import_service.FORMATS:
+        raise AppError(ErrorCode.PARAM_ERROR, "只支持 .xlsx / .csv / .json 格式")
 
     project_id = request.form.get("projectId") or request.args.get("projectId")
     if not project_id:
         raise AppError(ErrorCode.PARAM_ERROR, "缺少 projectId")
     project_id_int = require_int(project_id, "projectId")
+    require_project(conn, project_id_int)
+    dry_run = str(request.form.get("dryRun") or "").lower() in ("1", "true", "yes")
 
     raw = uploaded.read()
     try:
-        parsed = xlsx_importer.parse_workbook(raw)
+        parsed, file_format = case_import_service.parse_file(uploaded.filename, raw)
     except AppError:
         raise
     except Exception as exc:  # noqa: BLE001 - 解析失败统一转参数错误
-        raise AppError(ErrorCode.IMPORT_PARSE_FAILED, f"xlsx 解析失败：{exc}") from None
+        raise AppError(ErrorCode.IMPORT_PARSE_FAILED, f"文件解析失败：{exc}") from None
     if not parsed:
-        raise AppError(ErrorCode.IMPORT_PARSE_FAILED, "文件里没有识别到用例表")
+        raise AppError(ErrorCode.IMPORT_PARSE_FAILED, "文件里没有识别到用例")
+
+    plan = case_import_service.plan_rows(conn, project_id=project_id_int, items=parsed)
+    if dry_run:
+        return ok({
+            "dryRun": True,
+            "format": file_format,
+            "fileName": uploaded.filename,
+            "summary": plan["summary"],
+            "rows": plan["rows"][:200],
+            "truncated": plan["truncated"] or len(plan["rows"]) > 200,
+        })
 
     repo = TestCaseRepository(conn)
     module_repo = ModuleRepository(conn)
@@ -531,7 +684,16 @@ def import_cases() -> Response:
     created = 0
     skipped = 0
     renumbered = 0
-    for item in parsed:
+    errors: list[dict[str, Any]] = []
+    plan_by_line = {int(row["line"]): row for row in plan["rows"]}
+    for line, item in enumerate(parsed, start=1):
+        decision = plan_by_line.get(line) or {}
+        if decision.get("action") == "skip":
+            skipped += 1
+            continue
+        if decision.get("action") == "failed":
+            errors.append({"line": line, "title": item.get("title"), "reason": decision.get("reason")})
+            continue
         title = str(item.get("title") or "").strip()
         if not title:
             skipped += 1
@@ -587,12 +749,33 @@ def import_cases() -> Response:
               "renumbered": renumbered,
               "projectId": project_id_int,
           })
-    return ok({
+    summary = {
+        "total": len(parsed),
         "created": created,
         "skipped": skipped,
         "renumbered": renumbered,
-        "total": len(parsed),
+        "failed": len(errors),
+    }
+    batch = case_import_service.record_batch(
+        conn, project_id=project_id_int, file_name=uploaded.filename,
+        file_format=file_format, mode="apply", summary=summary, errors=errors,
+    )
+    commit(conn)
+    return ok({
+        **summary,
+        "format": file_format,
+        "batch": batch,
     })
+
+
+@bp.get("/import/batches")
+def list_import_batches() -> Response:
+    """最近的用例导入批次，用于确认重复导入是否被幂等跳过。"""
+    conn = db()
+    project_id = require_int(request.args.get("projectId"), "projectId")
+    require_project(conn, project_id)
+    limit = optional_int(request.args.get("limit"), "limit") or 20
+    return ok({"items": case_import_service.list_batches(conn, project_id=project_id, limit=limit)})
 
 
 @bp.get("/<pk>")

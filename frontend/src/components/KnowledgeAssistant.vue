@@ -161,6 +161,14 @@
       />
     </div>
 
+    <div class="assistant__attachments">
+      <AiAttachmentInput
+        ref="attachmentInput"
+        v-model:attachment-ids="attachmentIds"
+        compact
+      />
+    </div>
+
     <div class="assistant__input">
       <el-input
         v-model="question"
@@ -176,7 +184,7 @@
         type="primary"
         :icon="Promotion"
         :loading="sending"
-        :disabled="!question.trim()"
+        :disabled="!question.trim() && !attachmentIds.length"
         @click="send"
       >
         提问
@@ -234,6 +242,7 @@ import { ElMessage } from 'element-plus'
 import { storeToRefs } from 'pinia'
 import { Collection, Cpu, MagicStick, Promotion, ArrowDown, ArrowRight } from '@element-plus/icons-vue'
 import MarkdownView from '@/components/MarkdownView.vue'
+import AiAttachmentInput from '@/components/AiAttachmentInput.vue'
 import { aiApi, knowledgeApi } from '@/api'
 import type { MaskInfo } from '@/api/types'
 import { useAiGuardStore } from '@/stores/aiGuard'
@@ -265,6 +274,9 @@ const MODE_HINTS: Record<Mode, string> = {
 const mode = ref<Mode>(assistantStore.defaultMode)
 const defaultMode = computed(() => assistantStore.defaultMode)
 const question = ref('')
+/** 本次提问携带的附件编号：文档已在选择时并入提问，图片由后端转多模态消息 */
+const attachmentIds = ref<string[]>([])
+const attachmentInput = ref<InstanceType<typeof AiAttachmentInput> | null>(null)
 const sending = ref(false)
 // 对话与会话 id 都在 store 上：换菜单把组件挤掉、或首页卡片与问答页并存，看到的都是同一条线
 const { messages, truncated } = storeToRefs(assistantStore)
@@ -401,34 +413,39 @@ async function confirmExternal(nextMode: Mode, text: string): Promise<boolean> {
 
 async function send(): Promise<void> {
   const text = question.value.trim()
-  if (!text || sending.value) {
+  const ids = [...attachmentIds.value]
+  if ((!text && !ids.length) || sending.value) {
     return
   }
+  const promptText = text || '请阅读并处理附件内容'
   // 纯知识库回答不调模型；其余两种会调用模型，云端模型先过全局数据外发确认
-  if (!(await confirmExternal(mode.value, text))) {
+  if (!(await confirmExternal(mode.value, promptText))) {
     return
   }
   sending.value = true
-  messages.value = [...messages.value, { role: 'user', content: text, mode: mode.value }]
+  messages.value = [...messages.value, { role: 'user', content: promptText, mode: mode.value }]
   question.value = ''
+  attachmentInput.value?.reset()
   await scrollToBottom()
   try {
     if (mode.value === 'kb') {
-      await sendKb(text)
+      await sendKb(promptText, ids)
     } else {
-      await sendStream(text, mode.value)
+      await sendStream(promptText, mode.value, ids)
     }
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '问答失败')
   } finally {
     sending.value = false
+    // 附件已在请求发出前读取，回答结束后再删除，避免和请求抢文件
+    void attachmentInput.value?.dispose(ids)
   }
 }
 
 /** 纯知识库直答：不调模型、无思考过程。 */
-async function sendKb(text: string): Promise<void> {
+async function sendKb(text: string, attachmentIds: string[] = []): Promise<void> {
   const result = await knowledgeApi.ask({
-    question: text, mode: 'kb', sessionId: assistantStore.sessionId,
+    question: text, mode: 'kb', sessionId: assistantStore.sessionId, attachmentIds,
   })
   assistantStore.sessionId = result.sessionId ?? null
   messages.value = [
@@ -452,7 +469,7 @@ async function sendKb(text: string): Promise<void> {
 }
 
 /** 流式问答：reasoning / delta 双通道；思考默认只到浏览器瞬态缓存，不落库。 */
-async function sendStream(text: string, m: Mode): Promise<void> {
+async function sendStream(text: string, m: Mode, attachmentIds: string[] = []): Promise<void> {
   const item: ChatItem = {
     role: 'assistant',
     content: '',
@@ -471,7 +488,9 @@ async function sendStream(text: string, m: Mode): Promise<void> {
   const resp = await fetch('/api/v1/knowledge/assistant/ask-stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question: text, mode: m, sessionId: assistantStore.sessionId }),
+    body: JSON.stringify({
+      question: text, mode: m, sessionId: assistantStore.sessionId, attachmentIds,
+    }),
   })
   if (!resp.ok || !resp.body) {
     throw new Error('问答流启动失败')
@@ -1001,6 +1020,10 @@ html[data-theme='industry'] .is-assistant .assistant__bubble {
 
 .assistant__empty {
   padding: 8px 0;
+}
+
+.assistant__attachments {
+  margin-bottom: 8px;
 }
 
 .assistant__input {

@@ -286,8 +286,7 @@ _TP_NODE = _tp_node(5)
 _FIX_SUGGESTION_TARGETS = ("assertion", "expected_body", "expected_status", "bug")
 
 #: 四期专项 D：需求批量拆分条目（标题严格，其余描述类字段宽松）
-_REQUIREMENT_IMPORT_ITEM = FieldRule(
-    name="requirement",
+_REQUIREMENT_IMPORT_ITEM = FieldRule(    name="requirement",
     type=TYPE_OBJECT,
     fields=(
         FieldRule("title", TYPE_STRING, required=True, strict=True, max_len=200),
@@ -301,6 +300,22 @@ _REQUIREMENT_IMPORT_ITEM = FieldRule(
     ),
 )
 
+#: V2.6.0：用例局部修订条目（caseId 用字符串统一，兼容模型返回数字）
+_CASE_PATCH_ACTIONS = ("update", "delete")
+_CASE_PATCH_TARGETS = ("title", "steps", "expected_result", "preconditions", "priority")
+_CASE_PATCH_ITEM = FieldRule(
+    name="patch",
+    type=TYPE_OBJECT,
+    fields=(
+        FieldRule("caseId", TYPE_STRING, required=True, strict=True, aliases=("id", "caseNo"),
+                  max_len=60),
+        FieldRule("action", TYPE_STRING, enum=_CASE_PATCH_ACTIONS, default="update"),
+        FieldRule("target", TYPE_STRING, enum=_CASE_PATCH_TARGETS, default="steps"),
+        FieldRule("after", TYPE_STRING, default="", aliases=("content", "newValue"),
+                  max_len=6000),
+        FieldRule("reason", TYPE_STRING, default="", aliases=("analysis",), max_len=1000),
+    ),
+)
 SCHEMAS: dict[str, SchemaSpec] = {
     "case_generation": SchemaSpec("case_generation", "测试用例", ROOT_ARRAY, "用例", item=CASE_ITEM),
     "xmind_to_case": SchemaSpec(
@@ -336,6 +351,14 @@ SCHEMAS: dict[str, SchemaSpec] = {
     "requirement_import": SchemaSpec(
         "requirement_import", "需求", ROOT_ARRAY, "需求",
         item=_REQUIREMENT_IMPORT_ITEM,
+    ),
+    "case_patch": SchemaSpec(
+        "case_patch", "用例修订", ROOT_OBJECT, "修订",
+        fields=(
+            FieldRule("summary", TYPE_STRING, required=True, strict=True, max_len=1000),
+            FieldRule("patches", TYPE_ARRAY, required=True, strict=True, min_items=1,
+                      item=_CASE_PATCH_ITEM, default=[]),
+        ),
     ),
 }
 

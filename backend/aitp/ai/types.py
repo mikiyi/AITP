@@ -36,6 +36,8 @@ class ResolvedAIConfig:
     token_used: int = 0
     #: 档案勾选「关闭思考模式」：推理模型（qwen3 / deepseek-r1 等）跳过思考直出答案
     disable_thinking: bool = False
+    #: 档案是否支持图片输入；为 False 时带图请求会跳过图片并提示，文本链路不受影响
+    supports_vision: bool = True
 
     @property
     def has_api_key(self) -> bool:
@@ -76,6 +78,7 @@ class ResolvedAIConfig:
             "tokenQuota": self.token_quota,
             "tokenUsed": self.token_used,
             "tokenRemaining": self.token_remaining,
+            "supportsVision": self.supports_vision,
         }
 
 

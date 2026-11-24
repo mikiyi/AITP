@@ -145,6 +145,73 @@
             </div>
           </div>
 
+          <div v-if="readiness" class="readiness-card">
+            <div class="readiness-head">
+              <span class="readiness-label" :class="`readiness-label--${readiness.verdict}`">
+                {{ readiness.label }}
+              </span>
+              <span class="readiness-summary">{{ readiness.summary }}</span>
+            </div>
+
+            <div class="readiness-metrics">
+              <div class="readiness-metric">
+                <span>失败分布</span>
+                <div class="readiness-tags">
+                  <el-tag
+                    v-for="item in failedByPriority"
+                    :key="item.priority"
+                    size="small"
+                    :type="item.count > 0 ? 'danger' : 'info'"
+                    effect="plain"
+                  >{{ item.priority }} {{ item.count }}</el-tag>
+                </div>
+              </div>
+              <div class="readiness-metric">
+                <span>不稳定用例</span>
+                <div class="readiness-tags">
+                  <el-tooltip
+                    v-if="readiness.flaky.length"
+                    :content="readiness.flaky.map((item) => `${item.caseNo} ${item.title}`).join('；')"
+                    placement="top"
+                  >
+                    <el-tag class="flaky-tag" size="small" type="warning" effect="plain">
+                      {{ readiness.flaky.length }} 条
+                    </el-tag>
+                  </el-tooltip>
+                  <span v-else class="muted">0 条</span>
+                </div>
+              </div>
+              <div class="readiness-metric readiness-metric--wide">
+                <span>失败归因（共 {{ readiness.attribution.total }} 条）</span>
+                <div class="readiness-tags">
+                  <el-tag
+                    v-for="item in readinessAttribution"
+                    :key="item.kind"
+                    size="small"
+                    :type="attributionTagType(item.kind)"
+                    effect="plain"
+                  >{{ item.label }} {{ item.count }}</el-tag>
+                  <span v-if="!readinessAttribution.length" class="muted">没有失败归因</span>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="readiness.risks.length" class="readiness-block">
+              <div class="readiness-block__title">风险项</div>
+              <div v-for="risk in readiness.risks" :key="risk.kind" class="readiness-risk">
+                <el-tag size="small" type="warning" effect="plain">{{ risk.label }} × {{ risk.count }}</el-tag>
+                <span class="muted">{{ risk.detail }}</span>
+              </div>
+            </div>
+
+            <div v-if="readiness.recommendations.length" class="readiness-block">
+              <div class="readiness-block__title">建议</div>
+              <ul class="readiness-list">
+                <li v-for="item in readiness.recommendations" :key="item">{{ item }}</li>
+              </ul>
+            </div>
+          </div>
+
           <el-alert
             v-if="gateResult"
             :title="gateResult.status === 'passed' ? '满足发布准入' : '不满足发布准入'"
@@ -279,6 +346,41 @@ const gateConclusion = computed(() => {
     .filter(Boolean)
     .join('、')
 })
+
+/** V2.6.0：发布就绪建议，旧接口没有该字段时整块不渲染。 */
+const readiness = computed(() => gateResult.value?.readiness ?? null)
+
+const ATTRIBUTION_LABELS: Record<string, string> = {
+  bug: '疑似缺陷',
+  assertion: '断言过期',
+  environment: '环境问题',
+  data: '数据问题',
+  unknown: '未归因',
+}
+
+const failedByPriority = computed(() => {
+  const counts = readiness.value?.failedByPriority ?? {}
+  return ['P0', 'P1', 'P2', 'P3'].map((priority) => ({ priority, count: counts[priority] ?? 0 }))
+})
+
+const readinessAttribution = computed(() => {
+  const attribution = readiness.value?.attribution
+  if (!attribution) return []
+  return Object.entries(attribution.counts)
+    .filter(([, count]) => count > 0)
+    .map(([kind, count]) => ({
+      kind,
+      count,
+      label: attribution.labels?.[kind] ?? ATTRIBUTION_LABELS[kind] ?? kind,
+    }))
+})
+
+function attributionTagType(kind: string): 'danger' | 'warning' | 'primary' | 'info' {
+  if (kind === 'bug') return 'danger'
+  if (kind === 'assertion') return 'warning'
+  if (kind === 'environment') return 'primary'
+  return 'info'
+}
 
 function rowRate(row: TraceabilityRow): string {
   if (!row.executedCount) return '-'
@@ -528,6 +630,100 @@ onActivated(() => {
 
 .gate-alert {
   margin-bottom: 12px;
+}
+
+.readiness-card {
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 10px;
+  background: var(--el-fill-color-lighter);
+}
+
+.readiness-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.readiness-label {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.readiness-label--ready {
+  color: var(--el-color-success);
+}
+
+.readiness-label--risk {
+  color: var(--el-color-warning);
+}
+
+.readiness-label--blocked {
+  color: var(--el-color-danger);
+}
+
+.readiness-summary {
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+}
+
+.readiness-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.readiness-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--el-bg-color);
+}
+
+.readiness-metric > span {
+  font-size: 12px;
+  color: var(--aitp-text-weak);
+}
+
+.readiness-metric--wide {
+  grid-column: span 2;
+}
+
+.readiness-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.readiness-block {
+  margin-top: 12px;
+}
+
+.readiness-block__title {
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.readiness-risk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.readiness-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.7;
 }
 
 .gate-table {

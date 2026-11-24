@@ -1,14 +1,17 @@
 <template>
   <div class="smart-entry panel panel-pad">
     <div class="smart-entry__row">
-      <el-input
-        v-model="text"
-        type="textarea"
-        :rows="2"
-        resize="vertical"
-        :placeholder="textareaHint('描述你要做的事（例：支付回调重复推送导致金额翻倍），自动匹配 AI 能力与功能点')"
-        @keyup.ctrl.enter="route"
-      />
+      <div class="smart-entry__field">
+        <el-input
+          v-model="text"
+          type="textarea"
+          :rows="2"
+          resize="vertical"
+          :placeholder="textareaHint('描述你要做的事（例：支付回调重复推送导致金额翻倍），或上传需求文档/截图，自动匹配 AI 能力与功能点')"
+          @keyup.ctrl.enter="route"
+        />
+        <AiAttachmentInput v-model:attachment-ids="attachmentIds" compact />
+      </div>
       <div class="smart-entry__actions">
         <el-button type="primary" :icon="Search" :loading="loading" @click="route">智能匹配</el-button>
         <span class="muted smart-entry__hint">Ctrl + Enter 快捷匹配</span>
@@ -16,6 +19,16 @@
     </div>
 
     <div v-if="result" class="smart-entry__result">
+      <div v-if="hasAttachmentInput" class="smart-entry__transcript">
+        <el-tag size="small" type="success" effect="plain">附件已转文本参与匹配</el-tag>
+        <span v-if="result.transcription" class="muted">
+          图片转写 {{ result.transcription.length }} 字
+        </span>
+        <span v-if="result.truncated" class="muted">长文本已截取前 4000 字参与匹配</span>
+        <ul v-if="result.input?.notes?.length" class="smart-entry__notes">
+          <li v-for="(note, index) in result.input.notes" :key="index">{{ note }}</li>
+        </ul>
+      </div>
       <div class="smart-entry__group">
         <div class="smart-entry__group-title">
           匹配的 AI 能力
@@ -138,7 +151,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
@@ -148,6 +161,7 @@ import { useAppStore } from '@/stores/app'
 import { percentText } from '@/utils/format'
 import { textareaHint } from '@/utils/inputHints'
 import { useAiGuardStore } from '@/stores/aiGuard'
+import AiAttachmentInput from '@/components/AiAttachmentInput.vue'
 
 const router = useRouter()
 const aiGuard = useAiGuardStore()
@@ -157,6 +171,19 @@ const text = ref('')
 const loading = ref(false)
 const result = ref<RouteResponse | null>(null)
 const preflight = ref<PreflightResult | null>(null)
+const attachmentIds = ref<string[]>([])
+
+/** 本轮匹配是否带过附件：用于展示「已转文本」与降级说明。 */
+const hasAttachmentInput = computed(() => {
+  const input = result.value?.input
+  if (!input) return false
+  return input.documents.length > 0 || input.images.length > 0
+})
+
+/** 进入能力页时优先带转写后的完整文本，纯文本输入则等价于原文本。 */
+function navText(): string {
+  return (result.value?.effectiveText || text.value).trim()
+}
 
 /**
  * 能力名以服务端预检结果为准（PreflightTask.label 来自后端能力目录），
@@ -168,8 +195,9 @@ function labelOf(code: string): string {
 
 async function route(): Promise<void> {
   const value = text.value.trim()
-  if (!value) {
-    ElMessage.warning('请先描述你的需求')
+  const ids = [...attachmentIds.value]
+  if (!value && !ids.length) {
+    ElMessage.warning('请先描述你的需求，或上传文档/截图')
     return
   }
   // 智能路由会调用模型，先确认数据已脱敏
@@ -181,10 +209,11 @@ async function route(): Promise<void> {
   try {
     result.value = await labApi.route({
       text: value,
+      attachmentIds: ids,
       projectId: appStore.currentProjectId ?? undefined,
       topK: 3,
     })
-    await loadPreflight(value)
+    await loadPreflight(navText())
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '匹配失败')
   } finally {
@@ -206,7 +235,7 @@ async function loadPreflight(value: string): Promise<void> {
 }
 
 function openCapability(item: RouteResult): void {
-  const query: Record<string, string> = { text: text.value.trim() }
+  const query: Record<string, string> = { text: navText() }
   if (item.targetModuleId) {
     query.moduleId = String(item.targetModuleId)
   }
@@ -215,7 +244,7 @@ function openCapability(item: RouteResult): void {
 
 function openModule(item: ModuleRouteResult): void {
   const capability = result.value?.capabilityRoutes[0]
-  const query: Record<string, string> = { text: text.value.trim(), moduleId: String(item.moduleId) }
+  const query: Record<string, string> = { text: navText(), moduleId: String(item.moduleId) }
   void router.push({
     path: capability ? `/lab/${capability.capability}` : '/lab',
     query,
@@ -230,6 +259,32 @@ defineExpose({ route, text })
   display: flex;
   gap: 12px;
   align-items: flex-start;
+}
+
+.smart-entry__field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.smart-entry__transcript {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--aitp-border);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.smart-entry__notes {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--aitp-text-weak);
+  flex-basis: 100%;
 }
 
 .smart-entry__actions {

@@ -2,8 +2,10 @@
 
 AI 实验室里贴进来的东西都要先过这里：
 - 文档（Word / Excel / Markdown / PDF / HTML / JSON / TXT）→ 抽成纯文本再进提示词
-- 图片（JPG / PNG / GIF / SVG / WebP / BMP / TIFF / RAW / PSD / AI / HEIF / HEIC /
-  PDF / APNG / AVIF / JPEG-XL）→ 先去水印，处理后的图再进后续流程
+- 图片（JPG / PNG / GIF / SVG / WebP / BMP / TIFF / PSD / HEIF / HEIC /
+  APNG / AVIF）→ 先去水印，处理后的图再进后续流程
+- PDF 只走文档抽取：Pillow 无法把 PDF 当位图解码，避免出现「假图片」附件
+- RAW / AI / JXL 本机没有解码器，入口直接拒绝并提示先转成 PNG/JPG
 
 原则：
 - 只在本机处理，文件不出机器；
@@ -15,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import html
 import io
 import json
 import logging
@@ -47,7 +50,8 @@ DOCUMENT_EXTENSIONS: dict[str, str] = {
     ".pdf": "pdf",
 }
 
-#: 可作为图片贴入的扩展名（PDF 既能当文档也能当图片，走图片分支）
+#: 可作为图片贴入的扩展名：只收本机确实能解码的位图/矢量图
+#: RAW / AI / JXL 需要额外解码器，由入口层直接拒收，避免「上传成功、调用失败」
 IMAGE_EXTENSIONS: dict[str, str] = {
     ".jpg": "jpeg",
     ".jpeg": "jpeg",
@@ -59,19 +63,21 @@ IMAGE_EXTENSIONS: dict[str, str] = {
     ".bmp": "bmp",
     ".tif": "tiff",
     ".tiff": "tiff",
-    ".raw": "raw",
-    ".cr2": "raw",
-    ".nef": "raw",
-    ".arw": "raw",
-    ".dng": "raw",
     ".psd": "psd",
-    ".ai": "ai",
     ".heif": "heif",
     ".heic": "heic",
     ".avif": "avif",
-    ".jxl": "jxl",
-    ".pdf": "pdf",
 }
+
+#: 本机没有解码器、入口需要明确拒绝的图片后缀
+UNDECODABLE_IMAGE_EXTENSIONS = frozenset(
+    {".raw", ".cr2", ".nef", ".arw", ".dng", ".ai", ".jxl"}
+)
+
+#: 多模态模型普遍接受的图片 media type；SVG/BMP/TIFF 等会在 AI 入口被跳过
+VISION_IMAGE_TYPES = frozenset(
+    {"image/jpeg", "image/png", "image/gif", "image/webp"}
+)
 
 #: 文档抽取出的文本上限，防止把整本大文件塞进提示词
 MAX_DOCUMENT_CHARS = 20000
@@ -150,8 +156,8 @@ def is_image(file_name: str) -> bool:
 
 
 def is_document(file_name: str) -> bool:
-    ext = extension_of(file_name)
-    return ext in DOCUMENT_EXTENSIONS and ext not in IMAGE_EXTENSIONS
+    """是否走文档抽取：PDF 等只按文档处理，不再和图片分支重叠。"""
+    return extension_of(file_name) in DOCUMENT_EXTENSIONS
 
 
 # ---------------------------------------------------------------------
@@ -225,6 +231,8 @@ def _extract_html(data: bytes) -> str:
     raw = _decode_text(data)
     raw = _SCRIPT_RE.sub(" ", raw)
     text = _TAG_RE.sub("\n", raw)
+    # 实体不还原会把 &amp; / &nbsp; 原样带进提示词
+    text = html.unescape(text)
     lines = [line.strip() for line in text.splitlines()]
     return "\n".join(line for line in lines if line)
 
@@ -263,8 +271,16 @@ def extract_document(file_name: str, data: bytes) -> ExtractedDocument:
     except AttachmentError:
         raise
     except Exception as exc:  # noqa: BLE001 - 解析失败退回原文，不拦死主流程
-        note = f"结构化解析失败（{exc.__class__.__name__}），已按纯文本读取"
-        text = _decode_text(data)
+        if kind in ("word", "excel", "pdf") and extension_of(file_name) != ".doc":
+            # 二进制格式解析失败时按文本读只会得到乱码，宁可不产出内容
+            text = ""
+            note = (
+                f"结构化解析失败（{exc.__class__.__name__}），未提取到文本；"
+                "请检查文件是否加密、损坏，或另存为新版格式"
+            )
+        else:
+            note = f"结构化解析失败（{exc.__class__.__name__}），已按纯文本读取"
+            text = _decode_text(data)
 
     truncated = len(text) > MAX_DOCUMENT_CHARS
     if truncated:
@@ -298,10 +314,10 @@ def _register_heif() -> bool:
     return True
 
 
-def _strip_svg_watermark(data: bytes) -> tuple[bytes, int]:
-    """SVG 是文本格式：直接删掉带水印标识的图元。"""
+def _strip_svg_watermark(data: bytes) -> tuple[bytes, int, int]:
+    """SVG 是文本格式：直接删掉带水印标识的图元，并返回移除的图元/可执行元素数量。"""
     text = data.decode("utf-8", errors="replace")
-    text, _ = _sanitize_svg(text)
+    text, sanitized = _sanitize_svg(text)
     removed = 0
     pattern = re.compile(
         r"<(text|image|rect|path|use)\b[^>]*?(?:id|class|aria-label)\s*=\s*[\"']([^\"']+)[\"'][^>]*>.*?</\1>",
@@ -331,7 +347,7 @@ def _strip_svg_watermark(data: bytes) -> tuple[bytes, int]:
         cleaned,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    return cleaned.encode("utf-8"), removed
+    return cleaned.encode("utf-8"), removed, sanitized
 
 
 #: SVG 是能在浏览器里当文档执行的格式，落盘前先剥掉可执行成分，
@@ -443,6 +459,9 @@ def _strip_watermark_pixels(image: Any) -> tuple[Any, list[dict[str, Any]]]:
         if not ring_parts:
             continue
         fill = np.median(np.concatenate(ring_parts, axis=0), axis=0)
+        # 还要比紧邻一圈更亮：页面本身的空白角落与周边同色，不应被抹掉
+        if float(np.median(block_lum)) < float(np.mean(fill)) + 12.0:
+            continue
         composite[y0:y1, x0:x1] = fill
         removed.append({
             "x": int(x0),
@@ -459,7 +478,7 @@ def _strip_watermark_pixels(image: Any) -> tuple[Any, list[dict[str, Any]]]:
 
 def process_image(file_name: str, data: bytes) -> ProcessedImage:
     """对贴入的图片做去水印处理，返回处理后的图片内容。"""
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     if len(data) > MAX_ATTACHMENT_BYTES:
         raise AttachmentError("图片超过 32MB，请压缩后再上传")
@@ -467,28 +486,39 @@ def process_image(file_name: str, data: bytes) -> ProcessedImage:
     media_type = _media_type_of(ext)
 
     if ext == ".svg":
-        cleaned_svg, svg_removed = _strip_svg_watermark(data)
-        note = "SVG 按图元标识去水印" if svg_removed else "SVG 未发现带水印标识的图元"
+        cleaned_svg, svg_removed, svg_sanitized = _strip_svg_watermark(data)
+        note_parts = [
+            "SVG 按图元标识去水印" if svg_removed else "SVG 未发现带水印标识的图元"
+        ]
+        if svg_sanitized:
+            note_parts.append(f"已移除 {svg_sanitized} 个可执行元素")
         return ProcessedImage(
             file_name=file_name,
             media_type="image/svg+xml",
             data=cleaned_svg,
             watermark_applied=bool(svg_removed),
             regions=[{"type": "svg-element"} for _ in range(svg_removed)],
-            note=note,
+            note="；".join(note_parts),
         )
 
     _register_heif()
+    animated = False
     try:
-        image = Image.open(io.BytesIO(data))
-        image.load()
+        image_file = Image.open(io.BytesIO(data))
+        image_file.load()
+        animated = bool(getattr(image_file, "is_animated", False))
+        # 手机照片常带 EXIF 方向；不纠正会让模型看到横倒的截图
+        image = ImageOps.exif_transpose(image_file)
     except Exception as exc:  # noqa: BLE001 - 解码不了的格式按原图继续
         return ProcessedImage(
             file_name=file_name,
             media_type=media_type,
             data=data,
             watermark_applied=False,
-            note=f"本机缺少 {ext or '该'} 格式的解码器（{exc.__class__.__name__}），已跳过去水印按原图继续",
+            note=(
+                f"无法解码该图片（{exc.__class__.__name__}），"
+                "可能是本机缺少解码器或文件已损坏，已跳过去水印按原图继续"
+            ),
         )
 
     try:
@@ -519,20 +549,20 @@ def process_image(file_name: str, data: bytes) -> ProcessedImage:
     elif ext in (".webp",) and not has_alpha:
         cleaned.convert("RGB").save(buffer, format="WEBP", quality=92)
         out_media = "image/webp"
-    elif ext in (".tif", ".tiff"):
-        cleaned.save(buffer, format="TIFF")
-        out_media = "image/tiff"
-    elif ext in (".bmp",):
-        cleaned.convert("RGB").save(buffer, format="BMP")
-        out_media = "image/bmp"
     elif ext in (".gif",):
         cleaned.convert("P", palette=Image.Palette.ADAPTIVE).save(buffer, format="GIF")
         out_media = "image/gif"
     else:
+        # BMP / TIFF / APNG 等统一转 PNG：多模态接口普遍只认 JPEG/PNG/WEBP/GIF
         cleaned.save(buffer, format="PNG")
         out_media = "image/png"
 
-    note = f"已抹除 {len(removed)} 处水印覆盖层" if removed else "未识别到明显的覆盖式水印"
+    note_parts = [
+        f"已抹除 {len(removed)} 处水印覆盖层" if removed else "未识别到明显的覆盖式水印"
+    ]
+    if animated:
+        note_parts.append("动图仅保留首帧")
+    note = "；".join(note_parts)
     return ProcessedImage(
         file_name=file_name,
         media_type=out_media,
@@ -616,6 +646,9 @@ def decode_data_url(data_url: str) -> tuple[str, bytes]:
     if not match:
         raise AttachmentError("不是合法的 data URL")
     media_type = match.group(1) or "image/png"
+    if not media_type.lower().startswith("image/"):
+        # 粘贴通道只接受图片；PDF/文本走文档导入，避免把非图片存成 .png
+        raise AttachmentError("粘贴内容不是图片，请使用文档导入")
     is_base64 = bool(match.group(3))
     payload = match.group(4) or ""
     try:
@@ -623,10 +656,13 @@ def decode_data_url(data_url: str) -> tuple[str, bytes]:
     except (binascii.Error, ValueError) as exc:
         raise AttachmentError("data URL 内容无法解码") from exc
     suffix = suffix_of_media_type(media_type)
+    if not suffix:
+        raise AttachmentError("暂不支持该图片格式，请转成 PNG/JPG 后粘贴")
     return f"pasted{suffix}", data
 
 
 def suffix_of_media_type(media_type: str) -> str:
+    """media type 映射成后缀；未知格式返回空串，由调用方决定拒绝还是降级。"""
     mapping = {
         "image/jpeg": ".jpg",
         "image/png": ".png",
@@ -639,7 +675,7 @@ def suffix_of_media_type(media_type: str) -> str:
         "image/heif": ".heif",
         "image/svg+xml": ".svg",
     }
-    return mapping.get(media_type.lower(), ".png")
+    return mapping.get(media_type.lower(), "")
 
 
 def to_data_url(media_type: str, data: bytes) -> str:

@@ -1440,9 +1440,9 @@ const categoryOptions = computed(() => categoryStore.options)
 /** 可导入的文档格式。 */
 const DOC_ACCEPT = '.docx,.doc,.xlsx,.xlsm,.csv,.md,.markdown,.txt,.log,.json,.html,.htm,.pdf'
 
-/** 可贴入的图片格式。 */
+/** 可贴入的图片格式：只列本机确实能解码的格式。 */
 const IMAGE_ACCEPT =
-  '.jpg,.jpeg,.png,.apng,.gif,.svg,.webp,.bmp,.tif,.tiff,.raw,.cr2,.nef,.arw,.dng,.psd,.ai,.heif,.heic,.avif,.jxl,.pdf'
+  '.jpg,.jpeg,.png,.apng,.gif,.svg,.webp,.bmp,.tif,.tiff,.psd,.heif,.heic,.avif'
 
 const importing = ref(false)
 const uploadingImage = ref(false)
@@ -2402,6 +2402,12 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('paste', onPaste)
+  // 页面销毁后附件不再可用，顺手清掉，避免 data/attachments 残留
+  const ids = [
+    ...documents.value.map((item) => item.attachmentId),
+    ...images.value.map((item) => item.attachmentId),
+  ]
+  void Promise.allSettled(ids.map((id) => labApi.deleteAttachment(id)))
 })
 
 async function loadVersionOptions(): Promise<void> {

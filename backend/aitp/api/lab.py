@@ -48,6 +48,7 @@ from ..repositories.doc_template_repo import (
     normalize_columns,
 )
 from ..services import (
+    ai_input_service,
     ai_record_service,
     attachment_service,
     audit_service,
@@ -501,10 +502,18 @@ def upload_image() -> Response:
             raise AppError(ErrorCode.PARAM_ERROR, str(exc)) from None
 
     if not attachment_service.is_image(file_name):
-        raise AppError(ErrorCode.PARAM_ERROR, f"不支持的图片格式：{attachment_service.extension_of(file_name) or '未知'}")
+        ext = attachment_service.extension_of(file_name)
+        hint = (
+            "；该格式本机没有解码器，请先转成 PNG/JPG"
+            if ext in attachment_service.UNDECODABLE_IMAGE_EXTENSIONS
+            else ""
+        )
+        raise AppError(ErrorCode.PARAM_ERROR, f"不支持的图片格式：{ext or '未知'}{hint}")
 
     processed = attachment_service.process_image(file_name, raw)
     suffix = attachment_service.suffix_of_media_type(processed.media_type)
+    if not suffix:
+        raise AppError(ErrorCode.PARAM_ERROR, "处理后的图片格式不受支持，请转成 PNG/JPG")
     attachment_id, _ = attachment_service.save_attachment(
         _attachments_root(), file_name, processed.data, suffix=suffix
     )
@@ -1350,14 +1359,21 @@ def _normalize_xmind_node(item: dict[str, Any]) -> dict[str, Any] | None:
 
 @bp.post("/route")
 def route() -> Response:
+    """智能路由：文本直接匹配；带附件时先把文档/图片转成文本再匹配。"""
     conn = db()
     data = body()
-    text = require_str(data.get("text"), "text", 4000)
+    text = optional_str(data.get("text"), "text", 4000) or ""
     project_id = _optional_int(data.get("projectId"), "projectId")
     top_k = _optional_int(data.get("topK"), "topK") or 3
     top_k = max(1, min(top_k, 10))
 
-    result = lab_service.route_text(conn, text, project_id=project_id, top_k=top_k)
+    result = lab_service.route_input(
+        conn,
+        text=text,
+        attachment_ids=ai_input_service.parse_attachment_ids(data),
+        project_id=project_id,
+        top_k=top_k,
+    )
     return ok(result)
 
 

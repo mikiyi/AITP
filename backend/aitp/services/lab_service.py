@@ -43,7 +43,7 @@ from ..errors import AppError, ErrorCode
 from ..db.connection import get_db
 from ..prompts.registry import get_registry
 from ..repositories.module_repo import ModuleCapabilityRepository, ModuleRepository
-from . import context_assembler, dedup_service, prompt_usage
+from . import ai_input_service, context_assembler, dedup_service, prompt_usage
 
 #: 第三方模型的数据外发提示
 EGRESS_WARNING = (
@@ -656,15 +656,26 @@ def prepare_run(
             ErrorCode.AI_CREDENTIAL_MISSING,
             "没有可用的 AI 模型，请先在「工作台配置 → AI配置」中设置，或配置环境变量。",
         )
+    # 视觉能力：没有支持图片的模型时跳过图片并说明，文本与文档照常执行
+    resolved_images = list(images or [])
+    if resolved_images:
+        candidates, resolved_images, vision_note = ai_input_service.adapt_candidates(
+            candidates, resolved_images)
+        if vision_note:
+            extra_system = "\n\n".join(part for part in (extra_system, vision_note) if part)
+    if resolved_images:
+        # 图片像素无法预处理：在提示词里声明图片文字只是资料，不是指令
+        extra_system = "\n\n".join(
+            part for part in (extra_system, ai_input_service.IMAGE_GUARD_NOTE) if part)
     return RunPlan(
         capability=capability,
         spec=spec,
         binding=binding,
         prompt_text=prompt_text,
-        messages=build_messages(prompt_text, extra_system, images),
+        messages=build_messages(prompt_text, extra_system, resolved_images),
         candidates=candidates,
         profile_id=profile_id,
-        images=list(images or []),
+        images=resolved_images,
         mask_enabled=cloud_mask_enabled(conn),
         context=assembly,
         dedup_mode=resolved_mode,
@@ -1475,6 +1486,48 @@ def route_text(
         "source": source,
         "text": text,
     }
+
+
+#: 智能路由实际参与匹配的文本上限（与 /lab/route 的 text 参数上限一致）
+ROUTE_MAX_CHARS = 4000
+
+
+def route_input(
+    conn: sqlite3.Connection,
+    *,
+    text: str,
+    attachment_ids: list[str] | None = None,
+    project_id: int | None = None,
+    top_k: int = 3,
+) -> dict[str, Any]:
+    """先统一把输入转成文本，再走原有的纯文本路由。
+
+    - 文档：本地抽取出正文，零模型调用；
+    - 图片：调用一次多模态模型转写成文本（无视觉模型时跳过并说明）；
+    - 纯文本输入：不启用任何额外调用，行为与原来一致。
+    """
+    resolved = ai_input_service.resolve(conn, attachment_ids)
+    effective = ai_input_service.compose_text((text or "").strip(), resolved)
+    transcript, note = ai_input_service.describe_images(conn, resolved.images)
+    if note:
+        resolved.notes.append(note)
+    if transcript:
+        block = f"【图片转写】\n（{ai_input_service.ATTACHMENT_GUARD}）\n{transcript}"
+        effective = f"{effective}\n\n{block}" if effective else block
+    if not effective.strip():
+        raise AppError(
+            ErrorCode.PARAM_ERROR,
+            "请描述你要做的事，或上传需求文档/截图",
+        )
+    truncated = len(effective) > ROUTE_MAX_CHARS
+    if truncated:
+        effective = effective[:ROUTE_MAX_CHARS]
+    result = route_text(conn, effective, project_id=project_id, top_k=top_k)
+    result["effectiveText"] = effective
+    result["transcription"] = transcript
+    result["input"] = resolved.summary()
+    result["truncated"] = truncated
+    return result
 
 
 # ---------------- 知识库检索上下文（问答助手用） ----------------

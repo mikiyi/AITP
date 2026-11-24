@@ -45,6 +45,9 @@ CAP_FIX_SUGGESTION = "fix_suggestion"
 # 四期专项 D：需求批量拆分导入（一份文档 → N 条需求 + 功能点归属建议）
 CAP_REQUIREMENT_IMPORT = "requirement_import"
 
+# V2.6.0：用例局部 Diff 修订（对用例集做增量编辑，产出可逐条采纳的 patch）
+CAP_CASE_PATCH = "case_patch"
+
 # 顺序执行的父记录不是可执行能力，只用于把整条流水线归成一条记录
 CAP_COMPOSITE = "composite"
 
@@ -365,6 +368,16 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
         output_format=OUTPUT_JSON,
         context_kinds=(CTX_MODULE,),
     ),
+    CAP_CASE_PATCH: CapabilitySpec(
+        CAP_CASE_PATCH, "用例局部修订",
+        "按一条自然语言指令对已有用例做增量修改（补场景/删重复/改预期/重排步骤），"
+        "产出可逐条采纳的 patch，不直接改库",
+        ("修订用例", "改用例", "局部修订", "补全场景", "补异常场景", "删重复", "重编号",
+         "用例优化", "patch", "diff", "case_patch"),
+        prompt_code="case-patch",
+        variables=("projectName", "instruction", "casesJson", "caseCount"),
+        output_format=OUTPUT_JSON,
+    ),
 }
 
 CAPABILITY_CODES: tuple[str, ...] = tuple(CAPABILITIES.keys())
@@ -398,6 +411,7 @@ LAB_CAPABILITIES: tuple[str, ...] = (
     CAP_PROMPT_OPTIMIZE,
     CAP_FIX_SUGGESTION,
     CAP_REQUIREMENT_IMPORT,
+    CAP_CASE_PATCH,
 )
 
 #: 扩展能力位：此前提示词库里的补充能力已全部并入核心能力，保留空位以兼容既有引用

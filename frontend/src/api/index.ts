@@ -47,6 +47,15 @@ import type {
   BugLog,
   BugScreenshot,
   CapabilitySpec,
+  CaseImportApplyResult,
+  CaseImportBatch,
+  CaseImportPreview,
+  CasePatchDetail,
+  CasePatchGenerateResult,
+  CasePatchItem,
+  CasePatchListResult,
+  CaseQualityResult,
+  CaseStabilityResult,
   CaseTreeNode,
   CiSettings,
   DbBackup,
@@ -104,6 +113,7 @@ import type {
   RequirementImportBatch,
   RequirementImportItem,
   RequirementImportSplit,
+  RiskSelectionResult,
   SqlAnalysis,
   SqlScript,
   SqlScriptResult,
@@ -294,6 +304,21 @@ export const testRunApi = {
     get<PagePayload<TestRun>>('/test-runs', query as never),
   get: (id: number) => get<TestRun>(`/test-runs/${id}`),
   envDiff: (id: number) => get<EnvDiffResult>(`/test-runs/${id}/env-diff`),
+  /** V2.6.0：批量执行前的静态自检（用例范围、环境、登录态、定义与断言）。 */
+  precheck: (id: number, body: { envId?: number } = {}) =>
+    post<{
+      canRun: boolean
+      blockers: string[]
+      warnings: string[]
+      items: Array<{
+        key: string
+        label: string
+        status: 'pass' | 'warn' | 'block'
+        detail: string
+        fix: string
+      }>
+      summary: { cases: number; blocked: number; warnings: number }
+    }>(`/test-runs/${id}/precheck`, body),
   create: (body: Record<string, unknown>) => post<TestRun>('/test-runs', body),
   update: (id: number, body: Record<string, unknown>) => put<TestRun>(`/test-runs/${id}`, body),
   refreshScope: (id: number) =>
@@ -441,6 +466,7 @@ export const requirementApi = {
     fileName?: string
     profileId?: number
     maxItems?: number
+    attachmentIds?: string[]
   }) => post<RequirementImportSplit>('/requirements/import/split', body),
   /** 批量采纳勾选的需求建议。 */
   adoptImport: (body: {
@@ -535,6 +561,55 @@ export const caseApi = {
     }),
   coverageModules: (projectId: number, versionId?: number | null) =>
     get<ModuleCoverageResult>('/test-cases/coverage/modules', { projectId, versionId }),
+  /** V2.6.0：用例集体检（缺失项 / 重复 / 可执行性），本地规则计算。 */
+  quality: (query: {
+    projectId: number
+    moduleId?: number
+    versionId?: number
+  }) => get<CaseQualityResult>('/test-cases/quality', query as never),
+  /** V2.6.0：批量取稳定性；不传 caseIds 时后端按项目取前 500 条。 */
+  stability: (projectId: number, caseIds: number[] = []) =>
+    get<CaseStabilityResult>('/test-cases/stability', {
+      projectId,
+      caseIds: caseIds.length ? caseIds.join(',') : undefined,
+    }),
+  /** V2.6.0：按变更范围做风险驱动选测。 */
+  riskSelection: (body: {
+    projectId: number
+    versionId?: number | null
+    changeScope: string
+    moduleIds?: number[]
+    limit?: number
+  }) => post<RiskSelectionResult>('/test-cases/risk-selection', body),
+  /** V2.6.0：对选中的用例集下达一条修订指令，生成待审 patch；无模型时返回 generated=false。 */
+  generatePatch: (body: {
+    projectId: number
+    caseIds: number[]
+    instruction: string
+    profileId?: number
+    attachmentIds?: string[]
+  }) => post<CasePatchGenerateResult>('/test-cases/patches', body),
+  /** V2.6.0：最近修订批次。 */
+  listPatches: (projectId: number, limit = 20) =>
+    get<CasePatchListResult>('/test-cases/patches', { projectId, limit }),
+  /** V2.6.0：修订批次详情。 */
+  getPatch: (id: number, projectId: number) =>
+    get<CasePatchDetail>(`/test-cases/patches/${id}`, { projectId }),
+  /** V2.6.0：采纳一条修订，写回目标字段。 */
+  adoptPatchItem: (itemId: number, projectId: number) =>
+    post<{ applied: boolean; item: CasePatchItem; caseId: number }>(
+      `/test-cases/patches/items/${itemId}/adopt`,
+      { projectId },
+    ),
+  /** V2.6.0：忽略一条修订。 */
+  dismissPatchItem: (itemId: number, projectId: number) =>
+    post<{ dismissed: boolean; item: CasePatchItem }>(
+      `/test-cases/patches/items/${itemId}/dismiss`,
+      { projectId },
+    ),
+  /** V2.6.0：最近的导入批次。 */
+  listImportBatches: (projectId: number, limit = 20) =>
+    get<{ items: CaseImportBatch[] }>('/test-cases/import/batches', { projectId, limit }),
   adopt: (body: {
     projectId: number
     moduleId?: number | null
@@ -547,7 +622,7 @@ export const caseApi = {
       body,
     ),
   importExcel: (form: FormData) =>
-    request<{ created: number; skipped: number; renumbered: number; total: number }>('/test-cases/import', {
+    request<CaseImportPreview | CaseImportApplyResult>('/test-cases/import', {
       method: 'POST',
       body: form,
       timeoutMs: LONG_TIMEOUT_MS,
@@ -602,7 +677,12 @@ export const bugApi = {
 /** 知识库：待审池 + 正式库。 */
 export const knowledgeApi = {
   /** 知识库问答助手：kb 纯本地检索 / llm 纯大模型 / hybrid 检索 + 大模型补强。 */
-  ask: (body: { question: string; mode: 'kb' | 'llm' | 'hybrid'; sessionId?: number | null }) =>
+  ask: (body: {
+    question: string
+    mode: 'kb' | 'llm' | 'hybrid'
+    sessionId?: number | null
+    attachmentIds?: string[]
+  }) =>
     postLong<KnowledgeAnswer>('/knowledge/ask', body),
   /** 问答助手历史：默认最近一条会话，页面挂载时回放，换菜单/重启后不丢问答。 */
   assistantHistory: (sessionId?: number | null) =>
@@ -779,7 +859,7 @@ export const labApi = {
   /** 把测试点大纲导出成 .xmind 文件；前端整理好 {title, children[]} 树回传。 */
   exportXmind: (body: { title: string; nodes: Array<Record<string, unknown>> }) =>
     postBlob('/lab/output/export-xmind', body) as Promise<BlobResult>,
-  route: (body: { text: string; projectId?: number; topK?: number }) =>
+  route: (body: { text: string; attachmentIds?: string[]; projectId?: number; topK?: number }) =>
     post<RouteResponse>('/lab/route', body),
   parseXmind: (form: FormData) =>
     request<XmindParseResult>('/lab/xmind/parse', { method: 'POST', body: form }),

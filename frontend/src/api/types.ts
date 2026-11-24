@@ -172,6 +172,191 @@ export interface CaseStep {
   expected: string
 }
 
+/** V2.6.0：用例集质量体检给出的一条问题。 */
+export interface CaseQualityIssue {
+  code: string
+  label: string
+  severity: 'high' | 'medium' | 'low'
+  severityLabel: string
+  caseId: number
+  caseNo: string
+  title: string
+  detail: string
+}
+
+/** V2.6.0：用例集质量体检结果，评分 100 分起按问题级别扣分。 */
+export interface CaseQualityResult {
+  score: number
+  grade: 'A' | 'B' | 'C' | 'D'
+  checked: number
+  /** 存在问题的用例条数（后端为兼容保留）。 */
+  caseIssueCount?: number
+  issueCount: number
+  severity: { high: number; medium: number; low: number }
+  severityLabels?: Record<string, string>
+  issues: CaseQualityIssue[]
+  truncated?: boolean
+  recommendation: string
+}
+
+/** V2.6.0：单条用例的历史稳定性。 */
+export interface CaseStabilityItem {
+  caseId: number
+  flaky: boolean
+  flips: number
+  passed: number
+  failed: number
+  window: number
+  lastResult: string
+}
+
+export interface CaseStabilityResult {
+  items: CaseStabilityItem[]
+}
+
+/** V2.6.0：风险驱动选测返回的一条用例。 */
+export interface RiskSelectionItem {
+  caseId: number
+  caseNo: string
+  title: string
+  priority: string
+  moduleId?: number | null
+  module: string
+  caseType?: string
+  score: number
+  reasons: string[]
+  breakdown: Record<string, number>
+  mandatory: boolean
+}
+
+export interface RiskSelectionResult {
+  items: RiskSelectionItem[]
+  total: number
+  selected: number
+  mandatoryP0: number
+  basis: {
+    changeScope?: string
+    moduleIds?: number[]
+    versionId?: number | null
+    limit?: number
+    windowDays?: number
+    weights: Record<string, unknown>
+  }
+}
+
+/** V2.6.0：AI 局部修订的一条待审条目。 */
+export interface CasePatchItem {
+  id: number
+  patchId?: number
+  caseId: number
+  caseNo: string
+  caseTitle: string
+  action: string
+  actionLabel: string
+  target: string
+  targetLabel: string
+  before: string
+  after: string
+  diff: string
+  reason: string
+  status: string
+  statusLabel: string
+  appliedAt?: string
+  dismissedAt?: string
+}
+
+export interface CasePatchDetail {
+  id: number
+  patchNo: string
+  projectId?: number
+  instruction: string
+  status: string
+  statusLabel: string
+  model?: string
+  items: CasePatchItem[]
+  counts: Record<string, number>
+  createdAt?: string
+}
+
+/** 无可用模型时后端只回提示，不落库。 */
+export interface CasePatchUnavailable {
+  generated: false
+  message: string
+  patches: unknown[]
+  raw?: string
+}
+
+export type CasePatchGenerateResult = CasePatchDetail | CasePatchUnavailable
+
+export interface CasePatchListItem {
+  id: number
+  patchNo: string
+  instruction: string
+  status: string
+  statusLabel: string
+  model?: string
+  createdAt: string
+  itemCount: number
+}
+
+export interface CasePatchListResult {
+  list: CasePatchListItem[]
+  total: number
+}
+
+/** V2.6.0：导入预览的一行处理结论。 */
+export interface CaseImportRow {
+  line: number
+  action: string
+  title: string
+  caseNo: string
+  reason?: string
+}
+
+export interface CaseImportSummary {
+  total: number
+  created: number
+  skipped: number
+  failed: number
+  renumbered: number
+}
+
+/** dryRun=true 时只预览不落库。 */
+export interface CaseImportPreview {
+  dryRun: true
+  format: string
+  fileName?: string
+  summary: CaseImportSummary
+  rows: CaseImportRow[]
+  truncated?: boolean
+}
+
+export interface CaseImportApplyResult extends CaseImportSummary {
+  format: string
+  batch?: {
+    id: number
+    batchNo: string
+    fileName: string
+    format: string
+    mode: string
+    summary: CaseImportSummary
+  }
+}
+
+export interface CaseImportBatch {
+  id: number
+  batchNo: string
+  fileName: string
+  format: string
+  mode: string
+  status: string
+  total: number
+  created: number
+  skipped: number
+  failed: number
+  createdAt: string
+}
+
 /** 扩展字段「测试数据」解析预览：内联内容、本地 txt/Excel/Json/SQL 文件或数据池引用。 */
 export interface TestDataPreview {
   kind: string
@@ -762,6 +947,18 @@ export interface RouteResponse {
   capabilityRoutes: RouteResult[]
   moduleRoutes: ModuleRouteResult[]
   source: 'ai' | 'fallback'
+  /** 实际参与匹配的文本：用户文本 + 文档正文 + 图片转写，超长会截断。 */
+  effectiveText?: string
+  /** 图片转写结果；没有图片或视觉不可用时为空。 */
+  transcription?: string
+  /** 附件摘要与降级说明。 */
+  input?: {
+    documents: Array<{ fileName?: string; chars?: number }>
+    images: Array<{ fileName?: string; watermarkApplied?: boolean }>
+    notes: string[]
+  }
+  /** 参与匹配的文本是否因超长被截断。 */
+  truncated?: boolean
 }
 
 /** 脑图节点：与后端 xmind_parser / testpoint-generation 的输出结构一致。 */
@@ -921,6 +1118,8 @@ export interface AiProfile {
   tokenUsed?: number
   /** 套餐剩余 token（未设额度时为 0）。 */
   tokenRemaining?: number
+  /** 是否支持图片输入；关闭后带图请求会跳过图片并提示，文本链路不受影响。 */
+  supportsVision?: boolean
   createdAt?: string
   updatedAt?: string
 }
@@ -2431,6 +2630,10 @@ export interface InterfaceExecution {
   run?: TestRun
   envId?: Id
   envName?: string
+  /** V2.6.0：失败归因与稳定性标记。 */
+  attribution?: FailureAttribution
+  flaky?: boolean
+  retryCount?: number
 }
 
 /** 接口用例批量执行的结果摘要。 */
@@ -2450,6 +2653,8 @@ export interface InterfaceBatchResult {
     statusCode: number | null
     durationMs: number | null
     message: string
+    flaky?: boolean
+    retryCount?: number
   }>
 }
 
@@ -2575,11 +2780,43 @@ export interface ReleaseGateCheck {
   unit: string
 }
 
+/** V2.6.0：失败归因结论，执行证据 / 发布就绪共用。 */
+export interface FailureAttribution {
+  kind: string
+  label: string
+  confidence: number
+  reason: string
+  action: string
+  rule?: string
+}
+
+/** V2.6.0：发布就绪结论。 */
+export interface ReleaseReadiness {
+  verdict: 'ready' | 'risk' | 'blocked'
+  label: string
+  summary: string
+  failedByPriority: Record<string, number>
+  flaky: Array<{ caseId: number; caseNo: string; title: string }>
+  attribution: {
+    total: number
+    counts: Record<string, number>
+    labels?: Record<string, string>
+    flaky: number
+    needsAssetChange: number
+    needsBugTicket: number
+    needsEnvFix: number
+  }
+  risks: Array<{ kind: string; label: string; count: number; detail: string }>
+  recommendations: string[]
+}
+
 export interface ReleaseGateResult {
   status: string
   metrics: Record<string, unknown>
   checks: ReleaseGateCheck[]
   blocking: string[]
+  /** V2.6.0：发布就绪建议；旧数据可能没有。 */
+  readiness?: ReleaseReadiness
 }
 
 export interface ReleaseGate {

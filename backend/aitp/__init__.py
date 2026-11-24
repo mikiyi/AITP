@@ -1,3 +1,3 @@
 """AITestPlatform — 个人 AI 测试工作台。"""
 
-__version__ = "2.5.0"
+__version__ = "2.6.0"

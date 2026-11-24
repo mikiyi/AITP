@@ -108,6 +108,8 @@ class AIProfileRepository(BaseRepository):
             "tokenQuota": int(row.get("token_quota") or 0),
             "tokenUsed": int(row.get("token_used") or 0),
             "tokenRemaining": max(0, int(row.get("token_quota") or 0) - int(row.get("token_used") or 0)),
+            # 迁移 084：是否支持图片输入；老库缺列按支持处理
+            "supportsVision": str(row.get("supports_vision", 1)) not in ("0", "False", "false"),
             "isDefault": bool(row.get("is_default")),
             "isActive": bool(row.get("is_active")),
             "sortOrder": row.get("sort_order"),

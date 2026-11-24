@@ -27,7 +27,7 @@ from ..repositories.test_run_repo import (
 )
 from ..services import audit_service, env_diff_service, tabular_export, test_run_service
 from ..services import automation_service, execution_protocol, interface_runner, job_queue
-from ..services import test_round_service
+from ..services import execution_precheck_service, test_round_service
 from .helpers import (
     attach_version_codes,
     audit,
@@ -499,6 +499,27 @@ def run_interface_run_case(pk: str, case_pk: str) -> Response:
     return ok(payload)
 
 
+@bp.post("/<pk>/precheck")
+def precheck_run(pk: str) -> Response:
+    """批量执行前的静态体检：用例范围、环境、登录态、用例定义与断言。"""
+    conn = db()
+    target = path_int(pk)
+    run = TestRunRepository(conn).get(target)
+    if not run:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "测试轮次不存在")
+    data = body()
+    env_id = optional_int(data.get("envId"), "envId")
+    if env_id is None and run.get("env_id"):
+        env_id = int(run["env_id"])
+    payload = execution_precheck_service.check(
+        conn,
+        project_id=int(run["project_id"]),
+        run_id=target,
+        env_id=env_id,
+    )
+    return ok(payload)
+
+
 @bp.post("/<pk>/interface-run")
 def run_interface_batch(pk: str) -> Response:
     """批量执行轮次内全部接口用例；默认投递任务队列，sync=true 时同步执行。"""
@@ -515,15 +536,21 @@ def run_interface_batch(pk: str) -> Response:
         raise AppError(ErrorCode.PARAM_ERROR, "执行环境不存在或已删除")
     timeout = optional_int(data.get("timeoutSeconds"), "timeoutSeconds") \
         or interface_runner.DEFAULT_TIMEOUT
+    retry = optional_int(data.get("retry"), "retry") or 0
+    workers = optional_int(data.get("workers"), "workers") or 1
+    retry = max(0, min(5, retry))
+    workers = max(1, min(8, workers))
     executed_by = optional_str(data.get("executedBy"), "executedBy", 64) or "local"
 
     if data.get("sync") is True:
         payload = interface_runner.run_batch(
-            conn, target, env_id=env_id, timeout=timeout, executed_by=executed_by
+            conn, target, env_id=env_id, timeout=timeout, executed_by=executed_by,
+            retry=retry, workers=workers,
         )
         audit(conn, audit_service.AUDIT_ACTION_EXECUTE, audit_service.RESOURCE_TEST_RUN, target,
               str(run.get("name") or ""),
-              {"mode": "sync", "total": payload["total"], "failed": payload["failed"]})
+              {"mode": "sync", "total": payload["total"], "failed": payload["failed"],
+               "retry": retry, "workers": workers})
         commit(conn)
         return ok(payload)
 
@@ -531,7 +558,10 @@ def run_interface_batch(pk: str) -> Response:
         conn,
         kind="interface.batch_run",
         title=f"接口批量执行 · {run.get('name') or target}",
-        payload={"runId": target, "envId": env_id, "timeoutSeconds": timeout},
+        payload={
+            "runId": target, "envId": env_id, "timeoutSeconds": timeout,
+            "retry": retry, "workers": workers,
+        },
         priority=80,
     )
     audit(conn, audit_service.AUDIT_ACTION_EXECUTE, audit_service.RESOURCE_TEST_RUN, target,

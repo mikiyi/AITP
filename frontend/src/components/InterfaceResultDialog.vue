@@ -20,6 +20,25 @@
         <span>{{ result.message }}</span>
       </div>
 
+      <div v-if="result.attribution || result.flaky" class="iface-attr">
+        <el-tooltip
+          v-if="result.attribution"
+          :content="attributionTip(result.attribution)"
+          placement="top"
+        >
+          <el-tag class="attribution-tag" :type="attributionTagType(result.attribution.kind)" size="small">
+            {{ result.attribution.label }}
+            <template v-if="result.attribution.confidence">
+              · {{ Math.round(result.attribution.confidence * 100) }}%
+            </template>
+          </el-tag>
+        </el-tooltip>
+        <el-tag v-if="result.flaky" class="flaky-tag" type="warning" size="small" effect="plain">
+          flaky · 重试 {{ result.retryCount ?? 0 }} 次
+        </el-tag>
+        <span v-else-if="result.retryCount" class="muted">重试 {{ result.retryCount }} 次</span>
+      </div>
+
       <div class="iface-title">断言明细</div>
       <el-table :data="result.assertions" size="small" border>
         <el-table-column prop="name" label="断言" min-width="150" show-overflow-tooltip />
@@ -63,7 +82,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { InterfaceExecution } from '@/api/types'
+import type { FailureAttribution, InterfaceExecution } from '@/api/types'
 
 const props = defineProps<{
   modelValue: boolean
@@ -86,6 +105,19 @@ function emitGenerate(): void {
   if (executionId) {
     emit('generateFix', executionId)
   }
+}
+
+/** 归因配色：缺陷红、断言黄、环境蓝、数据/未知灰。 */
+function attributionTagType(kind: string): 'danger' | 'warning' | 'primary' | 'info' {
+  if (kind === 'bug') return 'danger'
+  if (kind === 'assertion') return 'warning'
+  if (kind === 'environment') return 'primary'
+  return 'info'
+}
+
+function attributionTip(attribution: FailureAttribution): string {
+  const parts = [attribution.reason, attribution.action].filter((item) => item && item.trim())
+  return parts.join('；') || attribution.label
 }
 
 const requestHeaders = computed(() => {
@@ -122,6 +154,14 @@ const requestHeaders = computed(() => {
   margin-top: 6px;
   font-size: 12px;
   color: var(--aitp-text-weak);
+}
+
+.iface-attr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
 }
 
 .iface-title {

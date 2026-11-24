@@ -65,6 +65,14 @@
       "dupRate": 0.0,
       "issueCount": 0.0,
       "promptChars": 1385.0
+    },
+    "case_patch_login_exception": {
+      "passRate": 1.0,
+      "retention": 1.0,
+      "completeness": 1.0,
+      "dupRate": 0.0,
+      "issueCount": 0.0,
+      "promptChars": 1571.0
     }
   }
 }

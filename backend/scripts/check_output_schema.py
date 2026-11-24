@@ -250,10 +250,10 @@ def dump(value: Any) -> str:
 
 def pure_checks() -> None:
     check("修正重试上限写死一次（红线：不无限烧 token）", schema.MAX_SCHEMA_RETRIES == 1)
-    check("schema 覆盖六类结构化产出（含四期修复建议与需求拆分）",
+    check("schema 覆盖七类结构化产出（含四期修复建议/需求拆分与 V2.6 用例修订）",
           set(schema.SCHEMAS) == {"case_generation", "xmind_to_case",
                                   "regression_generation", "testpoint_generation",
-                                  "fix_suggestion", "requirement_import"},
+                                  "fix_suggestion", "requirement_import", "case_patch"},
           str(sorted(schema.SCHEMAS)))
     json_caps = {code for code, spec in caps.CAPABILITIES.items()
                  if spec.output_format == caps.OUTPUT_JSON}
@@ -458,6 +458,14 @@ def _sample_for(code: str) -> Any:
              "acceptance": "1. 有效验证码登录成功", "modulePath": "登录/验证码",
              "priority": "P0"},
         ]
+    if code == "case_patch":
+        return {
+            "summary": "补全验证码异常场景",
+            "patches": [
+                {"caseId": "1", "action": "update", "target": "steps",
+                 "after": "打开登录页\n输入错误验证码\n提交", "reason": "补充异常场景"},
+            ],
+        }
     return GOOD_CASES
 
 
