@@ -8,7 +8,7 @@
  * - 主题：frontend/src/stores/theme.ts（10 套）
  * - 问答模式：backend/aitp/api/knowledge.py 的 ASSISTANT_MODES = kb / llm / hybrid
  * - 后台任务种类：backend/aitp/services/job_queue.py 的 KIND_LABELS（11 类）
- * - 规模数字：57 路由 / 62 视图、44 蓝图 484 接口、81 个迁移、406 种测试文件格式、81 个门禁脚本（80 个 check + 冒烟，一键跑 80 项）
+ * - 规模数字：59 路由 / 64 视图、48 蓝图 511 接口、85 个迁移、406 种测试文件格式、83 个门禁脚本（82 个 check + 冒烟，一键跑 82 项）
  * 页面里的按钮名、弹窗名、列名一律按界面原文写，方便读者照着走通。
  */
 
@@ -138,16 +138,16 @@ export const RUNTIME_FACTS: string[] = [
 
 /** 产品规模：能在代码里数出来的数字，不写「业界领先」。 */
 export const PRODUCT_STATS = [
-  { label: '页面路由 / 组件', value: '57 / 62', note: '侧栏每个入口都对应独立页面' },
-  { label: '后端接口', value: '484 个 / 44 蓝图', note: '统一挂在 /api/v1 下' },
+  { label: '页面路由 / 组件', value: '59 / 64', note: '侧栏每个入口都对应独立页面' },
+  { label: '后端接口', value: '511 个 / 48 蓝图', note: '统一挂在 /api/v1 下' },
   { label: 'AI 能力', value: '23 项（23 张卡片）', note: '新增「用例局部修订」，保留修复建议与需求批量拆分' },
   { label: '提示词模板', value: '27 份', note: '能力卡片与变量清单的来源，含修复建议、需求拆分与用例修订' },
   { label: '测试文件格式', value: '406 种', note: '本地构造，不调模型' },
   { label: '离线知识字典', value: '4 份', note: '对抗串 / 边界值 / SFDIPOT / 注入探测，零 token' },
-  { label: '数据库迁移', value: '81 次', note: '启动时按序自动执行' },
+  { label: '数据库迁移', value: '84 次', note: '启动时按序自动执行' },
   { label: '内置主题', value: '10 套', note: '含黑 / 科技 / 工业 3 套深色' },
-  { label: '门禁脚本', value: '81 个', note: '80 个 check 脚本 + API 冒烟；一键跑 80 项（check_ai_live 除外）' },
-  { label: '端到端用例', value: '19 条 spec', note: '隔离端口 + 临时库 + 本地 mock 模型' },
+  { label: '门禁脚本', value: '83 个', note: '82 个 check 脚本 + API 冒烟；一键跑 82 项（check_ai_live 除外）' },
+  { label: '端到端用例', value: '21 条 spec', note: '63 条用例，隔离端口 + 临时库 + 本地 mock 模型与 adb 桩' },
 ]
 
 /** 版本更新记录：升级版本号时与 README 同步维护。 */
@@ -158,6 +158,21 @@ export interface ReleaseNote {
 }
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  {
+    version: 'v2.7.0',
+    date: '2026-11-25',
+    items: [
+      'App 场景引擎：场景自动化补齐最后一条执行路径，App 页签原生可用；支持启动 / 停止 / 点选 / 输入 / 滑动 / 返回 / Home / 等待 / 文本断言 / 截图十类动作，复用 adb 驱动与统一证据口径，文本断言基于 uiautomator dump 真读界面，截图落 data/app-shots/',
+      'App 执行配置：adb 命令、设备序列号、命令超时可在场景页内维护，并「测试连接」列出在线设备；命令缺失或超时给中文错误与排查提示，不卡住整条场景',
+      '通知模板（渠道配置化）：通知渠道新增 Webhook / 钉钉 / 企微 / 飞书 / 邮箱五类，统一用 {{eventLabel}}、{{title}}、{{projectName}}、{{occurredAt}}、{{link}}、{{dataSummary}} 等变量；支持标题 + 正文模板、变量一键插入与「渲染预览」，测试发送与真实告警走同一条渲染链路',
+      '邮件渠道：SMTP 主机 / 端口 / 账号 / 发件人 / 收件人可配，密码存系统密钥库，接口只回 hasPassword；发信异常转成中文提示并落发送记录，不静默失败',
+      '自动化失败 → 缺陷半自动流转：automation.auto_bug_mode 分「关闭 / 待审（默认）/ 自动」三档；待审档把场景与自动化失败先写成「缺陷待审」，缺陷列表顶部集中展示来源与实际结果，人工「确认转缺陷」才落正式缺陷并关联用例，「忽略」即终态',
+      'AITP MCP 服务端（只读优先）：POST /api/v1/mcp 提供 JSON-RPC 2.0 的 initialize / tools/list / tools/call / ping；只读工具覆盖项目、用例、需求、轮次、缺陷与质量洞察；写工具 bugs.draft.create 需显式开启写权限且只写待审草稿；默认关闭、仅回环访问、支持 Bearer 令牌，调用留痕可查；令牌明文只在生成/轮换时展示一次，历史令牌可停用/启用/删除并记录最后使用与客户端',
+      '跨轮次失败聚类：最近 N 轮失败按「标题 + 实际结果」归一化签名聚类，给出出现次数、涉及用例、来源轮次、首末出现时间与逐轮趋势，重复翻车与偶发失败分开看',
+      '用例依赖与变更影响面：维护用例间依赖（同项目、禁自依赖、禁成环）；选定变更用例与需求后，按「直接变更 + 需求关联 + 反向依赖 BFS」圈出受影响用例并附最近 20 次失败率',
+      '新增迁移 087–088（088 为 MCP 令牌哈希入库、生成/轮换与启停删记录）、check_v27 门禁与端到端 spec 21；接口增至 511 个 / 48 蓝图，版本升到 v2.7.0',
+    ],
+  },
   {
     version: 'v2.6.0',
     date: '2026-11-24',
@@ -358,7 +373,7 @@ export const FEATURE_GROUPS: FeatureGroup[] = [
       { entry: '功能点', path: '/settings/modules', desc: '模块→子模块→功能三层树，可换父节点；新建子节点的层级类型按父节点自动递进（模块→子模块→功能，也可手工改），历史节点角色与深度错位在启动时由迁移按深度回填（深度 1=module、2=submodule、≥3=feature）；功能节点可绑定 AI 能力与专属提示词（23 项能力里 19 项可挂载，提示词优化、修复建议、需求拆分、用例局部修订为工具类不占位）。' },
       { entry: '需求', path: '/requirements', desc: '需求 CRUD，关联功能点与版本，状态流转（草稿/评审中/已通过/已实现/已否决）；可「加入知识库」；AI「需求确认」先体检可测性。' },
       { entry: '测试用例', path: '/test-cases', desc: '左侧功能点树筛选 + 右侧列表；CRUD、xlsx 导入（表头缺失整批拒绝、重复编号可重排）、覆盖矩阵、批量执行/删除；接口用例可单条真实执行。工具栏可一键切到「脑图视图」：功能点树为骨架、用例为叶子，只读浏览，点击用例叶子跳详情；视图态写进地址栏，刷新可还原，用例超过 300 条只展示前 300 条并给出提示。' },
-      { entry: '缺陷', path: '/bugs', desc: '缺陷 CRUD + 状态机（新建/已指派/已解决/待验证/重新打开/关闭/已拒绝）；关联用例与执行证据，可下钻「查看证据」；严重级别 P0–P3。编号全局唯一并带来源前缀：手工建单 BUG-xxx、AI 处理（AI 采纳缺陷分析、探索性异常）AI_BUG-xxx、自动化脚本/场景/矩阵 Auto_BUG-xxx，数字各自自增、软删永不复用。详情页可上传/预览/下载/删除截图，文件存 data/bug-screenshots/<缺陷编号>/，命名 pic_<缺陷编号>_001 递增；单张 ≤10MB、每个缺陷 ≤30 张，只收 PNG/JPEG/GIF/WebP/BMP。' },
+      { entry: '缺陷', path: '/bugs', desc: '缺陷 CRUD + 状态机（新建/已指派/已解决/待验证/重新打开/关闭/已拒绝）；关联用例与执行证据，可下钻「查看证据」；严重级别 P0–P3。编号全局唯一并带来源前缀：手工建单 BUG-xxx、AI 处理（AI 采纳缺陷分析、探索性异常）AI_BUG-xxx、自动化脚本/场景/矩阵 Auto_BUG-xxx，数字各自自增、软删永不复用。详情页可上传/预览/下载/删除截图，文件存 data/bug-screenshots/<缺陷编号>/，命名 pic_<缺陷编号>_001 递增；单张 ≤10MB、每个缺陷 ≤30 张，只收 PNG/JPEG/GIF/WebP/BMP。自动化/场景失败按「关闭 / 待审（默认）/ 自动」三档流转：待审档先入列表顶部「缺陷待审」区（带来源与实际结果），人工「确认转缺陷」才落正式缺陷并关联用例，「忽略」即终态。' },
       { entry: '修复建议', path: '/fix-suggestions', desc: '接口执行断言失败后的 AI 诊断进入待审池：给失败原因、建议目标（改断言 / 改预期响应体 / 改预期状态码 / 判定为接口缺陷）、一句话建议与依据，并附字段级 diff 预览。人工核对后「采纳」才写回用例对应字段并留审计，采纳 / 忽略即终态不可二次处理；判定为接口缺陷的建议不能自动采纳，需到缺陷页手工建单。无可用模型时只给机械 diff，不写库、不报错。' },
       { entry: '断言库', path: '/settings/assertions', desc: '把「目标+算子+期望」抽成可复用条目，接口用例写引用串（lib:AR-0001）展开执行；挂功能点的断言只对该节点及子节点可见，不挂为项目级共享；schema 断言保存时校验 JSON。' },
     ],
@@ -368,6 +383,7 @@ export const FEATURE_GROUPS: FeatureGroup[] = [
     entries: [
       { entry: '测试报告', path: '/reports', desc: '按实时数据生成草稿或新建；编辑/发布/归档（发布与归档均为终态，归档不可退回草稿）；章节勾选 + 片段复用；失败样本勾选导出并带执行证据；导出 Markdown/HTML/PDF/打印。' },
       { entry: '追溯与准入', path: '/traceability', desc: '需求追溯矩阵（需求→用例→结果→未闭环缺陷，数字可下钻、导出）；发布准入按阈值算机器结论与阻断原因，可「预览结论」「留存准入记录」（可累积快照）。' },
+      { entry: '质量洞察', path: '/insights', desc: '「跨轮次失败聚类」把最近 N 轮失败按「标题 + 实际结果」归一化签名聚类，给出次数、涉及用例、来源轮次与逐轮趋势，点开看明细；「变更影响面」维护用例依赖（同项目、禁自依赖、禁成环），选用例与需求后按直接变更 + 需求关联 + 反向依赖 BFS 圈出受影响用例，并标最近 20 次失败率，可直接拿去排必测范围。' },
       { entry: 'SQL 分析', path: '/sql-analyses', desc: 'SQL 风险/性能分析台账，编号按项目递增不复用，来源区分 AI/手工，抽屉看被分析 SQL 与结论，可加入知识库。' },
     ],
   },
@@ -378,7 +394,7 @@ export const FEATURE_GROUPS: FeatureGroup[] = [
       { entry: 'Web 自动化脚本', path: '/automation/web', desc: '写 Python 代码的 Web 自动化脚本台账（Selenium/Playwright）；执行留 stdout/stderr/退出码/产物，结果按用例编号或标签回写轮次；生产环境执行需勾选确认。列表可按名称/编号、框架、引用与状态筛选；新建脚本自动归属当前项目并带默认框架与起步正文；编辑可填变更说明进版本快照；「已被应用」悬停显示引用场景编号；定时调度目标从场景/脚本下拉选择；执行与批量执行带 loading 防重。' },
       { entry: 'App 自动化脚本', path: '/automation/app', desc: '写 Python 代码的 App 自动化脚本台账（Appium/Hypium/UiAutomator2）；依赖 Appium Server/adb/hdc，设置页可做解释器与框架体检，未通过执行被拦下。页面交互与 Web 自动化一致（编号、筛选、默认框架/正文、引用浮显、定时调度）。' },
       { entry: '接口自动化脚本', path: '/automation/api', desc: '写 Python 代码的接口自动化脚本台账（pytest/requests/unittest）；junit.xml 按用例编号回写，解析不了按退出码兜底并保留原文；断言可引用断言库。页面交互与 Web 自动化一致（编号、筛选、默认框架/正文、引用浮显、定时调度）。' },
-      { entry: '场景自动化', path: '/automation/scenario', desc: '无代码编排的多步骤串联场景，页内分三个页签：Web 场景（navigate/click/type 驱动真实浏览器）、App 场景（App 原生步骤接入中，暂为占位提示）、接口场景（GET/POST/PUT/PATCH/DELETE，URL 支持 {{baseUrl}} 相对路径与 {{var}} 变量）。步骤也可选「数据库」（只读查询检查点：SQL / Mongo JSON / Redis 命令，结果 JSON 可用 json:$/len:/schema: 断言）或「自动化脚本」（按脚本编号引 Web/App/接口自动化脚本并随场景同步执行，执行记录进统一证据）。场景可绑执行环境与测试数据（内联、本地 txt/Excel/Json/SQL 路径或 `pool:<数据池名称>`，带记录集则逐条跑整个场景）；点「执行」投递后台任务，历史逐步留请求/响应与结论。列表支持名称/编号与状态筛选，新建/编辑可设启用/停用；步骤与测试数据表单内置变量用法提示（提取变量 → {{var}} 引用示例）；复制场景同样计入脚本引用库；执行按钮防重。区分口诀：脚本=写代码，场景=无代码编排。' },
+      { entry: '场景自动化', path: '/automation/scenario', desc: '无代码编排的多步骤串联场景，页内分三个页签：Web 场景（navigate/click/type 驱动真实浏览器）、App 场景（原生步骤：启动/停止/点选/输入/滑动/返回/Home/等待/文本断言/截图，adb 驱动，文本断言基于 uiautomator dump，截图落 data/app-shots/；页内可配 adb 命令、设备序列号、命令超时并「测试连接」）、接口场景（GET/POST/PUT/PATCH/DELETE，URL 支持 {{baseUrl}} 相对路径与 {{var}} 变量）。步骤也可选「数据库」（只读查询检查点：SQL / Mongo JSON / Redis 命令，结果 JSON 可用 json:$/len:/schema: 断言）或「自动化脚本」（按脚本编号引 Web/App/接口自动化脚本并随场景同步执行，执行记录进统一证据）。场景可绑执行环境与测试数据（内联、本地 txt/Excel/Json/SQL 路径或 `pool:<数据池名称>`，带记录集则逐条跑整个场景）；点「执行」投递后台任务，历史逐步留请求/响应与结论。列表支持名称/编号与状态筛选，新建/编辑可设启用/停用；步骤与测试数据表单内置变量用法提示（提取变量 → {{var}} 引用示例）；复制场景同样计入脚本引用库；执行按钮防重。区分口诀：脚本=写代码，场景=无代码编排。' },
       { entry: '性能测试', path: '/automation/performance', desc: 'JMeter 脚本台账（.jmx）无界面执行；设置页配置 JMeter 根目录与启动参数，未配置执行被拦下；执行报告带 P90/P95/P99 分位与可视化 HTML 报告。新建默认带 JMeter 框架与最小可运行计划，列表支持编号检索与状态/引用筛选，定时调度目标从场景/脚本下拉选择。' },
     ],
   },
@@ -416,7 +432,8 @@ export const FEATURE_GROUPS: FeatureGroup[] = [
       { entry: 'AI 设置', path: '/settings/ai', desc: '供应商档案 CRUD + 启停 + 真实自检 + 优先级降级；支持 15+ 内置厂商，选厂商后可切「按量 API / 订阅套餐（Agent / Coding / Token Plan）」——切套餐自动带出对应接口地址、协议与 Key 格式提示（小米 token-plan-cn + tp-/ttp-、MiniMax / Kimi Coding 套餐走 Anthropic 兼容端点）；协议支持 OpenAI 兼容 / Anthropic Messages 兼容 / Ollama 原生；主表单填名称/供应商/接入方式/协议/地址/模型/Key，其余（启用本地 Key 与环境变量、优先级/温度/最大 Token/超时/套餐额度等）收在「高级设置」，「测试大模型配置是否连通」在弹窗底栏居中。页面分两个页签：「LLM设置」聚合生效配置、档案列表、调用参数与成本预算；「外发脱敏」单独放全局脱敏开关（云端调用前自动替换敏感信息，可在数据外发确认里预览本次正文）。本地模型不计费；档案可勾「关闭思考模式」让推理模型直出答案。' },
       { entry: '测试文档模板', path: '/settings/templates', desc: '上传 docx/xlsx/csv/md/txt/json（≤5MB）解析正文/列名/版式；原件可下载、换/删清理旧原件、只上传未保存自动清理；导出列配置；损坏文件给中文提示。' },
       { entry: '数据备份与还原', path: '/settings/backup', desc: '库快照 + 整包 zip；每天/每周定时、保留 1–90 份、磁盘阈值跳过告警；恢复前自动 pre-restore；高版本 schema 拒绝导入。「备份内容 → 备份包含缺陷截图」默认关闭，打开后整包备份/项目资产包/留存归档都带截图，关闭时三处都不包含（截图仍保留在 data/bug-screenshots/<缺陷编号>/，不参与留存清理）。' },
-      { entry: 'CI 与通知', path: '/settings/ci', desc: 'CI 令牌生成/吊销（只存哈希）驱动 POST /api/v1/ci/runs；Webhook 渠道全局/按项目，订阅六类事件，测试发送/失败重试/发送记录。' },
+      { entry: 'CI 与通知', path: '/settings/ci', desc: 'CI 令牌生成/吊销（只存哈希）驱动 POST /api/v1/ci/runs；通知渠道全局/按项目，类型可选 Webhook / 钉钉 / 企微 / 飞书 / 邮箱，标题与正文模板用 {{eventLabel}}、{{title}}、{{projectName}}、{{occurredAt}}、{{link}}、{{dataSummary}} 等变量，可一键插入与「渲染预览」；邮件填 SMTP 主机/端口/账号/发件人/收件人，密码存系统密钥库、接口只回 hasPassword；订阅六类事件，测试发送与真实告警同一条渲染链路，发送记录可回看。' },
+      { entry: 'MCP 服务', path: '/settings/mcp', desc: 'AITP 自己的 MCP 服务端：POST /api/v1/mcp 走 JSON-RPC 2.0（initialize / tools/list / tools/call / ping）；默认关闭且仅回环访问，可开写权限并以 Bearer 令牌鉴权；生成/轮换后的令牌明文只展示一次，历史记录保留掩码、状态、创建与最后使用时间、最后调用客户端，可停用（可恢复）/启用/删除（不可恢复），轮换时旧令牌立即失效并标记「已停用（已轮换）」；只读工具覆盖项目/用例/需求/轮次/缺陷/质量洞察，写工具 bugs.draft.create 只在开写时可用且只写待审草稿；页内可看工具清单、复制端点与 curl 示例、查最近调用留痕。' },
     ],
   },
 ]

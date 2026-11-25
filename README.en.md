@@ -4,7 +4,7 @@ English | [简体中文](README.md)
 
 A personal AI testing workstation — **single-user, local-first, offline-capable** — a quality-control tool built around **prompt engineering and data masking for LLM calls**.
 
-Current version **v2.6.0**: the same value served by `aitp.__version__`, `db/migrator.py::APP_VERSION`,
+Current version **v2.7.0**: the same value served by `aitp.__version__`, `db/migrator.py::APP_VERSION`,
 the `appVersion` field of `GET /api/v1/health` and the `app_version` recorded by each migration.
 
 It folds the AI lab, test cases, defects, log analysis, SQL analysis, regression, reports, knowledge base, task list and workspace configuration into one closed loop of LLM-assisted testing:
@@ -26,6 +26,16 @@ The library gets sharper with use, and every output fits your project better —
 - All data lives in a local SQLite file (`data/aitp.db`), bound to this machine only — never exposed to the LAN or the internet.
 - AI settings are read from local environment variables, from in-app configuration, and from local models (Ollama).
 - When there is no cloud model, the model is unavailable, or the network is down, AITP degrades to local rules automatically and never blocks the main workflow.
+
+## v2.7.0 changes (closing the last execution path + platform outreach)
+
+- **App scenario engine**: scenario automation now covers its last execution path — the App tab is natively usable. Steps support launch / stop / tap / input / swipe / back / home / wait / assertText / screenshot, reuse the adb driver and the unified evidence contract; text assertions read the real UI through `uiautomator dump`, screenshots land in `data/app-shots/`; the adb command, device serial and command timeout are configurable on the page with a "test connection" probe that lists online devices
+- **Notification templates (configurable channels)**: channels gain a type and a template — Webhook / DingTalk / WeCom / Feishu / email share `{{eventLabel}}`, `{{title}}`, `{{projectName}}`, `{{occurredAt}}` and more, with a title + body template, one-click variable insertion and a rendered preview; email goes over SMTP with the password in the local secret store (the API only returns `hasPassword`), and test sends use the same render path as real alerts
+- **Automation failure → semi-automatic defect flow**: new `automation.auto_bug_mode` with three modes — off / review (default) / auto. In review mode scenario and automation failures are first written as defect drafts; the defect list shows a pending area with source and actual result, and only a human "confirm as defect" creates the real defect with linked cases, while "ignore" is terminal
+- **AITP MCP server (read-only first)**: `POST /api/v1/mcp` speaks JSON-RPC 2.0 (`initialize` / `tools/list` / `tools/call` / `ping`); read-only tools cover projects, cases, requirements, runs, defects and quality insights, the write tool `bugs.draft.create` only works when write access is explicitly enabled and only writes a pending draft; off by default, loopback only, optional Bearer token and per-call logging; the plaintext token is shown once on generate/rotate, and history tokens can be disabled, re-enabled or deleted with last-used/client tracking
+- **Cross-run failure clustering**: failures from the recent N runs are clustered by a normalized signature of title + actual result, with occurrence counts, involved cases, source runs, first/last seen and per-run trend, separating repeated breakage from one-off noise
+- **Case dependencies and change impact**: maintain case-to-case dependencies (same project, no self-dependency, no cycles); after picking changed cases and requirements, the impact set is computed from direct changes + requirement links + reverse-dependency BFS, annotated with the recent failure rate
+- **Quality engineering**: migrations 087 (notification template fields, defect drafts, case dependencies, MCP call log and defaults) and 088 (MCP token hashing, rotation and enable/disable history), the `check_v27.py` gate and E2E spec 21; endpoints grow to 511 / 48 blueprints and the version becomes v2.7.0
 
 ## v2.6.0 changes (execution trust + asset efficiency)
 
@@ -138,7 +148,7 @@ The launcher checks the port first: if AITP is already running it just opens the
 
 ## Feature map
 
-Frontend: 57 routes / 62 page components. Backend: 44 blueprints / 484 endpoints, all under `/api/v1`.
+Frontend: 59 routes / 64 page components. Backend: 48 blueprints / 511 endpoints, all under `/api/v1`.
 
 ### First-launch tour and demo project
 
@@ -218,18 +228,20 @@ Page: **Task list** (`/todos`)
 | Projects | CRUD, current-project switching, status management |
 | Requirements | Maintenance, direct feature-point linking (module / sub-module / feature), bulk delete, export |
 | Test cases | CRUD, status transitions, xlsx import/export, bulk execution |
-| Defects | CRUD, state-machine transitions, linked test cases, log attachments, drill-down into original execution evidence; globally unique numbers with source prefixes (manual `BUG-`, AI `AI_BUG-`, automation `Auto_BUG-`, never reused after soft delete); upload / preview / download / delete screenshots on the detail page (`data/bug-screenshots/<bugNo>/`, `pic_<no>_001` incrementing, 10MB per file, 30 per defect) |
+| Defects | CRUD, state-machine transitions, linked test cases, log attachments, drill-down into original execution evidence; globally unique numbers with source prefixes (manual `BUG-`, AI `AI_BUG-`, automation `Auto_BUG-`, never reused after soft delete); upload / preview / download / delete screenshots on the detail page (`data/bug-screenshots/<bugNo>/`, `pic_<no>_001` incrementing, 10MB per file, 30 per defect); scenario and automation failures follow the off / review (default) / auto switch — review mode first writes a "defect draft" shown in a pending area on the defect list, and only human confirmation creates the real defect with linked cases, while ignore is terminal |
 | Assertion library | Reusable assertion rules shared per project/feature point, referenced from interface cases as `lib:<code>`, JSON Schema assertions with failure diffs |
 | Database query checkpoints | Interface assertions gain a `db:` target (`db:` compares the first cell, `db:rows:` the row count, `db:json:` the result JSON) and scenarios gain a "database" step; connections come from the execution environment (passwords via the OS secret store), read-only enforced (writes / multi-statements / INTO rejected), timeout and 200-row cap, `{{var}}` parameterization; covers MySQL/PostgreSQL-protocol domestic databases (OceanBase/TiDB/GBase/KingbaseES/Highgo/openGauss/GaussDB/OSCAR), Dameng, ClickHouse, SQLite, MongoDB and Redis with lazy drivers and install hints when missing; query text and results land in the unified evidence |
 | Knowledge base | Pending pool → official library, versioning, review, reference protection, full-text search |
 | Test reports | Generation/adoption, ECharts charts, metric trends, export |
 | Execution and evidence | Interface / automation / manual / regression / **exploratory** runs each write one unified evidence snapshot, drillable from runs, defects and reports |
 | Regression checklist | CRUD, AI-generated regression items, auto items really executed by the server with evidence, manual items require evidence to pass |
-| Scenario automation | No-code multi-step scenarios organised in **Web / App / API** tabs (App native steps are being wired up, currently a placeholder); steps can be interface / browser / database / **automation script**, each reusing the interface assertion engine (an automation-script step references a Web/App/API automation script by number and runs it with the scenario, its run record landing in the unified evidence — reusing the automation engine instead of a second execution wheel): JSONPath extraction feeds `{{var}}` into later steps (database-step query results are extractable too), a failed step can stop or continue the run, the whole scenario can be driven record by record from a data pool, and every run is kept in history. Scenarios carry an SCN number and an enabled/disabled status; the list supports name/number keyword and status filters, and the status can be set in the create/edit form. Naming: scripts = Python code (Web / App / API automation scripts with AUTO-W/AUTO-A/AUTO-I prefixes, PERF for performance, SQL for database scripts; AI one-click imports use the separate **AI_SQL-xxx** sequence for database scripts and **AI_AUTO-W/AI_AUTO-A/AI_AUTO-I/AI_PERF-xxx** for automation scripts, so the source is obvious at a glance), scenarios = no-code orchestration; schedules carry SCH numbers. A script is "in use" only when referenced by an automation step inside a scenario (the hover shows the referencing scenario SCN numbers; schedules and plain execution history do not count): hovering the button shows the referencing numbers as an at-most-10 item enumeration, with a "view more" dialog listing every reference beyond that; copied scenarios also count as references. Database-script and scenario-step forms carry inline variable-usage hints with {{var}} examples; new automation scripts start with a runnable default framework and starter content; category stats are scoped to the current project; schedule targets are picked from scenario/script dropdowns |
+| Scenario automation | No-code multi-step scenarios organised in **Web / App / API** tabs (App native steps are now wired in: launch / stop / tap / input / swipe / back / home / wait / assertText / screenshot, adb-driven, text assertions read the real UI via uiautomator dump, screenshots land in `data/app-shots/`; adb command, device serial and command timeout are configured on the page with a "test connection" probe); steps can be interface / browser / database / **automation script**, each reusing the interface assertion engine (an automation-script step references a Web/App/API automation script by number and runs it with the scenario, its run record landing in the unified evidence — reusing the automation engine instead of a second execution wheel): JSONPath extraction feeds `{{var}}` into later steps (database-step query results are extractable too), a failed step can stop or continue the run, the whole scenario can be driven record by record from a data pool, and every run is kept in history. Scenarios carry an SCN number and an enabled/disabled status; the list supports name/number keyword and status filters, and the status can be set in the create/edit form. Naming: scripts = Python code (Web / App / API automation scripts with AUTO-W/AUTO-A/AUTO-I prefixes, PERF for performance, SQL for database scripts; AI one-click imports use the separate **AI_SQL-xxx** sequence for database scripts and **AI_AUTO-W/AI_AUTO-A/AI_AUTO-I/AI_PERF-xxx** for automation scripts, so the source is obvious at a glance), scenarios = no-code orchestration; schedules carry SCH numbers. A script is "in use" only when referenced by an automation step inside a scenario (the hover shows the referencing scenario SCN numbers; schedules and plain execution history do not count): hovering the button shows the referencing numbers as an at-most-10 item enumeration, with a "view more" dialog listing every reference beyond that; copied scenarios also count as references. Database-script and scenario-step forms carry inline variable-usage hints with {{var}} examples; new automation scripts start with a runnable default framework and starter content; category stats are scoped to the current project; schedule targets are picked from scenario/script dropdowns |
 | AI one-click import | AI-lab output turns into assets directly: the SQL data-generation statement can be added as a database script in one click, and automation-script generation adds a web/app/API automation script in one click according to the produced code type; the import carries an automatic `AI_`-prefixed number into the matching menu and the badge updates in real time. When case-type output is exported to Excel, cases not yet imported get a `草稿-001` draft number; adopting or importing them assigns the official number (draft numbers never land in the database) |
 | Standalone data pool | One shared test-data set reused by cases and scenarios: unique name per project, parse preview, referenced as `pool:<name>` from case extension fields and scenario data sources, parsed by the same case test-data engine instead of a second fetch path |
 | Execution matrix (GAP-43) | Fan a batch of cases across multiple environments × endpoints (app servers), dispatch once and really run each cell; per-case cross-cell attribution (common pass / common failure / env-specific / endpoint-specific / mixed); one-click defect conversion for common failures with evidence attached; production environments require explicit confirmation to dispatch |
+| Quality insights | Cross-run failure clustering: failures from the recent N runs are clustered by a normalized title + actual-result signature with counts, involved cases, source runs, first/last seen and per-run trend; change impact: maintain case dependencies (same project, no self-dependency, no cycles) and compute the affected set from direct changes + requirement links + reverse-dependency BFS, annotated with the failure rate over the last 20 runs |
 | Web exploratory testing (GAP-45) | An MCP-driven real browser (started by the `mcpCommand` you configure under "Exploratory testing settings"; `backend/scripts/browser_mcp_server.py`) explores in a read-snapshot → decide → act → observe loop, finding gaps that scripted cases miss; normal steps keep evidence at the configured per-step screenshot count, anomalous steps force 3 screenshots plus a dual-anchor ±N-second log slice, network snapshot, console errors and traceId as an evidence pack; password/token inputs are masked per PII rules; findings go to the pending pool for human review first and only become defects after approval |
+| AITP MCP server | `POST /api/v1/mcp` (JSON-RPC 2.0: initialize / tools/list / tools/call / ping), off by default, loopback only, optional Bearer token; read-only tools cover projects / cases / requirements / runs / defects / quality insights, the write tool `bugs.draft.create` requires explicit write access and only writes a pending draft; the plaintext token is shown once on generate/rotate, while history keeps the mask, status, last-used time and client with disable/re-enable/delete; every call is logged in `sys_mcp_call_log` |
 | Knowledge / report fragment reuse (GAP-42) | A fragment is maintained once in its source project; target reports register a reference and rendering / export reads the body live, avoiding drifting copies; referenced fragments cannot be deleted |
 | Data retention and archival (GAP-44) | Per-data-type retention days and expiry actions (archive / soft-delete / summary-only) for runs, automation runs, evidence, logs, todos and defect screenshots (screenshots only when the backup switch is on); reference protection (bug-linked evidence, matrix-linked records survive expiry); expired data is zipped into `data/archive/` and searchable with original readback; dry-run preview and startup auto-cleanup supported |
 
@@ -247,7 +259,8 @@ Page: **Task list** (`/todos`)
 | Exploratory testing settings | Max steps / duration / per-step timeout / per-step screenshot count (anomalous steps force 3 more), record selectors, input masking toggle, log-slice window and sources, MCP server command and pinned-tool allowlist (GAP-45) |
 | Project asset package | Structure-package export / preview / rename-on-import: modules, versions, requirements, cases, defects, knowledge, scripts, assertion rules; every id is reallocated and foreign keys remapped; keystores and execution history never leave the package |
 | External platform import | Read-only one-way import from Zentao / Jira / TestLink: after login-token exchange only GET requests are sent and nothing is ever written back; Zentao and Jira import requirements / cases / defects, TestLink imports requirements / cases; credentials go to the system keystore, with two-layer "platform account + server-level HTTP Basic" auth; mapping templates are editable, dedup is per project + platform + external id, and every batch is recorded |
-| CI and notifications | CI tokens, webhook channels, event subscriptions, test send |
+| CI and notifications | CI tokens, notification channels (Webhook / DingTalk / WeCom / Feishu / email), channel type + title/body templates with variable insertion and rendered preview, email SMTP (password in the system keystore, the API only returns `hasPassword`), event subscriptions, test send and send history |
+| MCP server | `POST /api/v1/mcp` switch, allow-write switch, endpoint and token status (plaintext shown once on generate/rotate), token history (disable/re-enable/delete, created and last-used time, last client), tool inventory and recent call log |
 | Home card customization | Show/hide and reorder non-fixed home cards |
 
 ---
@@ -355,8 +368,8 @@ cd frontend && npm run build                                              # fron
 - Any new gate script dropped into `backend/scripts` named `check_*.py` is picked up
   automatically without touching the runner.
 
-Gate inventory (81 entries = 80 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
-scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 80 items actually
+Gate inventory (83 entries = 82 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
+scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 82 items actually
 execute):
 
 | Script | Covers | When it fails, look at |
@@ -441,6 +454,7 @@ execute):
 | `check_heuristics_pack.py` | Offline heuristics packs: four dictionaries load, keyword hits, capability filter and default category | `prompts/heuristics/` and `heuristics_service.py` |
 | `check_requirement_import.py` | Requirement batch split: fingerprint, schema, split and batches, idempotent adoption, module resolution, cross-project isolation (migration 080) | `services/requirement_import_service.py` |
 | `check_case_insight.py` | Execution trust and asset efficiency: attribution rules, flaky detection, case quality check, risk selection, import idempotency, local-diff patch adopt/dismiss/terminal state, pre-execution self-check, release readiness (migrations 081–083) | `services/failure_attribution_service.py`, `case_patch_service.py`, `case_quality_service.py`, `risk_selection_service.py`, `execution_precheck_service.py` |
+| `check_v27.py` | V2.7 platform features: App scenario steps (via the `mock_adb.py` stub) on success and failure paths, four-channel template rendering with email required-field validation, notification preview, defect draft confirm/ignore, MCP switch/token generate-rotate-disable-enable-delete/one-time reveal/write access/call log, failure clustering, dependency dedup and cycle guard, impact closure (migrations 087–088) | `services/app_scenario_service.py`, `notification_service.py`, `bug_draft_service.py`, `mcp_service.py`, `insight_service.py` |
 | `smoke_api.py` | P3 API smoke: all blueprints' key paths on a temp DB | the failure list printed at the end |
 
 General triage: every script prints `[FAIL]` lines item by item and ends with `PASS=n FAIL=n`;
@@ -466,7 +480,7 @@ run as the source of truth. On CI `check_isolation_matrix` is excluded via `--sk
 ## End-to-end tests (E2E)
 
 Playwright-based full-flow E2E tests live in `frontend/e2e/`, configured by `frontend/playwright.config.ts`.
-Currently **19 specs / 56 cases**, run serially; spec code shares the strict type check with the frontend (`tsconfig.e2e.json`).
+Currently **21 specs / 63 cases**, run serially; spec code shares the strict type check with the frontend (`tsconfig.e2e.json`).
 The harness boots an **isolated environment** (separate backend on 8762 + temp DB, mock model on
 18790/18791, vite on 5399) and never touches the live 8760 service or `data/aitp.db`; teardown kills the
 process tree and removes the temp directory.
@@ -483,6 +497,7 @@ cd frontend && npx playwright test               # serial, workers=1
 - **Phase-four specs** (`13`–`17`): fix suggestions (fail → generate → adopt writeback / dismiss), vector search (configure embedding → rebuild → semantic recall + fallback), auth-session reuse (import → precheck → expiry block → remove), case mindmap (toggle → refresh restore → empty state), requirement batch split (split → tick and adopt → duplicate import skipped).
 - **Execution-trust spec** (`18`): case quality check (scan → issue detail), pre-execution self-check + concurrent interface run with attribution, and the release-readiness verdict rendered on the traceability page.
 - **Unified-attachments spec** (`19`): image-only requirement split, knowledge Q&A with an image, AI revision sending a reference screenshot, smart routing transcribing a screenshot before matching, and the AI-profile vision switch save/read-back.
+- **V2.7 platform spec** (`21`): App scenario creation and execution (via the `mock_adb.py` stub, covering both pass and fail assertions), notification template preview and email channel save, defect draft confirm and ignore, MCP settings plus JSON-RPC calls (`tools/list` / `tools/call` / write-tool guard), one-time token reveal and old-token invalidation after rotation, and quality-insight failure clustering with change impact.
 - Every step asserts a business result, not just "no error"; elements are re-located after page changes, never reusing stale refs.
 - Results: `frontend/e2e/results.json` + console list; failures keep trace/screenshots.
 - Convention in `AGENTS.md`: **after every code change, run the verification and report the real pass/fail results in the reply**.
@@ -496,10 +511,10 @@ cd frontend && npx playwright test               # serial, workers=1
 ```
 backend/
   aitp/
-    api/          44 blueprints / 484 endpoints
+    api/          48 blueprints / 511 endpoints
     ai/           resolver, client, masking, adapters, cost, output_schema
     common/       constants, validation, pagination, keystore, security utilities
-    db/           connections and migrations (81 files)
+    db/           connections and migrations (84 files)
     repositories/ parameterized SQL repository layer
     services/     knowledge persistence, report export, backup/restore, execution matrix, retention/archival, exploratory testing, external import
     prompts/      prompt template library
@@ -510,7 +525,7 @@ frontend/
   src/
     api/          unified request layer
     components/   shared components
-    views/        62 page components
+    views/        64 page components
   e2e/            Playwright end-to-end tests (isolated harness)
 data/             runtime data (SQLite, logs, keystore, archives, defect screenshots in bug-screenshots/, exploratory screenshots and log slices, execution media in exec-media/, auth sessions in auth-sessions/)
 knowledge/        Markdown knowledge base storage
