@@ -4,6 +4,7 @@
   1. App 场景引擎：adb 桩驱动 launch/tap/input/assertText，成功与失败两条路径；
   2. 通知模板：四类渠道渲染 + 邮件渠道配置（密码不落库）；
   3. 缺陷待审：review 模式生成草稿 → 人工确认落正式缺陷；MCP 写入同样走待审；
+     失败转缺陷三档（关闭 / 待审 / 自动）、非法档位拦截、旧布尔键兼容与设置页控件；
   4. MCP 服务端：开关/令牌/回环校验、tools/list、只读工具、写工具权限；
   5. 质量洞察：跨轮次失败聚类、用例依赖（禁重复/禁环）、变更影响面闭包。
 
@@ -426,6 +427,88 @@ def main() -> int:
 
         status, payload = api(client, "get", f"/api/v1/insights/dependencies?projectId={project_id}")
         check("依赖列表可查询", len((payload.get("data") or {}).get("items") or []) == 2)
+
+        # ---------------- P2：失败转缺陷三档 ----------------
+        status, payload = api(client, "get", "/api/v1/settings/config")
+        config_rows: list[dict[str, Any]] = payload.get("data") or []
+        mode_row: dict[str, Any] = next((item for item in config_rows
+                                        if item.get("key") == "automation.auto_bug_mode"), {})
+        check("三档配置键默认为待审", mode_row.get("value") == "review", str(mode_row)[:200])
+        check("三档配置键带取值说明", bool(mode_row.get("hint")), str(mode_row)[:200])
+
+        status, payload = api(client, "put", "/api/v1/settings/config", {"items": [
+            {"key": "automation.auto_bug_mode", "value": "half"}]})
+        check("非法档位被拒绝", code_of(payload) != 200000, str(payload)[:200])
+        status, payload = api(client, "get", "/api/v1/settings/config")
+        kept: dict[str, Any] = next((item for item in ((payload.get("data") or []))
+                                     if item.get("key") == "automation.auto_bug_mode"), {})
+        check("非法档位不改动原值", kept.get("value") == "review", str(kept)[:200])
+
+        def run_failing_scenario() -> dict[str, Any]:
+            """重跑那条「断言必败」的 App 场景；每次 run_no 不同，去重逻辑不会互相吞掉。"""
+            _, inner = api(client, "post",
+                           f"/api/v1/api-scenarios/{fail_scenario_id}/run?projectId={project_id}")
+            return inner.get("data") or {}
+
+        def set_auto_bug(*items: dict[str, str]) -> None:
+            api(client, "put", "/api/v1/settings/config", {"items": list(items)})
+
+        set_auto_bug({"key": "automation.auto_bug_mode", "value": "off"})
+        off_run = run_failing_scenario()
+        check("关闭档：失败既不建缺陷也不落待审",
+              off_run.get("passed") is False and not off_run.get("autoBugId")
+              and not off_run.get("autoBugDraftId"),
+              json.dumps(off_run, ensure_ascii=False)[:250])
+
+        set_auto_bug({"key": "automation.auto_bug_mode", "value": "auto"})
+        auto_run = run_failing_scenario()
+        check("自动档：失败直接生成正式缺陷", bool(auto_run.get("autoBugId"))
+              and not auto_run.get("autoBugDraftId"),
+              json.dumps(auto_run, ensure_ascii=False)[:250])
+
+        # 回归护栏：曾经传参只有 camelCase 的 runNo，去重标记退化成空编号，
+        # 同项目 auto 档第二次失败就再也不建单了。
+        auto_run_again = run_failing_scenario()
+        check("自动档：每次失败执行各建一条缺陷",
+              bool(auto_run_again.get("autoBugId"))
+              and auto_run_again.get("autoBugId") != auto_run.get("autoBugId"),
+              json.dumps(auto_run_again, ensure_ascii=False)[:250])
+
+        set_auto_bug({"key": "automation.auto_bug_mode", "value": "review"})
+        review_run = run_failing_scenario()
+        check("待审档：失败只进待审区", int(review_run.get("autoBugDraftId") or 0) > 0
+              and not review_run.get("autoBugId"),
+              json.dumps(review_run, ensure_ascii=False)[:250])
+
+        # 三档键留空 → 回退旧布尔键
+        set_auto_bug({"key": "automation.auto_bug_mode", "value": ""},
+                     {"key": "automation.auto_bug", "value": "true"})
+        legacy_on = run_failing_scenario()
+        check("旧键兼容：三档留空 + auto_bug=true 走自动", bool(legacy_on.get("autoBugId")),
+              json.dumps(legacy_on, ensure_ascii=False)[:250])
+        set_auto_bug({"key": "automation.auto_bug", "value": "false"})
+        legacy_off = run_failing_scenario()
+        check("旧键兼容：三档留空 + auto_bug=false 不产缺陷",
+              not legacy_off.get("autoBugId") and not legacy_off.get("autoBugDraftId"),
+              json.dumps(legacy_off, ensure_ascii=False)[:250])
+
+        view_text = (ROOT / "frontend" / "src" / "views" / "settings"
+                     / "PerformanceSettingsView.vue").read_text(encoding="utf-8")
+        check("设置页给出三档控件",
+              all(f'value="{name}"' in view_text for name in ("off", "review", "auto"))
+              and "automation.auto_bug_mode" in view_text,
+              "PerformanceSettingsView.vue 未提供三档控件")
+
+        # 运行时体检要起本机进程探 adb / JMeter（未就绪时单档 15s 超时），
+        # 保存按钮只该等配置落库，体检结果后台补齐。
+        for view_name in ("PerformanceSettingsView.vue", "AutomationSettingsView.vue"):
+            source = (ROOT / "frontend" / "src" / "views" / "settings"
+                      / view_name).read_text(encoding="utf-8")
+            head = source.split("async function save(", 1)
+            save_body = head[1].split("\n}", 1)[0] if len(head) > 1 else ""
+            check(f"{view_name} 保存不被运行时体检锁住",
+                  "void loadRuntime()" in save_body and "await load()" not in save_body,
+                  f"{view_name} 的 save() 仍在 await 运行时体检")
 
         conn.close()
         return 0 if _failed == 0 else 1

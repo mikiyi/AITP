@@ -2307,9 +2307,9 @@ export interface ApiScenarioRunResult {
   recordCount: number
   durationMs: number
   runs: ApiScenarioRun[]
-  /** 开启 automation.auto_bug 后失败自动生成的缺陷 id。 */
+  /** automation.auto_bug_mode=auto 档下失败自动生成的缺陷 id。 */
   autoBugId?: number | null
-  /** V2.7.0 待审模式下自动生成的缺陷草稿 id（人工确认后才落正式缺陷）。 */
+  /** V2.7.0 待审档（automation.auto_bug_mode=review，默认）下自动生成的缺陷草稿 id（人工确认后才落正式缺陷）。 */
   autoBugDraftId?: number | null
 }
 

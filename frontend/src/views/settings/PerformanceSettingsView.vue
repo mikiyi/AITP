@@ -43,10 +43,12 @@
           <span class="muted form-hint">任务队列同时执行上限（1-8），相互隔离</span>
         </el-form-item>
         <el-form-item label="失败自动转缺陷">
-          <el-switch v-model="autoBug" active-value="true" inactive-value="false" />
-          <span class="muted form-hint">
-            开启后接口场景未通过、自动化脚本失败 / 超时 / 异常会自动生成 P2 缺陷（描述带执行编号与错误证据）
-          </span>
+          <el-radio-group v-model="autoBugMode">
+            <el-radio-button value="off">关闭</el-radio-button>
+            <el-radio-button value="review">待审（默认）</el-radio-button>
+            <el-radio-button value="auto">自动</el-radio-button>
+          </el-radio-group>
+          <span class="muted form-hint">{{ AUTO_BUG_HINTS[autoBugMode] }}</span>
         </el-form-item>
       </el-form>
 
@@ -92,16 +94,30 @@ const router = useRouter()
 
 const CONFIG_JMETER_HOME = 'performance.jmeter.home'
 const CONFIG_JMETER_ARGS = 'performance.jmeter.args'
+const CONFIG_AUTO_BUG_MODE = 'automation.auto_bug_mode'
+const CONFIG_AUTO_BUG = 'automation.auto_bug'
+
+type AutoBugMode = 'off' | 'review' | 'auto'
+
+const AUTO_BUG_MODES: readonly AutoBugMode[] = ['off', 'review', 'auto']
+/** 与后端 auto_bug_service._FALSE_VALUES 同口径：旧布尔键落在这个集合里算「关闭」。 */
+const LEGACY_FALSE_VALUES = ['', '0', 'false', 'off', 'no', 'none']
+
+const AUTO_BUG_HINTS: Record<AutoBugMode, string> = {
+  off: '失败不自动生成任何缺陷，只在执行记录里手动「转缺陷」。',
+  review: '接口场景未通过、自动化脚本失败 / 超时 / 异常先落「缺陷待审区」，人工「确认转缺陷」才生成 P2 缺陷并关联失败用例。',
+  auto: '失败直接生成 P2 缺陷（描述带执行编号与错误证据）并关联失败用例，不进待审。',
+}
 
 const jmeterHome = ref('')
 const jmeterArgs = ref('')
 const loadModel = ref('')
 const concurrency = ref(2)
-const autoBug = ref('false')
+const autoBugMode = ref<AutoBugMode>('review')
 const saving = ref(false)
 const runtime = ref<AutomationRuntime | null>(null)
 
-async function load(): Promise<void> {
+async function loadConfigs(): Promise<void> {
   try {
     const configs = await settingsApi.config()
     const find = (key: string): string =>
@@ -110,15 +126,26 @@ async function load(): Promise<void> {
     jmeterArgs.value = find(CONFIG_JMETER_ARGS)
     loadModel.value = find('performance.load_model')
     concurrency.value = Number(find('task.queue.concurrency') || 2) || 2
-    autoBug.value = find('automation.auto_bug') === 'true' ? 'true' : 'false'
+    const mode = find(CONFIG_AUTO_BUG_MODE).toLowerCase()
+    autoBugMode.value = AUTO_BUG_MODES.includes(mode as AutoBugMode)
+      ? (mode as AutoBugMode)
+      : (LEGACY_FALSE_VALUES.includes(find(CONFIG_AUTO_BUG).toLowerCase()) ? 'off' : 'auto')
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载配置失败')
   }
+}
+
+async function loadRuntime(): Promise<void> {
   try {
     runtime.value = await automationApi.runtime()
   } catch {
     runtime.value = null
   }
+}
+
+async function load(): Promise<void> {
+  await loadConfigs()
+  await loadRuntime()
 }
 
 async function save(): Promise<void> {
@@ -129,10 +156,14 @@ async function save(): Promise<void> {
       { key: CONFIG_JMETER_ARGS, value: jmeterArgs.value.trim(), valueType: 'string' },
       { key: 'performance.load_model', value: loadModel.value.trim(), valueType: 'json' },
       { key: 'task.queue.concurrency', value: String(concurrency.value), valueType: 'number' },
-      { key: 'automation.auto_bug', value: autoBug.value, valueType: 'boolean' },
+      { key: CONFIG_AUTO_BUG_MODE, value: autoBugMode.value, valueType: 'string' },
+      // 旧布尔键跟着同步：还有历史数据与外部脚本只读它，不能让两键互相矛盾
+      { key: CONFIG_AUTO_BUG, value: autoBugMode.value === 'auto' ? 'true' : 'false', valueType: 'boolean' },
     ])
     ElMessage.success('已保存')
-    await load()
+    await loadConfigs()
+    // 运行时体检要探本机 JMeter/adb，配好 JMeter 后要 4 秒以上；后台刷新即可，别把「保存」按钮锁住
+    void loadRuntime()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '保存失败')
   } finally {

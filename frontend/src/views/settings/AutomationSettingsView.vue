@@ -363,7 +363,7 @@ async function loadRuntime(): Promise<void> {
   }
 }
 
-async function load(): Promise<void> {
+async function loadConfigs(): Promise<void> {
   try {
     const configs = await settingsApi.config()
     const find = (key: string): string =>
@@ -378,6 +378,10 @@ async function load(): Promise<void> {
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载配置失败')
   }
+}
+
+async function load(): Promise<void> {
+  await loadConfigs()
   await loadRuntime()
 }
 
@@ -416,7 +420,9 @@ async function save(): Promise<void> {
       { key: CONFIG_HDC, value: hdcCommand.value.trim(), valueType: 'string' },
     ])
     ElMessage.success('已保存')
-    await load()
+    await loadConfigs()
+    // 体检要逐个解释器起进程探依赖，落库后按钮不该被它锁住；后台刷新，要看结果点「重新体检」
+    void loadRuntime()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '保存失败')
   } finally {

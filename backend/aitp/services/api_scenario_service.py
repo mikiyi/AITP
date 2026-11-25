@@ -335,8 +335,10 @@ def run_with_data(
         "autoBugId": None, "autoBugDraftId": None,
     }
     if not passed:
+        # run_row 必须带 snake_case 的 run_no：去重标记靠它区分「哪一次执行」，
+        # 传 result（camelCase）会让标记退化成空编号，同项目第二次失败就不再建单。
         outcome = auto_bug_service.from_scenario(
-            conn, scenario, {**result, "run_id": run_id}, runs
+            conn, scenario, {"run_id": run_id, "run_no": run_no}, runs
         )
         if outcome:
             conn.execute(

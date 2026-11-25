@@ -1058,7 +1058,7 @@ def execute_script(
         case_id=_writeback_case_id(conn, script, test_run_id=test_run_id),
     )
     conn.commit()
-    # 残留子项：失败自动转缺陷（配置 automation.auto_bug 开启时）
+    # 残留子项：失败自动转缺陷（automation.auto_bug_mode 为 review / auto 时）
     if status in (RUN_STATUS_FAILED, RUN_STATUS_TIMEOUT, RUN_STATUS_ERROR):
         outcome = auto_bug_service.from_automation(
             conn, script, final_row,

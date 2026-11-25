@@ -147,7 +147,7 @@ export const PRODUCT_STATS = [
   { label: '数据库迁移', value: '84 次', note: '启动时按序自动执行' },
   { label: '内置主题', value: '10 套', note: '含黑 / 科技 / 工业 3 套深色' },
   { label: '门禁脚本', value: '83 个', note: '82 个 check 脚本 + API 冒烟；一键跑 82 项（check_ai_live 除外）' },
-  { label: '端到端用例', value: '21 条 spec', note: '63 条用例，隔离端口 + 临时库 + 本地 mock 模型与 adb 桩' },
+  { label: '端到端用例', value: '21 条 spec', note: '64 条用例，隔离端口 + 临时库 + 本地 mock 模型与 adb 桩' },
 ]
 
 /** 版本更新记录：升级版本号时与 README 同步维护。 */
@@ -395,7 +395,7 @@ export const FEATURE_GROUPS: FeatureGroup[] = [
       { entry: 'App 自动化脚本', path: '/automation/app', desc: '写 Python 代码的 App 自动化脚本台账（Appium/Hypium/UiAutomator2）；依赖 Appium Server/adb/hdc，设置页可做解释器与框架体检，未通过执行被拦下。页面交互与 Web 自动化一致（编号、筛选、默认框架/正文、引用浮显、定时调度）。' },
       { entry: '接口自动化脚本', path: '/automation/api', desc: '写 Python 代码的接口自动化脚本台账（pytest/requests/unittest）；junit.xml 按用例编号回写，解析不了按退出码兜底并保留原文；断言可引用断言库。页面交互与 Web 自动化一致（编号、筛选、默认框架/正文、引用浮显、定时调度）。' },
       { entry: '场景自动化', path: '/automation/scenario', desc: '无代码编排的多步骤串联场景，页内分三个页签：Web 场景（navigate/click/type 驱动真实浏览器）、App 场景（原生步骤：启动/停止/点选/输入/滑动/返回/Home/等待/文本断言/截图，adb 驱动，文本断言基于 uiautomator dump，截图落 data/app-shots/；页内可配 adb 命令、设备序列号、命令超时并「测试连接」）、接口场景（GET/POST/PUT/PATCH/DELETE，URL 支持 {{baseUrl}} 相对路径与 {{var}} 变量）。步骤也可选「数据库」（只读查询检查点：SQL / Mongo JSON / Redis 命令，结果 JSON 可用 json:$/len:/schema: 断言）或「自动化脚本」（按脚本编号引 Web/App/接口自动化脚本并随场景同步执行，执行记录进统一证据）。场景可绑执行环境与测试数据（内联、本地 txt/Excel/Json/SQL 路径或 `pool:<数据池名称>`，带记录集则逐条跑整个场景）；点「执行」投递后台任务，历史逐步留请求/响应与结论。列表支持名称/编号与状态筛选，新建/编辑可设启用/停用；步骤与测试数据表单内置变量用法提示（提取变量 → {{var}} 引用示例）；复制场景同样计入脚本引用库；执行按钮防重。区分口诀：脚本=写代码，场景=无代码编排。' },
-      { entry: '性能测试', path: '/automation/performance', desc: 'JMeter 脚本台账（.jmx）无界面执行；设置页配置 JMeter 根目录与启动参数，未配置执行被拦下；执行报告带 P90/P95/P99 分位与可视化 HTML 报告。新建默认带 JMeter 框架与最小可运行计划，列表支持编号检索与状态/引用筛选，定时调度目标从场景/脚本下拉选择。' },
+      { entry: '性能测试', path: '/automation/performance', desc: 'JMeter 脚本台账（.jmx）无界面执行；设置页配置 JMeter 根目录与启动参数，未配置执行被拦下；「失败自动转缺陷」三档（关闭 / 待审（默认）/ 自动）也在该页保存，对应配置键 automation.auto_bug_mode，留空才回退旧布尔键 automation.auto_bug；执行报告带 P90/P95/P99 分位与可视化 HTML 报告。新建默认带 JMeter 框架与最小可运行计划，列表支持编号检索与状态/引用筛选，定时调度目标从场景/脚本下拉选择。' },
     ],
   },
   {

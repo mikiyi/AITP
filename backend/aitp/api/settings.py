@@ -42,6 +42,7 @@ from ..services import (
     ai_check,
     app_scenario_service,
     audit_service,
+    auto_bug_service,
     backup_schedule,
     backup_service,
     home_card_service,
@@ -124,7 +125,14 @@ CONFIG_HINTS: dict[str, str] = {
     "automation.python.timeout": (
         "整数，单位秒，默认 300。自动化脚本单次执行超过该时长会被强制结束，并记为「超时」。"
     ),
+    "automation.auto_bug_mode": (
+        "三档：off=关闭，只在执行页手动「转缺陷」；review=待审（默认），失败先落「缺陷待审区」，"
+        "人工确认后才生成正式缺陷并关联失败用例；auto=自动，失败直接生成 P2 缺陷，描述里带执行编号与错误证据。"
+        "本键优先于旧布尔键 automation.auto_bug；留空则回退旧键（true→auto、false→off）。"
+    ),
     "automation.auto_bug": (
+        "旧布尔键，已被三档键 automation.auto_bug_mode 取代，仅在后者留空时生效："
+        "true 等价 auto、false 等价 off。"
         "可填 true 或 false，默认 false。true：场景自动化执行未通过、自动化脚本执行失败/超时/异常时，"
         "自动按失败步骤或失败用例生成一条 P2 缺陷，描述里带执行编号与错误证据；"
         "false：只在执行页手动「转缺陷」。"
@@ -144,6 +152,11 @@ CONFIG_HINTS: dict[str, str] = {
         "鸿蒙 hdc 命令行工具的绝对路径，例如 Windows 的 C:\\devtools\\hdc.exe 或 macOS / Linux 的 /usr/local/bin/hdc；留空则按系统 PATH 查找。"
         "App 自动化的鸿蒙（HOS）用例走 Hypium，需要 hypium 包加 hdc 两个依赖。"
     ),
+}
+
+#: 只接受枚举值的配置键。档位写错会静默回退到旧键、行为与界面上显示的不一致，所以在入口拦住。
+CONFIG_ENUMS: dict[str, tuple[str, ...]] = {
+    "automation.auto_bug_mode": auto_bug_service.MODES,
 }
 
 
@@ -524,6 +537,12 @@ def update_config() -> Response:
         key = require_str(item.get("key"), "key", 120)
         value = optional_str(item.get("value"), "value", 2000)
         value_type = optional_str(item.get("valueType"), "valueType", 20) or "string"
+        allowed = CONFIG_ENUMS.get(key)
+        if allowed and value and value.lower() not in allowed:
+            raise AppError(
+                ErrorCode.PARAM_ERROR,
+                f"{key} 只能填 {' / '.join(allowed)} 之一（留空表示回退旧键）",
+            )
         repo.set_value(key, value, value_type=value_type)
         updated += 1
     commit(conn)

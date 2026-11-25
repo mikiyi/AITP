@@ -214,6 +214,79 @@ test('缺陷待审：App 场景失败进入待审区，人工确认后生成正�
   assertHealthy(health)
 })
 
+test('失败转缺陷三档：设置页切档生效、旧键同步与非法档位拦截', async ({ page }) => {
+  await configureAppDriver()
+  const projectName = `E2E 三档流转 ${Date.now()}`
+  const projectId = await newProject(projectName)
+  const scenario = await createAppScenario(projectId, `App 三档失败 ${Date.now()}`, [
+    { name: '断言不存在文案', type: 'app', action: 'assertText', target: '绝不会出现的文案' },
+  ])
+
+  async function configValue(key: string): Promise<string> {
+    const rows = (data(await api('GET', '/settings/config')) ?? []) as any[]
+    return String(rows.find((item) => item.key === key)?.value ?? '')
+  }
+
+  const health = await open(page, '/settings/performance')
+  const block = page.locator('.settings-block', { hasText: 'JMeter 启动配置' })
+  const group = page.locator('.el-form-item', { hasText: '失败自动转缺陷' })
+  const saveBtn = block.getByRole('button', { name: '保存' })
+  await expect(group.locator('.el-radio-button__inner')).toHaveText(['关闭', '待审（默认）', '自动'])
+  await expect(group.locator('.el-radio-button.is-active')).toContainText('待审')
+
+  /** 保存后按钮必须立刻回到可点：运行时体检（探本机 JMeter/adb）是后台刷新，不能锁住表单。 */
+  async function saveMode(label: string): Promise<void> {
+    await group.locator('.el-radio-button', { hasText: label }).click()
+    await saveBtn.click()
+    await expect(page.locator('.el-message--success').last()).toContainText('已保存', { timeout: 15_000 })
+    await expect(saveBtn).toBeEnabled({ timeout: 5_000 })
+  }
+
+  // 自动档：两键一起写，失败直接落正式缺陷
+  await saveMode('自动')
+  await expect(group).toContainText('直接生成 P2 缺陷')
+  await expect.poll(() => configValue('automation.auto_bug_mode')).toBe('auto')
+  expect(await configValue('automation.auto_bug')).toBe('true')
+  const autoRun = data(await api('POST', `/api-scenarios/${scenario.id}/run?projectId=${projectId}`, {}))
+  expect(autoRun.passed).toBe(false)
+  expect(Number(autoRun.autoBugId)).toBeGreaterThan(0)
+  expect(autoRun.autoBugDraftId).toBeNull()
+
+  // 第二次失败执行还要再建一条：去重只按本次执行编号
+  const autoRunAgain = data(await api('POST', `/api-scenarios/${scenario.id}/run?projectId=${projectId}`, {}))
+  expect(Number(autoRunAgain.autoBugId)).toBeGreaterThan(0)
+  expect(autoRunAgain.autoBugId).not.toBe(autoRun.autoBugId)
+
+  // 关闭档：既不建缺陷也不落待审
+  await saveMode('关闭')
+  await expect(group).toContainText('不自动生成任何缺陷')
+  await expect.poll(() => configValue('automation.auto_bug_mode')).toBe('off')
+  const offRun = data(await api('POST', `/api-scenarios/${scenario.id}/run?projectId=${projectId}`, {}))
+  expect(offRun.passed).toBe(false)
+  expect(offRun.autoBugId).toBeNull()
+  expect(offRun.autoBugDraftId).toBeNull()
+
+  // 回到默认待审档：只进待审区，旧布尔键同步回 false
+  await saveMode('待审')
+  await expect.poll(() => configValue('automation.auto_bug_mode')).toBe('review')
+  expect(await configValue('automation.auto_bug')).toBe('false')
+  const reviewRun = data(await api('POST', `/api-scenarios/${scenario.id}/run?projectId=${projectId}`, {}))
+  expect(Number(reviewRun.autoBugDraftId)).toBeGreaterThan(0)
+  expect(reviewRun.autoBugId).toBeNull()
+
+  // 非法档位：接口拒绝且不覆盖原值
+  const illegal = await api('PUT', '/settings/config', {
+    items: [{ key: 'automation.auto_bug_mode', value: 'half' }],
+  })
+  expect(illegal.code).not.toBe(200000)
+  expect(illegal.message).toContain('off / review / auto')
+  expect(await configValue('automation.auto_bug_mode')).toBe('review')
+
+  await page.reload()
+  await expect(group.locator('.el-radio-button.is-active')).toContainText('待审', { timeout: 15_000 })
+  assertHealthy(health)
+})
+
 test('MCP 服务端：只读工具、写待审、令牌校验与设置页入口', async ({ page }) => {
   const projectName = `E2E MCP ${Date.now()}`
   const projectId = await newProject(projectName)
