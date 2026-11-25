@@ -11,6 +11,17 @@
       </el-radio-group>
       <div class="spacer" />
       <el-button
+        v-if="archiveCount > 0"
+        link
+        size="small"
+        :icon="Folder"
+        title="查看历史对话归档"
+        @click="openArchiveDrawer"
+      >
+        历史对话
+        <el-badge :value="archiveCount" :max="99" class="assistant__archive-badge" />
+      </el-button>
+      <el-button
         v-if="messages.length"
         link
         size="small"
@@ -44,8 +55,8 @@
       <div class="assistant__cache-bar">
         <el-button link size="small" @click="clearThinking">清理思考缓存</el-button>
       </div>
-      <div v-if="truncated" class="assistant__history-note" role="note">
-        这里只回放最近的一部分问答，更早的在「AI 记录 → 会话记录」里（能力：知识库问答）。
+      <div v-if="archiveCount > 0" class="assistant__history-note" role="note">
+        当前显示最近 50 轮对话，已归档 {{ archiveCount }} 批历史对话，点击右上角「历史对话」查看。
       </div>
       <div
         ref="listEl"
@@ -84,13 +95,26 @@
             </div>
             <MarkdownView v-if="item.role === 'assistant'" :source="item.content" />
             <span v-else>{{ item.content }}</span>
+            <!-- 流式进行中且还没吐出思考/正文：给一个明确的等待指示，不让气泡空白 -->
             <div
-              v-if="item.role === 'assistant' && item.meta && item.meta.mode !== 'kb' && !item.thinking"
+              v-if="item.role === 'assistant' && !item.answeredAt && !item.content && !item.thinking?.text"
+              class="assistant__pending"
+            >
+              <span class="assistant__pending-dots" aria-hidden="true"><i /><i /><i /></span>
+              正在思考…
+            </div>
+            <div
+              v-if="item.role === 'assistant' && item.meta && item.answeredAt && item.meta.mode !== 'kb' && !item.thinking"
               class="muted assistant__thinking-note"
             >
               思考过程未保存（仅当次会话可见）
             </div>
-            <div v-if="item.role === 'assistant' && item.meta" class="assistant__meta">
+            <!-- 元信息与「加入知识库」只在回答完成后出现：流式未完成就放入库入口，
+                 用户会把半成品提交进待审池 -->
+            <div
+              v-if="item.role === 'assistant' && item.meta && item.answeredAt"
+              class="assistant__meta"
+            >
               <el-tag size="small" effect="plain" type="info">{{ item.meta.modeLabel }}</el-tag>
               <span v-if="item.meta.model" class="muted">模型：{{ item.meta.model }}</span>
               <span v-if="item.meta.latencyMs" class="muted">耗时 {{ item.meta.latencyMs }} ms</span>
@@ -161,25 +185,28 @@
       />
     </div>
 
-    <div class="assistant__attachments">
-      <AiAttachmentInput
-        ref="attachmentInput"
-        v-model:attachment-ids="attachmentIds"
-        compact
-      />
-    </div>
-
     <div class="assistant__input">
-      <el-input
-        v-model="question"
-        type="textarea"
-        :rows="2"
-        maxlength="2000"
-        resize="vertical"
-        :placeholder="textareaHint('输入问题，Ctrl + Enter 发送')"
-        @keydown.ctrl.enter.prevent="send"
-        @keydown.meta.enter.prevent="send"
-      />
+      <div class="assistant__composer">
+        <el-input
+          v-model="question"
+          type="textarea"
+          :rows="2"
+          maxlength="2000"
+          resize="vertical"
+          :placeholder="textareaHint('输入问题，Ctrl + Enter 发送')"
+          @keydown.ctrl.enter.prevent="send"
+          @keydown.meta.enter.prevent="send"
+        />
+        <!-- 附件入口收进输入框内：导入文档 / 上传图片 成为问题框自带的工具行 -->
+        <div class="assistant__attachments">
+          <AiAttachmentInput
+            ref="attachmentInput"
+            v-model:attachment-ids="attachmentIds"
+            compact
+            inline
+          />
+        </div>
+      </div>
       <el-button
         type="primary"
         :icon="Promotion"
@@ -232,6 +259,66 @@
         <el-button type="primary" @click="inspectVisible = false">关闭</el-button>
       </div>
     </el-drawer>
+
+    <!-- 历史对话归档抽屉 -->
+    <el-drawer
+      v-model="archiveDrawerVisible"
+      title="历史对话归档"
+      size="600px"
+      append-to-body
+      @open="onArchiveDrawerOpen"
+      @close="onArchiveDrawerClose"
+    >
+      <div v-if="!archiveDetail" class="assistant__archive-list">
+        <div v-loading="archiveListLoading" class="assistant__archive-list-body">
+          <el-empty
+            v-if="!archiveListLoading && archiveList.length === 0"
+            description="暂无历史对话归档"
+            :image-size="80"
+          />
+          <div
+            v-for="item in archiveList"
+            :key="item.id"
+            class="assistant__archive-item"
+            @click="viewArchive(item.id)"
+          >
+            <div class="assistant__archive-item-name">{{ item.archiveName }}</div>
+            <div class="assistant__archive-item-meta">
+              <span>{{ item.turnCount }} 轮</span>
+              <span class="assistant__archive-item-sep">·</span>
+              <span>{{ item.messageCount }} 条消息</span>
+              <span class="assistant__archive-item-sep">·</span>
+              <span>{{ formatArchivePeriod(item.periodFrom, item.periodTo) }}</span>
+            </div>
+            <el-icon class="assistant__archive-item-arrow"><ArrowRight /></el-icon>
+          </div>
+        </div>
+      </div>
+      <div v-else class="assistant__archive-detail">
+        <div class="assistant__archive-detail-header">
+          <el-button link :icon="ArrowLeft" @click="clearArchiveDetail">返回列表</el-button>
+          <span class="assistant__archive-detail-title">{{ archiveDetail.archiveName }}</span>
+          <span class="muted">{{ archiveDetail.turnCount }} 轮 · {{ archiveDetail.messageCount }} 条</span>
+        </div>
+        <div class="assistant__archive-detail-body" v-loading="archiveDetailLoading">
+          <div
+            v-for="msg in archiveDetail.messages"
+            :key="msg.id"
+            class="assistant__archive-msg"
+            :class="[`is-${msg.role}`]"
+          >
+            <div class="assistant__archive-msg-role">
+              {{ msg.role === 'user' ? '提问' : '回答' }}
+            </div>
+            <MarkdownView v-if="msg.role === 'assistant'" :source="msg.content" />
+            <span v-else class="assistant__archive-msg-text">{{ msg.content }}</span>
+            <div v-if="msg.createdAt" class="assistant__archive-msg-time muted">
+              {{ formatArchiveTime(msg.createdAt) }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -240,7 +327,9 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { storeToRefs } from 'pinia'
-import { Collection, Cpu, MagicStick, Promotion, ArrowDown, ArrowRight } from '@element-plus/icons-vue'
+import {
+  ArrowDown, ArrowLeft, ArrowRight, Collection, Cpu, Folder, MagicStick, Promotion,
+} from '@element-plus/icons-vue'
 import MarkdownView from '@/components/MarkdownView.vue'
 import AiAttachmentInput from '@/components/AiAttachmentInput.vue'
 import { aiApi, knowledgeApi } from '@/api'
@@ -279,8 +368,14 @@ const attachmentIds = ref<string[]>([])
 const attachmentInput = ref<InstanceType<typeof AiAttachmentInput> | null>(null)
 const sending = ref(false)
 // 对话与会话 id 都在 store 上：换菜单把组件挤掉、或首页卡片与问答页并存，看到的都是同一条线
-const { messages, truncated } = storeToRefs(assistantStore)
+const {
+  messages, archiveCount, archiveList, archiveListLoading,
+  archiveDetail, archiveDetailLoading,
+} = storeToRefs(assistantStore)
 const listEl = ref<HTMLElement | null>(null)
+
+/** 历史对话抽屉可见性。 */
+const archiveDrawerVisible = ref(false)
 
 // 默认模式可能来自设置页；加载完成前用户已经手动切过，就不再覆盖他的选择
 let modeTouched = false
@@ -384,6 +479,53 @@ function clearChat(): void {
   // 另起一条会话：清掉当前线程，问过的内容仍在库里，去「会话记录」按「知识库问答」可查
   assistantStore.resetThread()
   messagesHeight.value = null
+}
+
+// ---------------- 历史对话归档 ----------------
+
+function openArchiveDrawer(): void {
+  archiveDrawerVisible.value = true
+}
+
+async function onArchiveDrawerOpen(): Promise<void> {
+  assistantStore.clearArchiveDetail()
+  await assistantStore.loadArchives()
+}
+
+function onArchiveDrawerClose(): void {
+  assistantStore.clearArchiveDetail()
+}
+
+async function viewArchive(archiveId: number): Promise<void> {
+  await assistantStore.viewArchive(archiveId)
+}
+
+function clearArchiveDetail(): void {
+  assistantStore.clearArchiveDetail()
+}
+
+/** 格式化归档的时间段展示。 */
+function formatArchivePeriod(periodFrom: string, periodTo: string): string {
+  if (!periodFrom || !periodTo) return ''
+  const from = formatArchiveTime(periodFrom)
+  const to = formatArchiveTime(periodTo)
+  return `${from} ~ ${to}`
+}
+
+/** 格式化 ISO 时间为可读的本地时间。 */
+function formatArchiveTime(iso: string): string {
+  try {
+    const d = new Date(iso)
+    if (isNaN(d.getTime())) return iso
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    const h = String(d.getHours()).padStart(2, '0')
+    const min = String(d.getMinutes()).padStart(2, '0')
+    return `${y}-${m}-${day} ${h}:${min}`
+  } catch {
+    return iso
+  }
 }
 
 async function scrollToBottom(): Promise<void> {
@@ -1022,33 +1164,99 @@ html[data-theme='industry'] .is-assistant .assistant__bubble {
   padding: 8px 0;
 }
 
-.assistant__attachments {
-  margin-bottom: 8px;
-}
-
 .assistant__input {
   display: flex;
-  align-items: flex-end;
+  align-items: stretch;
   gap: 8px;
 }
 
-.assistant__input :deep(.el-textarea) {
+/* 提问按钮贴齐输入框底边，与附件工具行同高 */
+.assistant__input > :deep(.el-button) {
+  align-self: flex-end;
+}
+
+/* 输入框 + 附件工具行合成一个 composer：附件入口收进问题框内 */
+.assistant__composer {
   flex: 1;
-}
-
-/* 问题框描边 / 聚焦 / 底色随当前模式主色 */
-.assistant__input :deep(.el-textarea__inner) {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid color-mix(in srgb, var(--mode-tone) 45%, var(--aitp-border));
+  border-radius: 8px;
   background: color-mix(in srgb, var(--mode-tone) 4%, var(--aitp-panel));
-  color: var(--aitp-text);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mode-tone) 45%, var(--aitp-border)) inset;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-.assistant__input :deep(.el-textarea__inner:hover) {
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mode-tone) 65%, var(--aitp-border)) inset;
+/* 描边 / 聚焦 / 底色随当前模式主色；textarea 自身去描边，统一由 composer 出 */
+.assistant__composer:hover {
+  border-color: color-mix(in srgb, var(--mode-tone) 65%, var(--aitp-border));
 }
 
-.assistant__input :deep(.el-textarea__inner:focus) {
+.assistant__composer:focus-within {
+  border-color: var(--mode-tone);
   box-shadow: 0 0 0 1px var(--mode-tone) inset;
+}
+
+.assistant__composer :deep(.el-textarea__inner) {
+  background: transparent;
+  color: var(--aitp-text);
+  box-shadow: none;
+}
+
+.assistant__composer .assistant__attachments {
+  border-top: 1px dashed color-mix(in srgb, var(--mode-tone) 25%, var(--aitp-border));
+  padding: 2px 8px 4px;
+}
+
+/* 流式等待指示：模型还没吐出思考与正文时的三点动画 */
+.assistant__pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--aitp-text-secondary, #606266);
+}
+
+.assistant__pending-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.assistant__pending-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--mode-tone);
+  animation: assistant-pending-blink 1.2s infinite ease-in-out;
+}
+
+.assistant__pending-dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.assistant__pending-dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes assistant-pending-blink {
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.8);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant__pending-dots i {
+    animation: none;
+    opacity: 0.6;
+  }
 }
 
 /* 提问按钮填充当前模式主色 */
@@ -1095,5 +1303,128 @@ html[data-theme='industry'] .is-assistant .assistant__bubble {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* ---------------- 历史对话归档 ---------------- */
+
+.assistant__archive-badge {
+  margin-left: 4px;
+}
+
+.assistant__archive-list {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.assistant__archive-list-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.assistant__archive-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--aitp-border);
+  border-radius: 8px;
+  background: var(--aitp-panel);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.assistant__archive-item:hover {
+  border-color: var(--el-color-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.assistant__archive-item-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--aitp-text);
+}
+
+.assistant__archive-item-meta {
+  font-size: 12px;
+  color: var(--aitp-text-secondary);
+  margin-top: 2px;
+}
+
+.assistant__archive-item-sep {
+  margin: 0 6px;
+  opacity: 0.5;
+}
+
+.assistant__archive-item-arrow {
+  margin-left: auto;
+  color: var(--aitp-text-weak);
+}
+
+.assistant__archive-detail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.assistant__archive-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--aitp-border);
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.assistant__archive-detail-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.assistant__archive-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  flex: 1;
+  padding-right: 4px;
+}
+
+.assistant__archive-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.assistant__archive-msg.is-user {
+  background: color-mix(in srgb, var(--ka-blue) 8%, var(--aitp-panel));
+  border-left: 3px solid var(--ka-blue);
+}
+
+.assistant__archive-msg.is-assistant {
+  background: var(--aitp-subtle);
+  border-left: 3px solid var(--ka-green);
+}
+
+.assistant__archive-msg-role {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+.assistant__archive-msg-text {
+  word-break: break-word;
+}
+
+.assistant__archive-msg-time {
+  font-size: 11px;
+  margin-top: 2px;
 }
 </style>

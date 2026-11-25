@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import os
 import pathlib
 import sqlite3
 import sys
@@ -26,6 +27,8 @@ from flask import Flask  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 V1 = "/api/v1"
+#: 健康探测打的本机服务地址；隔离门禁由 runner 通过 AITP_BASE_URL 传一次性端口。
+LOCAL_ORIGIN: str = (os.environ.get("AITP_BASE_URL") or "http://127.0.0.1:8760").rstrip("/")
 JsonDict = dict[str, Any]
 
 _passed = 0
@@ -104,14 +107,14 @@ def section_crud(api: Api) -> dict[str, Any]:
         "name": "测试环境",
         "description": "门禁用",
         "isDefault": True,
-        "app": {"baseUrl": "http://127.0.0.1:8760", "healthPath": "/api/v1/meta/enums",
+        "app": {"baseUrl": LOCAL_ORIGIN, "healthPath": "/api/v1/meta/enums",
                 "metricsUrl": ""},
         "db": {"type": "mysql", "host": "127.0.0.1", "port": 3306,
                "name": "shop", "username": "qa", "password": "s3cret-pass-123",
                "metricsUrl": ""},
     })
     check("创建返回 id", bool(created.get("id")), str(created)[:160])
-    check("应用服务器字段落库", created["app"]["baseUrl"] == "http://127.0.0.1:8760", str(created["app"]))
+    check("应用服务器字段落库", created["app"]["baseUrl"] == LOCAL_ORIGIN, str(created["app"]))
     check("数据库字段落库", created["db"]["host"] == "127.0.0.1" and created["db"]["type"] == "mysql",
           str(created["db"]))
     check("监控地址默认留空", created["app"].get("metricsUrl") == ""
@@ -126,7 +129,7 @@ def section_crud(api: Api) -> dict[str, Any]:
 def section_metrics_url(api: Api, env_id: int) -> None:
     """监控地址可保存、可清空；不填不报错，填了也不影响可达性探测。"""
     updated = api.data("PUT", f"{V1}/test-envs/{env_id}", {
-        "app": {"baseUrl": "http://127.0.0.1:8760", "healthPath": "/api/v1/meta/enums",
+        "app": {"baseUrl": LOCAL_ORIGIN, "healthPath": "/api/v1/meta/enums",
                 "metricsUrl": "http://127.0.0.1:9100/metrics"},
         "db": {"type": "mysql", "host": "127.0.0.1", "port": 3306, "name": "shop",
                "username": "qa", "metricsUrl": "http://127.0.0.1:9101/metrics"},
@@ -135,7 +138,7 @@ def section_metrics_url(api: Api, env_id: int) -> None:
           and updated["db"].get("metricsUrl") == "http://127.0.0.1:9101/metrics",
           str(updated)[:200])
     reset = api.data("PUT", f"{V1}/test-envs/{env_id}", {
-        "app": {"baseUrl": "http://127.0.0.1:8760", "healthPath": "/api/v1/meta/enums",
+        "app": {"baseUrl": LOCAL_ORIGIN, "healthPath": "/api/v1/meta/enums",
                 "metricsUrl": ""},
         "db": {"type": "mysql", "host": "127.0.0.1", "port": 3306, "name": "shop",
                "username": "qa", "metricsUrl": ""},
@@ -210,7 +213,7 @@ def section_multi_app(api: Api, env_id: int, workdir: pathlib.Path) -> None:
     check("类型展示名来自服务端", labels.get("kingbase") == "人大金仓 KingbaseES"
           and labels.get("mongodb") == "MongoDB", str(labels)[:200])
 
-    up = {"baseUrl": "http://127.0.0.1:8760", "healthPath": "/api/v1/health", "metricsUrl": ""}
+    up = {"baseUrl": LOCAL_ORIGIN, "healthPath": "/api/v1/health", "metricsUrl": ""}
     # 空行应被丢弃，避免前端「新增一台」留下空记录
     trimmed = api.data("PUT", f"{V1}/test-envs/{env_id}", {
         "app": {"servers": [up, {"baseUrl": "", "healthPath": "", "metricsUrl": ""}]},
@@ -220,7 +223,7 @@ def section_multi_app(api: Api, env_id: int, workdir: pathlib.Path) -> None:
     updated = api.data("PUT", f"{V1}/test-envs/{env_id}", {
         "app": {"servers": [
             up,
-            {"baseUrl": "http://127.0.0.1:8760", "healthPath": "/api/v1/meta/enums",
+            {"baseUrl": LOCAL_ORIGIN, "healthPath": "/api/v1/meta/enums",
              "metricsUrl": ""},
         ]},
         "db": {"type": "dm", "host": "", "port": ""},

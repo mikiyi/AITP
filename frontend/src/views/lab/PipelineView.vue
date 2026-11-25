@@ -124,7 +124,7 @@
                   <span class="muted">完整度 {{ percentText(task.completeness * 100) }}</span>
                   <el-tag size="small" effect="plain">{{ task.role === 'primary' ? '主任务' : '辅助' }}</el-tag>
                   <span v-if="task.missing.length" class="missing">
-                    缺：{{ task.missing.join('、') }}
+                    缺：{{ missingLabels(task.capability, task.missing) }}
                   </span>
                 </li>
               </ul>
@@ -191,7 +191,7 @@
             </div>
           </div>
 
-          <el-button :icon="Plus" plain class="add-step" @click="addStep">添加步骤</el-button>
+          <el-button :icon="Plus" plain class="add-step" @click="addStep()">添加步骤</el-button>
         </div>
       </div>
 
@@ -390,6 +390,11 @@ function optionalOf(step: StepForm): string[] {
 
 function labelOf(capability: string): string {
   return labStore.capabilities.find((item) => item.code === capability)?.label ?? capability
+}
+
+/** 缺项里的变量名转中文标签，避免界面直接露出英文 key。 */
+function missingLabels(capability: string, names: string[]): string {
+  return names.map((name) => variableLabel(capability, name)).join('、')
 }
 
 /** 变量值转可编辑文本：对象/数组序列化为 JSON，避免输入框露出 [object Object]。 */
@@ -758,7 +763,9 @@ async function run(): Promise<void> {
   steps.value.forEach((step, index) => {
     requiredOf(step).forEach((name) => {
       if (!String(step.variables[name] ?? '').trim()) {
-        missing.push(`第 ${index + 1} 步「${step.name || labelOf(step.capability)}」缺 ${name}`)
+        missing.push(
+          `第 ${index + 1} 步「${step.name || labelOf(step.capability)}」缺 ${variableLabel(step.capability, name)}`,
+        )
       }
     })
   })
@@ -799,10 +806,21 @@ async function run(): Promise<void> {
       )
     }
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : '执行失败')
+    ElMessage.error(runErrorText(err))
   } finally {
     running.value = false
   }
+}
+
+/** 后端校验失败会回传缺哪几个变量；按中文标签重写提示，不把英文 key 和 steps[1] 抛给用户。 */
+function runErrorText(err: unknown): string {
+  const data = (err as { data?: unknown })?.data as
+    | { missing?: string[]; index?: number; capability?: string }
+    | undefined
+  if (data?.missing?.length && data.capability) {
+    return `第 ${data.index ?? 1} 步「${labelOf(data.capability)}」缺 ${missingLabels(data.capability, data.missing)}`
+  }
+  return err instanceof Error ? err.message : '执行失败'
 }
 
 function copyOutput(): void {

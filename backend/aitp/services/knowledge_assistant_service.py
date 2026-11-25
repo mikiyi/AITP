@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from datetime import datetime
 from typing import Any
 
 from ..common.constants import EGRESS_NONE, EGRESS_THIRD_PARTY
@@ -212,8 +213,12 @@ def preview_files(conn: sqlite3.Connection) -> dict[str, Any]:
 #: 都能回到同一条对话线；这些会话同时出现在「会话记录」页，便于回看与追溯。
 SESSION_MODULE = "knowledge-assistant"
 SESSION_TITLE_CHARS = 60
-#: 一次最多回放这么多条消息：长期不清空也不会把页面和内存撑爆
-HISTORY_LIMIT = 200
+#: 会话保留轮数：页面最多展示这么多轮（每轮=一问一答=2条消息），超过的自动归档
+ACTIVE_TURNS_LIMIT = 50
+#: 归档批次：每归档这么多轮一组
+ARCHIVE_TURNS_PER_BUNDLE = 50
+#: 一次最多回放这么多条消息：等于 50 轮 × 2 条/轮
+HISTORY_LIMIT = ACTIVE_TURNS_LIMIT * 2
 
 
 def _session_title(question: str) -> str:
@@ -446,12 +451,181 @@ def history(conn: sqlite3.Connection, session_id: int | None = None) -> dict[str
             draft_hashes,
         ).fetchall()
         submitted = {str(hit["content_hash"]) for hit in hits}
+    archive_count = int(conn.execute(
+        "SELECT COUNT(*) FROM biz_assistant_archive WHERE session_id = ? AND is_deleted = 0",
+        (sid,),
+    ).fetchone()[0])
     return {
         "sessionId": sid,
         "title": str(session.get("title") or ""),
         "model": str(session.get("model") or ""),
         "messages": [_message_public(item, submitted) for item in items],
         "truncated": total > len(rows),
+        "archiveCount": archive_count,
+    }
+
+
+# ---------------- 对话归档 ----------------
+
+def _format_archive_no() -> str:
+    """归档编号：YYYYMMDDHHMM（12 位数字，如 202611241518）。"""
+    return datetime.now().astimezone().strftime("%Y%m%d%H%M")
+
+
+def _format_archive_name(archive_no: str) -> str:
+    """归档名称：历史对话归档 + 编号。"""
+    return f"历史对话归档{archive_no}"
+
+
+def _pair_turns(rows: list[dict[str, Any]]) -> list[tuple[dict[str, Any], dict[str, Any] | None]]:
+    """把消息行配对成轮：(user_message, assistant_message)。"""
+    turns: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
+    pending_user: dict[str, Any] | None = None
+    for raw in rows:
+        role = str(raw.get("role") or "")
+        if role == "user":
+            if pending_user is not None:
+                # 上一个 user 没有对应 assistant，也算一轮（答未完成）
+                turns.append((pending_user, None))
+            pending_user = raw
+        elif role == "assistant" and pending_user is not None:
+            turns.append((pending_user, raw))
+            pending_user = None
+    if pending_user is not None:
+        turns.append((pending_user, None))
+    return turns
+
+
+def archive_if_needed(conn: sqlite3.Connection, session_id: int) -> dict[str, Any]:
+    """检查会话是否需要归档，需要则执行归档。
+
+    规则：当前会话保留最近 ACTIVE_TURNS_LIMIT 轮，超过的轮次按 ARCHIVE_TURNS_PER_BUNDLE
+    一组归档到 biz_assistant_archive，然后从 biz_ai_message 软删。
+    返回本次归档的摘要（未归档时 turn_count=0）。
+    """
+    total_msgs = int(conn.execute(
+        "SELECT COUNT(*) FROM biz_ai_message WHERE session_id = ? AND is_deleted = 0",
+        (session_id,),
+    ).fetchone()[0])
+    if total_msgs <= HISTORY_LIMIT:
+        return {"archived": False, "turnCount": 0, "messageCount": 0}
+
+    #: 把所有消息按 id ASC 取出配对成轮
+    all_rows = conn.execute(
+        "SELECT * FROM biz_ai_message WHERE session_id = ? AND is_deleted = 0"
+        " ORDER BY id ASC",
+        (session_id,),
+    ).fetchall()
+    turns = _pair_turns([dict(r) for r in all_rows])
+    total_turns = len(turns)
+    if total_turns <= ACTIVE_TURNS_LIMIT:
+        return {"archived": False, "turnCount": 0, "messageCount": 0}
+
+    #: 需要归档的轮数 = 总轮数 - 保留轮数
+    archive_turns = total_turns - ACTIVE_TURNS_LIMIT
+    #: 每次归档一组 ARCHIVE_TURNS_PER_BUNDLE 轮（如果不足一组就全部归档）
+    batch_size = min(archive_turns, ARCHIVE_TURNS_PER_BUNDLE)
+    turns_to_archive = turns[:batch_size]
+
+    #: 收集要归档的消息 id 和内容
+    message_ids: list[int] = []
+    archived_messages: list[dict[str, Any]] = []
+    period_from = ""
+    period_to = ""
+    for user_msg, assistant_msg in turns_to_archive:
+        for m in (user_msg, assistant_msg) if assistant_msg is not None else (user_msg,):
+            mid = int(m["id"])
+            message_ids.append(mid)
+            archived_messages.append({
+                "id": mid,
+                "role": str(m.get("role") or ""),
+                "content": str(m.get("content") or ""),
+                "reasoning": str(m.get("reasoning") or ""),
+                "model": str(m.get("model") or ""),
+                "messageMeta": json.loads(str(m.get("message_meta") or "{}")) if m.get("message_meta") else {},
+                "createdAt": str(m.get("created_at") or ""),
+            })
+            if not period_from or m.get("created_at", "") < period_from:
+                period_from = str(m.get("created_at") or "")
+            if m.get("created_at", "") > period_to:
+                period_to = str(m.get("created_at") or "")
+
+    archive_no = _format_archive_no()
+    archive_name = _format_archive_name(archive_no)
+    now = utcnow_iso()
+    content_json = json.dumps(archived_messages, ensure_ascii=False)
+
+    #: 落归档
+    conn.execute(
+        "INSERT INTO biz_assistant_archive"
+        " (session_id, archive_no, archive_name, turn_count, message_count,"
+        " period_from, period_to, content_json, created_at, updated_at, is_deleted)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+        (session_id, archive_no, archive_name, len(turns_to_archive), len(message_ids),
+         period_from, period_to, content_json, now, now),
+    )
+
+    #: 软删已归档的消息
+    if message_ids:
+        placeholders = ", ".join("?" for _ in message_ids)
+        conn.execute(
+            f"UPDATE biz_ai_message SET is_deleted = 1, updated_at = ? WHERE id IN ({placeholders})",
+            [now, *message_ids],
+        )
+
+    return {
+        "archived": True,
+        "turnCount": len(turns_to_archive),
+        "messageCount": len(message_ids),
+        "archiveNo": archive_no,
+        "archiveName": archive_name,
+    }
+
+
+def list_archives(conn: sqlite3.Connection, session_id: int) -> list[dict[str, Any]]:
+    """列出某个会话的所有归档，按归档时间倒序。"""
+    rows = conn.execute(
+        "SELECT * FROM biz_assistant_archive WHERE session_id = ? AND is_deleted = 0"
+        " ORDER BY archive_no DESC, id DESC",
+        (session_id,),
+    ).fetchall()
+    return [
+        {
+            "id": int(row["id"]),
+            "sessionId": int(row["session_id"]),
+            "archiveNo": str(row["archive_no"]),
+            "archiveName": str(row["archive_name"]),
+            "turnCount": int(row["turn_count"]),
+            "messageCount": int(row["message_count"]),
+            "periodFrom": str(row["period_from"]),
+            "periodTo": str(row["period_to"]),
+            "createdAt": str(row["created_at"]),
+        }
+        for row in rows
+    ]
+
+
+def get_archive_detail(conn: sqlite3.Connection, archive_id: int) -> dict[str, Any]:
+    """查看某个归档的完整对话内容。"""
+    row = conn.execute(
+        "SELECT * FROM biz_assistant_archive WHERE id = ? AND is_deleted = 0",
+        (archive_id,),
+    ).fetchone()
+    if row is None:
+        raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "归档不存在")
+    content = json.loads(str(row["content_json"] or "[]"))
+    #: 把 content 按轮次重新配对成和 history() 相同的结构
+    return {
+        "id": int(row["id"]),
+        "sessionId": int(row["session_id"]),
+        "archiveNo": str(row["archive_no"]),
+        "archiveName": str(row["archive_name"]),
+        "turnCount": int(row["turn_count"]),
+        "messageCount": int(row["message_count"]),
+        "periodFrom": str(row["period_from"]),
+        "periodTo": str(row["period_to"]),
+        "createdAt": str(row["created_at"]),
+        "messages": content,
     }
 
 

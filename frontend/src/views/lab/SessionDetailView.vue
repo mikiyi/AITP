@@ -3,7 +3,7 @@
     <div class="page-header">
       <h2 class="page-title">{{ session?.title ?? '会话详情' }}</h2>
       <div class="toolbar" style="margin: 0">
-        <el-tag v-if="session?.module" effect="plain">{{ session.module }}</el-tag>
+        <el-tag v-if="session?.module" effect="plain">{{ labStore.capabilityLabel(session.module) }}</el-tag>
         <el-button :icon="Back" @click="router.push('/lab/sessions')">返回列表</el-button>
       </div>
     </div>
@@ -38,9 +38,11 @@ import MarkdownView from '@/components/MarkdownView.vue'
 import { labApi } from '@/api'
 import type { AiMessage, AiSession } from '@/api/types'
 import { dateTimeText } from '@/utils/format'
+import { useLabStore } from '@/stores/lab'
 
 const route = useRoute()
 const router = useRouter()
+const labStore = useLabStore()
 
 const loading = ref(false)
 const session = ref<AiSession | null>(null)
@@ -49,6 +51,7 @@ const messages = ref<AiMessage[]>([])
 onMounted(async () => {
   loading.value = true
   try {
+    await labStore.loadAllCapabilities()
     const detail = await labApi.session(Number(route.params.id))
     session.value = detail
     messages.value = detail.messages ?? []

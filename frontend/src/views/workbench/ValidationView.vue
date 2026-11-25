@@ -154,7 +154,7 @@
         <el-descriptions :column="2" border class="result-desc">
           <el-descriptions-item label="模型">{{ result.model || '-' }}</el-descriptions-item>
           <el-descriptions-item label="耗时">{{ result.latencyMs }} ms</el-descriptions-item>
-          <el-descriptions-item label="路由来源">{{ result.route.source || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="路由来源">{{ routeSourceText(result.route.source) }}</el-descriptions-item>
           <el-descriptions-item label="实际路由">
             {{ result.route.actual.map((item) => capabilityText(item.capability)).join('、') || '-' }}
           </el-descriptions-item>
@@ -265,6 +265,20 @@ function capabilityText(code: string | null | undefined): string {
     return '-'
   }
   return capabilityLabels.value.get(code) ?? code
+}
+
+/** 路由来源是后端英文标识，结果面板按中文展示。 */
+const ROUTE_SOURCE_TEXT: Record<string, string> = {
+  ai: '大模型路由',
+  fallback: '规则兜底',
+  'ai+fallback': '大模型 + 兜底',
+}
+
+function routeSourceText(source: string | null | undefined): string {
+  if (!source) {
+    return '-'
+  }
+  return ROUTE_SOURCE_TEXT[source] ?? source
 }
 
 const cases = ref<ValidationCase[]>([])

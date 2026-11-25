@@ -123,11 +123,11 @@
             <el-table-column label="缺项" min-width="180">
               <template #default="scope">
                 <span v-if="scope.row.missing.length" class="missing">
-                  {{ scope.row.missing.join('、') }}
+                  {{ missingLabels(scope.row.capability, scope.row.missing) }}
                 </span>
                 <span v-else class="muted">必填齐全</span>
                 <div v-if="scope.row.missingOptional.length" class="muted optional-line">
-                  可选未填：{{ scope.row.missingOptional.join('、') }}
+                  可选未填：{{ missingLabels(scope.row.capability, scope.row.missingOptional) }}
                 </div>
               </template>
             </el-table-column>
@@ -135,12 +135,12 @@
 
           <ul v-if="preflight.blockers.length" class="preflight__notes">
             <li v-for="(item, index) in preflight.blockers" :key="`b-${index}`" class="blocker">
-              {{ item }}
+              {{ localizedNote(item) }}
             </li>
           </ul>
           <ul v-if="preflight.warnings.length" class="preflight__notes">
             <li v-for="(item, index) in preflight.warnings" :key="`w-${index}`" class="warning">
-              {{ item }}
+              {{ localizedNote(item) }}
             </li>
           </ul>
         </div>
@@ -160,6 +160,7 @@ import type { ModuleRouteResult, PreflightResult, RouteResponse, RouteResult } f
 import { useAppStore } from '@/stores/app'
 import { percentText } from '@/utils/format'
 import { textareaHint } from '@/utils/inputHints'
+import { variableLabel } from '@/views/lab/capabilityForms'
 import { useAiGuardStore } from '@/stores/aiGuard'
 import AiAttachmentInput from '@/components/AiAttachmentInput.vue'
 
@@ -191,6 +192,22 @@ function navText(): string {
  */
 function labelOf(code: string): string {
   return preflight.value?.tasks.find((item) => item.capability === code)?.label ?? code
+}
+
+/** 缺项里的变量名转中文标签，避免表格直接露出英文 key。 */
+function missingLabels(capability: string, names: string[]): string {
+  return names.map((name) => variableLabel(capability, name)).join('、')
+}
+
+/** 阻断/提示文案由后端拼接，里面的英文变量名展示前统一换成中文标签。 */
+function localizedNote(text: string): string {
+  let out = text
+  ;(preflight.value?.tasks ?? []).forEach((task) => {
+    ;[...task.required, ...task.optional].forEach((name) => {
+      out = out.split(name).join(variableLabel(task.capability, name))
+    })
+  })
+  return out
 }
 
 async function route(): Promise<void> {

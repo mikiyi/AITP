@@ -133,8 +133,8 @@
 
     <div class="panel panel-pad settings-block">
       <div class="settings-block__head">
-        <h3>Webhook 通知渠道</h3>
-        <span class="muted">轮次完成、门禁未通过、自动化失败、备份失败时自动推送</span>
+        <h3>通知渠道</h3>
+        <span class="muted">钉钉 / 企业微信 / 飞书机器人、邮箱与通用 Webhook；轮次完成、门禁未通过、自动化失败、备份失败时自动推送</span>
         <div class="settings-block__actions">
           <el-button type="primary" size="small" :icon="Plus" @click="openChannelDialog()">
             新建渠道
@@ -144,10 +144,17 @@
 
       <el-table v-loading="channelsLoading" :data="channels" size="small" border>
         <el-table-column prop="name" label="名称" min-width="150" show-overflow-tooltip />
+        <el-table-column label="类型" width="120">
+          <template #default="{ row }">
+            <el-tag size="small" effect="plain">{{ channelTypeLabel(row.channelType) }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="生效范围" width="140">
           <template #default="{ row }">{{ channelScopeText(row) }}</template>
         </el-table-column>
-        <el-table-column prop="webhookUrl" label="Webhook 地址" min-width="240" show-overflow-tooltip />
+        <el-table-column label="投递目标" min-width="240" show-overflow-tooltip>
+          <template #default="{ row }">{{ channelTargetText(row) }}</template>
+        </el-table-column>
         <el-table-column label="订阅事件" min-width="220">
           <template #default="{ row }">
             <span v-if="!row.events.length" class="muted">未订阅</span>
@@ -260,11 +267,24 @@
     <el-dialog
       v-model="channelDialogVisible"
       :title="editingChannelId === null ? '新建通知渠道' : '编辑通知渠道'"
-      width="560px"
+      width="720px"
+      top="6vh"
+      class="channel-dialog"
     >
       <el-form :model="channelForm" label-width="96px" @submit.prevent>
         <el-form-item label="名称">
           <el-input v-model="channelForm.name" maxlength="100" placeholder="例如：测试组飞书群" />
+        </el-form-item>
+        <el-form-item label="渠道类型">
+          <el-radio-group v-model="channelForm.channelType" @change="onChannelTypeChange">
+            <el-radio-button
+              v-for="option in channelTypes"
+              :key="option.value"
+              :value="option.value"
+            >
+              {{ option.label }}
+            </el-radio-button>
+          </el-radio-group>
         </el-form-item>
         <el-form-item label="生效范围">
           <el-radio-group v-model="channelForm.scope">
@@ -282,12 +302,85 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="Webhook 地址">
+        <el-form-item v-if="needsWebhook" label="Webhook 地址">
           <el-input
             v-model="channelForm.webhookUrl"
             maxlength="1000"
-            placeholder="https://example.com/webhook"
+            :placeholder="channelForm.channelType === 'webhook'
+              ? 'https://example.com/webhook'
+              : '机器人 Webhook 地址（钉钉 / 企微 / 飞书群机器人）'"
           />
+        </el-form-item>
+
+        <template v-if="channelForm.channelType === 'email'">
+          <el-form-item label="SMTP 服务器">
+            <div class="smtp-row">
+              <el-input v-model="channelForm.smtpHost" placeholder="smtp.example.com" style="flex: 1" />
+              <el-input-number v-model="channelForm.smtpPort" :min="1" :max="65535" controls-position="right" style="width: 140px" />
+            </div>
+          </el-form-item>
+          <el-form-item label="发件账号">
+            <el-input v-model="channelForm.smtpUser" placeholder="登录 SMTP 的账号，可留空" />
+          </el-form-item>
+          <el-form-item label="发件人">
+            <el-input v-model="channelForm.fromAddr" placeholder="发件地址，默认与账号相同" />
+          </el-form-item>
+          <el-form-item label="收件人">
+            <el-input v-model="channelForm.toAddrs" placeholder="多个用逗号分隔，如 yichengrenhg@126.com" />
+          </el-form-item>
+          <el-form-item label="邮箱密码">
+            <el-input
+              v-model="channelForm.password"
+              type="password"
+              show-password
+              :placeholder="channelForm.hasPassword ? '已保存，留空表示不修改' : 'SMTP 授权码 / 密码，保存在本机密钥库'"
+            />
+          </el-form-item>
+          <el-form-item label="加密方式">
+            <el-checkbox v-model="channelForm.useSsl">SSL（465）</el-checkbox>
+            <el-checkbox v-model="channelForm.useTls" style="margin-left: 16px">STARTTLS</el-checkbox>
+          </el-form-item>
+          <p class="muted dialog-hint">{{ emailHint }}</p>
+        </template>
+
+        <el-form-item label="标题模板">
+          <el-input v-model="channelForm.templateTitle" maxlength="4000" placeholder="【AITP】{{eventLabel}}：{{title}}" />
+        </el-form-item>
+        <el-form-item label="正文模板">
+          <el-input
+            v-model="channelForm.templateText"
+            type="textarea"
+            :rows="6"
+            maxlength="4000"
+            placeholder="支持 {{eventLabel}} {{title}} {{projectName}} {{occurredAt}} {{link}} {{dataSummary}}"
+          />
+          <div class="template-vars">
+            <span class="muted">可用变量：</span>
+            <el-tag
+              v-for="name in templateVariables"
+              :key="name"
+              size="small"
+              effect="plain"
+              class="template-vars__tag"
+              @click="insertVariable(name)"
+            >
+              <span v-text="'{{' + name + '}}'" />
+            </el-tag>
+          </div>
+        </el-form-item>
+        <el-form-item label="模板预览">
+          <div class="template-preview">
+            <el-button size="small" :loading="previewing" @click="previewTemplate">渲染预览</el-button>
+            <div v-if="preview" class="template-preview__body">
+              <div class="template-preview__subject">{{ preview.subject }}</div>
+              <pre class="template-preview__text">{{ preview.text }}</pre>
+              <el-collapse v-if="preview.body !== null" class="template-preview__payload">
+                <el-collapse-item title="查看实际投递体" name="body">
+                  <pre>{{ JSON.stringify(preview.body, null, 2) }}</pre>
+                </el-collapse-item>
+              </el-collapse>
+            </div>
+          </div>
         </el-form-item>
         <el-form-item label="订阅事件">
           <el-checkbox-group v-model="channelForm.events">
@@ -304,7 +397,7 @@
         </el-form-item>
       </el-form>
       <p class="muted dialog-hint">
-        通知以 JSON POST 发送，内容包含项目、版本、轮次、通过率、失败数、发生时间与站内链接；
+        钉钉/企微按 markdown 消息、飞书按文本消息投递；邮箱密码只存本机密钥库，接口不回传。
         投递失败按最多 3 次重试，不影响轮次与门禁结果。
       </p>
       <template #footer>
@@ -331,7 +424,13 @@ import {
   type CiSettings,
   type CiTokenItem,
 } from '@/api/ci'
-import type { CiEventOption, NotificationChannel, NotificationLog } from '@/api/types'
+import type {
+  CiEventOption,
+  NotificationChannel,
+  NotificationChannelTypeOption,
+  NotificationLog,
+  NotificationPreview,
+} from '@/api/types'
 import { dateTimeText } from '@/utils/format'
 import { useAppStore } from '@/stores/app'
 
@@ -367,21 +466,57 @@ const expiryOptions = [
 const channelDialogVisible = ref(false)
 const channelSaving = ref(false)
 const editingChannelId = ref<number | null>(null)
+type ChannelType = NotificationChannel['channelType']
+const channelTypes = ref<NotificationChannelTypeOption[]>([])
+const templateVariables = ref<string[]>([])
+const emailHint = ref('测试邮箱可填 yichengrenhg@126.com；密码保存在本机密钥库，不回传。')
 const channelForm = reactive<{
   name: string
+  channelType: ChannelType
   scope: ChannelScope
   projectId: number | null
   webhookUrl: string
   events: string[]
   enabled: boolean
+  templateTitle: string
+  templateText: string
+  smtpHost: string
+  smtpPort: number
+  smtpUser: string
+  fromAddr: string
+  toAddrs: string
+  useSsl: boolean
+  useTls: boolean
+  password: string
+  hasPassword: boolean
 }>({
   name: '',
+  channelType: 'webhook',
   scope: 'global',
   projectId: null,
   webhookUrl: '',
   events: [],
   enabled: true,
+  templateTitle: '',
+  templateText: '',
+  smtpHost: '',
+  smtpPort: 465,
+  smtpUser: '',
+  fromAddr: '',
+  toAddrs: '',
+  useSsl: true,
+  useTls: false,
+  password: '',
+  hasPassword: false,
 })
+const preview = ref<NotificationPreview | null>(null)
+const previewing = ref(false)
+/** 邮箱渠道不需要 Webhook 地址，其余类型都必须填。 */
+const needsWebhook = computed(() => channelForm.channelType !== 'email')
+/** 默认正文里就带变量占位，切类型时用它填充模板。 */
+const defaultTemplateOf = (type: ChannelType) =>
+  channelTypes.value.find((item) => item.value === type)?.defaultTemplate
+  ?? { title: '【AITP】{{eventLabel}}：{{title}}', text: '{{eventLabel}}\n\n{{title}}\n\n项目：{{projectName}}\n时间：{{occurredAt}}\n\n{{dataSummary}}\n\n详情：{{link}}' }
 
 const testingId = ref<number | null>(null)
 const togglingId = ref<number | null>(null)
@@ -447,6 +582,20 @@ function channelScopeText(channel: NotificationChannel): string {
     : `项目：${projectName(channel.projectId)}`
 }
 
+function channelTypeLabel(type: NotificationChannel['channelType']): string {
+  return channelTypes.value.find((item) => item.value === type)?.label ?? type
+}
+
+/** 列表里只展示「投到哪里」：邮箱展示收件人，机器人 / Webhook 展示地址。 */
+function channelTargetText(channel: NotificationChannel): string {
+  if (channel.channelType === 'email') {
+    return channel.config?.toAddrs
+      ? `${channel.config.fromAddr || channel.config.smtpUser || '未设发件人'} → ${channel.config.toAddrs}`
+      : '未配置收件人'
+  }
+  return channel.webhookUrl || '-'
+}
+
 function eventLabel(value: string): string {
   return eventLabelMap.value.get(value) ?? value
 }
@@ -483,6 +632,9 @@ async function loadChannels(): Promise<void> {
     const payload = await settingsApi.notificationChannels()
     channels.value = payload.list
     eventOptions.value = payload.eventOptions
+    channelTypes.value = payload.channelTypes ?? []
+    templateVariables.value = payload.templateVariables ?? []
+    if (payload.emailHint) emailHint.value = payload.emailHint
   } finally {
     channelsLoading.value = false
   }
@@ -584,13 +736,56 @@ const ciStatusText: Record<string, string> = {
 
 function openChannelDialog(row?: NotificationChannel): void {
   editingChannelId.value = row?.id ?? null
+  const type: ChannelType = row?.channelType ?? 'webhook'
+  const template = defaultTemplateOf(type)
   channelForm.name = row?.name ?? ''
+  channelForm.channelType = type
   channelForm.scope = row?.projectId === null || row?.projectId === undefined ? 'global' : 'project'
   channelForm.projectId = row?.projectId ?? appStore.currentProjectId ?? null
   channelForm.webhookUrl = row?.webhookUrl ?? ''
   channelForm.events = [...(row?.events ?? [])]
   channelForm.enabled = row?.enabled ?? true
+  channelForm.templateTitle = row?.template?.title ?? template.title
+  channelForm.templateText = row?.template?.text ?? template.text
+  channelForm.smtpHost = row?.config?.smtpHost ?? ''
+  channelForm.smtpPort = row?.config?.smtpPort ?? 465
+  channelForm.smtpUser = row?.config?.smtpUser ?? ''
+  channelForm.fromAddr = row?.config?.fromAddr ?? ''
+  channelForm.toAddrs = row?.config?.toAddrs ?? ''
+  channelForm.useSsl = row?.config?.useSsl ?? true
+  channelForm.useTls = row?.config?.useTls ?? false
+  channelForm.password = ''
+  channelForm.hasPassword = Boolean(row?.config?.hasPassword)
+  preview.value = null
   channelDialogVisible.value = true
+}
+
+/** 切渠道类型：地址/配置保留，模板换成该类型的默认模板，避免把 markdown 发到飞书文本里。 */
+function onChannelTypeChange(value: string | number | boolean | undefined): void {
+  const type = String(value) as ChannelType
+  const template = defaultTemplateOf(type)
+  channelForm.templateTitle = template.title
+  channelForm.templateText = template.text
+  preview.value = null
+}
+
+function insertVariable(name: string): void {
+  channelForm.templateText = `${channelForm.templateText}${channelForm.templateText ? ' ' : ''}{{${name}}}`
+}
+
+async function previewTemplate(): Promise<void> {
+  previewing.value = true
+  try {
+    preview.value = await settingsApi.notificationPreview({
+      channelType: channelForm.channelType,
+      template: { title: channelForm.templateTitle, text: channelForm.templateText },
+      projectId: channelForm.scope === 'project' ? channelForm.projectId : null,
+    })
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '模板预览失败')
+  } finally {
+    previewing.value = false
+  }
 }
 
 async function saveChannel(): Promise<void> {
@@ -598,9 +793,23 @@ async function saveChannel(): Promise<void> {
     ElMessage.warning('请输入渠道名称')
     return
   }
-  if (!channelForm.webhookUrl.trim()) {
+  if (needsWebhook.value && !channelForm.webhookUrl.trim()) {
     ElMessage.warning('请输入 Webhook 地址')
     return
+  }
+  if (channelForm.channelType === 'email') {
+    if (!channelForm.smtpHost.trim()) {
+      ElMessage.warning('请输入 SMTP 服务器')
+      return
+    }
+    if (!channelForm.fromAddr.trim() && !channelForm.smtpUser.trim()) {
+      ElMessage.warning('请填写发件人或发件账号')
+      return
+    }
+    if (!channelForm.toAddrs.trim()) {
+      ElMessage.warning('请填写收件人')
+      return
+    }
   }
   if (channelForm.scope === 'project' && channelForm.projectId === null) {
     ElMessage.warning('请选择生效项目')
@@ -610,12 +819,26 @@ async function saveChannel(): Promise<void> {
     ElMessage.warning('至少订阅一个事件')
     return
   }
-  const payload = {
+  const payload: Record<string, unknown> = {
     name: channelForm.name.trim(),
     projectId: channelForm.scope === 'project' ? channelForm.projectId : null,
-    webhookUrl: channelForm.webhookUrl.trim(),
+    channelType: channelForm.channelType,
+    webhookUrl: needsWebhook.value ? channelForm.webhookUrl.trim() : '',
+    template: { title: channelForm.templateTitle, text: channelForm.templateText },
     events: channelForm.events,
     enabled: channelForm.enabled,
+  }
+  if (channelForm.channelType === 'email') {
+    payload.config = {
+      smtpHost: channelForm.smtpHost.trim(),
+      smtpPort: channelForm.smtpPort,
+      smtpUser: channelForm.smtpUser.trim(),
+      fromAddr: channelForm.fromAddr.trim(),
+      toAddrs: channelForm.toAddrs.trim(),
+      useSsl: channelForm.useSsl,
+      useTls: channelForm.useTls,
+      ...(channelForm.password ? { password: channelForm.password } : {}),
+    }
   }
   channelSaving.value = true
   try {
@@ -812,5 +1035,62 @@ onActivated(loadAll)
   margin: 0;
   line-height: 1.6;
   font-size: 12px;
+}
+
+.smtp-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.template-vars {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.template-vars__tag {
+  cursor: pointer;
+}
+
+.template-preview {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.template-preview__body {
+  border: 1px solid var(--aitp-border);
+  border-radius: 6px;
+  padding: 10px;
+  background: var(--aitp-subtle);
+}
+
+.template-preview__subject {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.template-preview__text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.template-preview__payload pre {
+  margin: 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.channel-dialog .el-dialog__body {
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
 }
 </style>

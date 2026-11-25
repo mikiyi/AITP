@@ -90,6 +90,15 @@
         </el-descriptions>
         <el-empty v-else description="还没有填写接口URL、请求参数与断言" :image-size="60" />
       </div>
+
+      <div class="panel panel-pad">
+        <AttachmentManager
+          owner-type="test_case"
+          :owner-id="detail.id"
+          title="用例附件"
+          hint="接口报文样例、测试数据文件、需求截图等参考资料，随用例长期保留。"
+        />
+      </div>
     </div>
 
     <el-empty v-else description="用例不存在" />
@@ -103,6 +112,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Back, VideoPlay } from '@element-plus/icons-vue'
+import AttachmentManager from '@/components/AttachmentManager.vue'
 import { caseApi } from '@/api'
 import type { InterfaceExecution, TestCase, TestDataPreview } from '@/api/types'
 import InterfaceResultDialog from '@/components/InterfaceResultDialog.vue'

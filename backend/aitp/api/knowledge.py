@@ -77,6 +77,7 @@ def _persist_qa(
     """把一问一答落进会话，返回 (会话 id, 回答留档时间)。
 
     落库失败只记日志并回滚：回答已经拿到，不该因为写历史失败而丢掉本次提问。
+    落库后自动检查是否需要归档老对话（超过 ACTIVE_TURNS_LIMIT 轮的部分自动归档）。
     """
     try:
         sid = knowledge_assistant_service.ensure_session(conn, session_id, question)
@@ -96,6 +97,12 @@ def _persist_qa(
             review_required=review_required,
         )
         commit(conn)
+        #: 归档检查：会话超过 50 轮时自动把最早的对话归档
+        try:
+            knowledge_assistant_service.archive_if_needed(conn, sid)
+            commit(conn)
+        except Exception as exc:  # noqa: BLE001 - 归档失败不影响本次问答
+            logger.warning("对话归档失败: %s", exc, exc_info=True)
         return sid, stamp
     except (sqlite3.Error, OSError, ValueError) as exc:
         conn.rollback()
@@ -375,6 +382,21 @@ def assistant_history() -> Response:
     """问答助手的历史：默认回放最近一条问答会话，带 sessionId 就回放指定那条。"""
     conn = db()
     return ok(knowledge_assistant_service.history(conn, optional_int(request.args.get("sessionId"), "sessionId")))
+
+
+@bp.get("/assistant/archives")
+def assistant_archives() -> Response:
+    """列出指定会话的历史归档（超过 50 轮的对话自动归档）。"""
+    conn = db()
+    session_id = require_int(request.args.get("sessionId"), "sessionId")
+    return ok({"list": knowledge_assistant_service.list_archives(conn, session_id)})
+
+
+@bp.get("/assistant/archives/<pk>")
+def assistant_archive_detail(pk: str) -> Response:
+    """查看某个归档的完整对话内容。"""
+    conn = db()
+    return ok(knowledge_assistant_service.get_archive_detail(conn, path_int(pk)))
 
 
 @bp.post("/assistant/add")

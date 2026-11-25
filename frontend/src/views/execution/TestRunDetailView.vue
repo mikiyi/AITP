@@ -223,6 +223,15 @@
       </el-table>
     </div>
 
+    <div v-if="run" class="panel panel-pad">
+      <AttachmentManager
+        owner-type="test_run"
+        :owner-id="run.id"
+        title="轮次附件"
+        hint="失败截图、执行日志、数据库快照、录屏等轮次级证据，随本轮次长期保留。"
+      />
+    </div>
+
     <div v-if="run && automationRuns.length" class="panel panel-pad auto-panel">
       <div class="auto-panel__head">
         <h3>自动化回写</h3>
@@ -576,6 +585,7 @@ import type {
   TestRunCase,
 } from '@/api/types'
 import DetailNotFound from '@/components/DetailNotFound.vue'
+import AttachmentManager from '@/components/AttachmentManager.vue'
 import EvidenceDrawer from '@/components/EvidenceDrawer.vue'
 import InterfaceResultDialog from '@/components/InterfaceResultDialog.vue'
 import ProdConfirmDialog from '@/components/ProdConfirmDialog.vue'

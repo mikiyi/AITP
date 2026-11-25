@@ -4,7 +4,8 @@
       <h2 class="page-title">场景自动化</h2>
       <div class="toolbar" style="margin: 0">
         <ProjectSwitcher />
-        <el-button type="primary" :icon="Plus" :disabled="activeTab === 'app'" @click="openCreate">新建场景</el-button>
+        <el-button v-if="activeTab === 'app'" :icon="Iphone" @click="openAppDriver">App 执行配置</el-button>
+        <el-button type="primary" :icon="Plus" @click="openCreate">新建场景</el-button>
         <el-button :icon="Refresh" :loading="loading" @click="reload">刷新</el-button>
       </div>
     </div>
@@ -14,21 +15,9 @@
       <el-tab-pane label="接口场景" name="api" />
     </el-tabs>
 
-    <!-- App 场景引擎待接入，先给明确占位提示，避免用户点进去一脸懵 -->
-    <el-alert
-      v-if="activeTab === 'app'"
-      type="info"
-      :closable="false"
-      show-icon
-      class="scenario-placeholder"
-      title="App 场景暂未开放"
-    >
-      App 原生步骤（Appium 驱动真机 / 模拟器：安装、启动、点选、断言）正在接入中。
-      当前可先使用「Web 场景」串联浏览器操作、「接口场景」串联接口调用；App 场景开放后可在此创建。
-    </el-alert>
-    <p v-else class="muted page-hint">{{ pageHint }}</p>
+    <p class="muted page-hint">{{ pageHint }}</p>
 
-    <div v-if="activeTab !== 'app'" class="panel panel-pad">
+    <div class="panel panel-pad">
       <div class="scenario-filter">
         <el-input
           v-model="filterKeyword"
@@ -120,6 +109,7 @@
                   <el-option label="浏览器" value="browser" />
                   <el-option label="数据库" value="database" />
                   <el-option label="自动化脚本" value="automation" />
+                  <el-option label="App" value="app" />
                 </el-select>
                 <span class="scenario-step__spacer" />
                 <el-button link :disabled="i === 0" @click="move(i, -1)">上移</el-button>
@@ -165,6 +155,43 @@
                     />
                   </el-select>
                 </template>
+                <template v-else-if="step.type === 'app'">
+                  <el-select v-model="step.action" style="width: 120px">
+                    <el-option v-for="a in APP_ACTIONS" :key="a.value" :label="a.label" :value="a.value" />
+                  </el-select>
+                  <template v-if="step.action === 'launch' || step.action === 'stop'">
+                    <el-input v-model="step.package" placeholder="包名，如 com.example.app" style="flex: 1" />
+                    <el-input
+                      v-if="step.action === 'launch'"
+                      v-model="step.activity"
+                      placeholder="Activity（可选，留空走 Launcher）"
+                      style="flex: 1"
+                    />
+                  </template>
+                  <template v-else-if="step.action === 'tap'">
+                    <el-input v-model="step.target" placeholder="点选文本 / 描述（或直接填坐标）" style="flex: 1" />
+                    <el-input v-model="step.x" placeholder="x" style="width: 80px" />
+                    <el-input v-model="step.y" placeholder="y" style="width: 80px" />
+                  </template>
+                  <template v-else-if="step.action === 'input'">
+                    <el-input v-model="step.value" placeholder="要输入的文本" style="flex: 1" />
+                  </template>
+                  <template v-else-if="step.action === 'swipe'">
+                    <el-input v-model="step.x" placeholder="x1" style="width: 80px" />
+                    <el-input v-model="step.y" placeholder="y1" style="width: 80px" />
+                    <el-input v-model="step.x2" placeholder="x2" style="width: 80px" />
+                    <el-input v-model="step.y2" placeholder="y2" style="width: 80px" />
+                    <el-input v-model.number="step.durationMs" placeholder="时长 ms" style="width: 100px" />
+                  </template>
+                  <template v-else-if="step.action === 'assertText'">
+                    <el-input v-model="step.target" placeholder="期望出现在界面上的文本" style="flex: 1" />
+                  </template>
+                  <template v-else-if="step.action === 'wait'">
+                    <el-input v-model.number="step.waitMs" placeholder="等待毫秒" style="width: 120px" />
+                    <span class="muted">毫秒</span>
+                  </template>
+                  <el-input v-model="step.serial" placeholder="设备序列号（可选，留空用默认设备）" style="width: 240px" />
+                </template>
                 <template v-else>
                   <el-select v-model="step.action" style="width: 100px">
                     <el-option v-for="a in ['navigate', 'click', 'type']" :key="a" :label="a" :value="a" />
@@ -183,7 +210,7 @@
                   <el-input v-model="step.statement" type="textarea" :rows="2"
                             placeholder="未选数据库脚本时手填只读查询：SQL / Mongo JSON / Redis 命令，可用 {{var}}" />
                 </div>
-                <div v-if="step.type !== 'browser' && step.type !== 'automation'" class="scenario-step__field">
+                <div v-if="step.type !== 'browser' && step.type !== 'automation' && step.type !== 'app'" class="scenario-step__field">
                   <span class="scenario-step__label">断言规则</span>
                   <el-input v-model="step.extra['断言规则']" type="textarea" :rows="2"
                             :placeholder="step.type === 'database'
@@ -211,6 +238,45 @@
       </template>
     </el-dialog>
 
+    <!-- App 执行配置 -->
+    <el-dialog v-model="appDriverVisible" title="App 执行配置" width="560px">
+      <el-form label-width="110px" @submit.prevent>
+        <el-form-item label="adb 命令">
+          <el-input v-model="appDriver.adbCommand" placeholder="adb 或绝对路径，支持带参数" />
+        </el-form-item>
+        <el-form-item label="默认设备">
+          <el-input v-model="appDriver.deviceSerial" placeholder="设备序列号；留空则用唯一在线设备" />
+        </el-form-item>
+        <el-form-item label="命令超时">
+          <el-input-number v-model="appDriver.commandTimeout" :min="3" :max="120" controls-position="right" />
+          <span class="muted" style="margin-left: 8px">秒</span>
+        </el-form-item>
+        <el-form-item label="设备探测">
+          <div class="app-probe">
+            <el-button size="small" :loading="appProbing" @click="probeAppDriver">测试连接</el-button>
+            <template v-if="appProbe">
+              <el-tag :type="appProbe.ok ? 'success' : 'danger'" size="small" effect="plain">
+                {{ appProbe.ok ? '可用' : '不可用' }}
+              </el-tag>
+              <span class="muted app-probe__text">
+                {{ appProbe.version || appProbe.message || '未返回版本信息' }}
+                <template v-if="appProbe.devices.length">
+                  · 设备：{{ appProbe.devices.map((d) => `${d.serial}(${d.state})`).join('、') }}
+                </template>
+              </span>
+            </template>
+          </div>
+        </el-form-item>
+      </el-form>
+      <p class="muted env-hint" style="margin-left: 0">
+        支持真机、模拟器或自定义 adb 桩；CI / E2E 可把命令指向本地桩脚本，不依赖真实设备。
+      </p>
+      <template #footer>
+        <el-button @click="appDriverVisible = false">取消</el-button>
+        <el-button type="primary" :loading="appDriverSaving" @click="saveAppDriver">保存</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 执行回放 -->
     <el-dialog v-model="replayVisible" title="场景执行回放" width="900px" top="4vh" custom-class="scenario-dialog">
       <div v-if="result">
@@ -226,6 +292,9 @@
             纳入报告
           </el-button>
           <el-tag v-if="result.autoBugId" size="small" type="warning" effect="plain">已自动转缺陷 #{{ result.autoBugId }}</el-tag>
+          <el-tag v-else-if="result.autoBugDraftId" size="small" type="warning" effect="plain">
+            已提交缺陷待审 #{{ result.autoBugDraftId }}
+          </el-tag>
           <el-button v-if="!result.passed" link type="danger" size="small" :loading="bugging" @click="toBug">转缺陷</el-button>
         </div>
         <div v-if="clusters.length" class="scenario-replay__cluster">
@@ -246,12 +315,15 @@
             <div class="scenario-replay__step-head">
               <el-tag size="small" :type="s.passed ? 'success' : 'danger'" effect="plain">{{ s.passed ? '通过' : '失败' }}</el-tag>
               <strong>{{ s.stepNo }}. {{ s.name }}</strong>
-              <span class="muted">HTTP {{ s.statusCode ?? '-' }} · {{ s.durationMs }} ms</span>
+              <span class="muted">
+                <template v-if="s.request.method !== 'APP'">HTTP {{ s.statusCode ?? '-' }} · </template>{{ s.durationMs }} ms
+              </span>
               <el-tag v-for="(v, k) in s.extracted" :key="k" size="small" type="info" effect="plain">{{ k }}={{ v }}</el-tag>
             </div>
             <div class="muted text-mono scenario-replay__url">{{ s.request.method }} {{ s.request.url }}</div>
             <div v-if="s.request.method === 'DB' && s.request.body" class="muted text-mono scenario-replay__url">{{ s.request.body }}</div>
             <div v-if="s.request.method === 'SCRIPT'" class="muted text-mono scenario-replay__url">自动化脚本 {{ s.request.url }}</div>
+            <div v-if="s.request.method === 'APP'" class="muted text-mono scenario-replay__url">App 动作 {{ s.request.url }}</div>
             <div class="scenario-replay__waterfall" :title="`${s.durationMs} ms`">
               <i :style="{ width: waterfallWidth(s) + '%' }" :class="s.passed ? 'ok' : 'bad'" />
               <span class="muted">{{ s.durationMs }} ms</span>
@@ -277,15 +349,38 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh, Search } from '@element-plus/icons-vue'
+import { Iphone, Plus, Refresh, Search } from '@element-plus/icons-vue'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
-import { apiScenarioApi, automationApi, reportApi, sqlScriptApi, testEnvApi } from '@/api'
-import type { ApiScenario, ApiScenarioRunResult, ApiScenarioStep, ApiScenarioStepResult, AutomationScript, SqlScript } from '@/api/types'
+import { apiScenarioApi, automationApi, reportApi, settingsApi, sqlScriptApi, testEnvApi } from '@/api'
+import type {
+  ApiScenario,
+  ApiScenarioRunResult,
+  ApiScenarioStep,
+  ApiScenarioStepResult,
+  AppDriverProbeResult,
+  AppDriverSettings,
+  AutomationScript,
+  SqlScript,
+} from '@/api/types'
 import { useAppStore } from '@/stores/app'
 import { fetchAllPages } from '@/utils/fetchAll'
 
-/** 场景类型：web=浏览器场景 / app=App 场景（占位）/ api=接口场景 */
+/** 场景类型：web=浏览器场景 / app=App 场景（adb 驱动）/ api=接口场景 */
 type ScenarioType = 'web' | 'app' | 'api'
+
+/** App 步骤动作：与后端 app_scenario_service.ACTIONS 一一对应。 */
+const APP_ACTIONS = [
+  { value: 'launch', label: '启动 App' },
+  { value: 'stop', label: '停止 App' },
+  { value: 'tap', label: '点选' },
+  { value: 'input', label: '输入文本' },
+  { value: 'swipe', label: '滑动' },
+  { value: 'back', label: '返回键' },
+  { value: 'home', label: 'Home 键' },
+  { value: 'wait', label: '等待' },
+  { value: 'assertText', label: '文本断言' },
+  { value: 'screenshot', label: '截图' },
+] as const
 
 const appStore = useAppStore()
 const router = useRouter()
@@ -319,7 +414,9 @@ const reporting = ref(false)
 /** 顶部提示按当前 tab 切换；接口分支里的 {{var}} 是示例语法，用变量转义避免被 Vue 当插值。 */
 const pageHint = computed(() => activeTab.value === 'web'
   ? '把多个浏览器操作按业务流程串联：navigate / click / type 步骤驱动真实浏览器（Playwright），支持变量提取与失败即停。'
-  : `把多个接口按业务流程串联：上一步响应提取变量（JSONPath/正则），下一步用 ${varSyntax} 引用；复用接口断言与测试数据，支持失败即停/继续与数据驱动。`)
+  : activeTab.value === 'app'
+    ? '把 App 原生操作按业务流程串联：启动 / 点选 / 输入 / 滑动 / 文本断言，由本机 adb 驱动真机、模拟器或自定义桩。'
+    : `把多个接口按业务流程串联：上一步响应提取变量（JSONPath/正则），下一步用 ${varSyntax} 引用；复用接口断言与测试数据，支持失败即停/继续与数据驱动。`)
 
 const clusters = computed(() => {
   const map = new Map<string, number>()
@@ -395,20 +492,33 @@ async function toBug(): Promise<void> {
 }
 
 const emptyStep = (type: ScenarioType): ApiScenarioStep => ({
-  name: '', type: type === 'web' ? 'browser' : 'interface', statement: '',
+  name: '',
+  type: type === 'web' ? 'browser' : type === 'app' ? 'app' : 'interface',
+  statement: '', package: '', activity: '', target: '', value: '',
+  x: '', y: '', x2: '', y2: '',
   extra: { 请求方式: 'GET', 接口URL: '', 请求体: '', 断言规则: '' },
   extract: [], continueOnError: false, waitMs: 0,
+})
+
+const appDriverVisible = ref(false)
+const appDriverSaving = ref(false)
+const appProbing = ref(false)
+const appProbe = ref<AppDriverProbeResult | null>(null)
+const appDriver = reactive<AppDriverSettings>({
+  adbCommand: 'adb',
+  deviceSerial: '',
+  commandTimeout: 20,
 })
 const form = reactive({
   name: '', envId: null as number | null, dataSource: '', status: 'ready',
   steps: [emptyStep('api')] as ApiScenarioStep[],
 })
 
-// 切 tab 重新拉该类型的场景列表；App tab 走占位提示不拉数据
+// 切 tab 重新拉该类型的场景列表
 watch(activeTab, () => { void reload() })
 
 async function reload(): Promise<void> {
-  if (!appStore.currentProjectId || activeTab.value === 'app') {
+  if (!appStore.currentProjectId) {
     rows.value = []
     return
   }
@@ -455,7 +565,12 @@ async function openEdit(row: ApiScenario): Promise<void> {
   Object.assign(form, {
     name: detail.name, envId: detail.envId, dataSource: detail.dataSource,
     status: detail.status === 'disabled' ? 'disabled' : 'ready',
-    steps: detail.steps.length ? detail.steps : [emptyStep(type)],
+    // 服务端存的是精简步骤（App / 数据库没有 extra），回填时补齐编辑器依赖的字段
+    steps: (detail.steps.length ? detail.steps : [emptyStep(type)]).map((s) => ({
+      ...s,
+      extra: s.extra ?? { 请求方式: 'GET', 接口URL: '', 请求体: '', 断言规则: '' },
+      extract: s.extract ?? [],
+    })),
   })
   editorVisible.value = true
 }
@@ -471,8 +586,12 @@ async function save(): Promise<void> {
   if (!form.steps.some((s) =>
     (s.extra['接口URL'] || '').trim()
     || (s.type === 'database' && ((s.statement || '').trim() || s.dbRef))
-    || (s.type === 'automation' && (s.scriptNo || '').trim()))) {
-    ElMessage.warning('至少一步填写接口URL、数据库查询语句或选择自动化脚本'); return
+    || (s.type === 'automation' && (s.scriptNo || '').trim())
+    || (s.type === 'app' && ['wait', 'back', 'home', 'screenshot'].includes(s.action || 'launch'))
+    || (s.type === 'app' && ((s.package || '').trim() || (s.target || '').trim()
+      || (s.value || '').trim() || ((s.x || '').trim() && (s.y || '').trim()))))) {
+    ElMessage.warning('至少一步填写接口URL、数据库查询语句、自动化脚本或配置有效的 App 动作')
+    return
   }
   saving.value = true
   try {
@@ -534,6 +653,50 @@ async function copy(row: ApiScenario): Promise<void> {
   }
 }
 
+async function openAppDriver(): Promise<void> {
+  appProbe.value = null
+  try {
+    const settings = await settingsApi.appDriver()
+    appDriver.adbCommand = settings.adbCommand
+    appDriver.deviceSerial = settings.deviceSerial
+    appDriver.commandTimeout = settings.commandTimeout
+    appDriverVisible.value = true
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '加载 App 执行配置失败')
+  }
+}
+
+async function probeAppDriver(): Promise<void> {
+  appProbing.value = true
+  try {
+    appProbe.value = await settingsApi.probeAppDriver({
+      adbCommand: appDriver.adbCommand,
+      deviceSerial: appDriver.deviceSerial,
+    })
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '设备探测失败')
+  } finally {
+    appProbing.value = false
+  }
+}
+
+async function saveAppDriver(): Promise<void> {
+  appDriverSaving.value = true
+  try {
+    await settingsApi.saveAppDriver({
+      adbCommand: appDriver.adbCommand,
+      deviceSerial: appDriver.deviceSerial,
+      commandTimeout: appDriver.commandTimeout,
+    })
+    ElMessage.success('App 执行配置已保存')
+    appDriverVisible.value = false
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '保存 App 执行配置失败')
+  } finally {
+    appDriverSaving.value = false
+  }
+}
+
 onMounted(reload)
 watch(() => appStore.currentProjectId, () => reload())
 </script>
@@ -575,6 +738,8 @@ watch(() => appStore.currentProjectId, () => reload())
 .scenario-replay__waterfall i.ok { background: var(--el-color-success); }
 .scenario-replay__waterfall i.bad { background: var(--el-color-danger); }
 .scenario-replay__waterfall span { font-size: 11px; }
+.app-probe { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.app-probe__text { font-size: 12px; word-break: break-all; }
 </style>
 
 <style>

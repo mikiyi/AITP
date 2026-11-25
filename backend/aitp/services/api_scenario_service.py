@@ -18,6 +18,7 @@ from typing import Any
 from ..repositories.api_scenario_repo import ApiScenarioRunRepository
 from ..repositories.base import loads
 from . import (
+    app_scenario_service,
     assertion_schema,
     auto_bug_service,
     case_test_data,
@@ -244,6 +245,8 @@ def run_scenario(
             detail = _run_database_step(conn, step, env, variables, scenario.get("project_id"))
         elif stype == "automation":
             detail = _run_automation_step(conn, step, db_path)
+        elif stype == "app":
+            detail = app_scenario_service.run_step(conn, step, variables, db_path)
         else:
             detail = interface_runner.execute(
                 extra, env, conn=conn,
@@ -329,19 +332,24 @@ def run_with_data(
         "runId": run_id, "runNo": run_no, "passed": passed,
         "recordCount": len(runs), "durationMs": duration, "runs": runs,
         "failedRecords": failed_records,
-        "autoBugId": None,
+        "autoBugId": None, "autoBugDraftId": None,
     }
     if not passed:
-        bug_id = auto_bug_service.from_scenario(
+        outcome = auto_bug_service.from_scenario(
             conn, scenario, {**result, "run_id": run_id}, runs
         )
-        if bug_id:
+        if outcome:
             conn.execute(
                 "UPDATE biz_api_scenario_run SET summary_json = ? WHERE id = ?",
-                (json.dumps({"runs": runs, "autoBugId": bug_id}, ensure_ascii=False), run_id),
+                (json.dumps({
+                    "runs": runs,
+                    "autoBugId": outcome.get("bugId"),
+                    "autoBugDraftId": outcome.get("draftId"),
+                }, ensure_ascii=False), run_id),
             )
             conn.commit()
-            result["autoBugId"] = bug_id
+            result["autoBugId"] = outcome.get("bugId")
+            result["autoBugDraftId"] = outcome.get("draftId")
     return result
 
 

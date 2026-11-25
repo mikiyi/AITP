@@ -8,9 +8,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import smtplib
 import sqlite3
+from email.message import EmailMessage
 from typing import Any
 
+from ..common.secret_store import get_store
 from ..common.time_utils import utcnow_iso
 from ..repositories.ci_repo import NOTIFICATION_FAILED, NOTIFICATION_PENDING, NOTIFICATION_SUCCESS, NotificationChannelRepository, NotificationLogRepository, channel_summary
 from ..repositories.test_run_repo import TestRunRepository, run_summary
@@ -50,6 +54,161 @@ KIND = "notification.webhook"
 MAX_RESPONSE_CHARS = 500
 DEFAULT_TIMEOUT = 10
 
+#: V2.7.0 通知渠道类型：webhook 保留原始 JSON（兼容旧渠道），其余按平台协议组装。
+CHANNEL_TYPES: tuple[str, ...] = ("webhook", "dingtalk", "wecom", "feishu", "email")
+CHANNEL_TYPE_LABELS = {
+    "webhook": "通用 Webhook",
+    "dingtalk": "钉钉机器人",
+    "wecom": "企业微信机器人",
+    "feishu": "飞书机器人",
+    "email": "邮箱",
+}
+#: 模板可用变量（设置页展示，渲染时按 payload 路径取值）。
+TEMPLATE_VARIABLES = (
+    "event", "eventLabel", "title", "projectName", "occurredAt", "link", "dataSummary",
+)
+
+_MARKDOWN_TEMPLATE = {
+    "title": "【AITP】{{eventLabel}}",
+    "text": "### {{eventLabel}}\n\n**{{title}}**\n\n"
+            "- 项目：{{projectName}}\n- 时间：{{occurredAt}}\n\n{{dataSummary}}\n\n"
+            "[查看详情]({{link}})",
+}
+_PLAIN_TEMPLATE = {
+    "title": "【AITP】{{eventLabel}}：{{title}}",
+    "text": "{{eventLabel}}\n\n{{title}}\n\n项目：{{projectName}}\n时间：{{occurredAt}}\n\n"
+            "{{dataSummary}}\n\n详情：{{link}}",
+}
+_DEFAULT_TEMPLATES: dict[str, dict[str, str]] = {
+    "webhook": _PLAIN_TEMPLATE,
+    "dingtalk": _MARKDOWN_TEMPLATE,
+    "wecom": _MARKDOWN_TEMPLATE,
+    "feishu": _PLAIN_TEMPLATE,
+    "email": _PLAIN_TEMPLATE,
+}
+
+_VAR_RE = re.compile(r"\{\{\s*([A-Za-z0-9_.]+)\s*\}\}")
+
+
+def default_template(channel_type: str) -> dict[str, str]:
+    return dict(_DEFAULT_TEMPLATES.get(channel_type, _PLAIN_TEMPLATE))
+
+
+def normalize_channel_type(raw: Any) -> str:
+    value = str(raw or "webhook").strip().lower()
+    return value if value in CHANNEL_TYPES else "webhook"
+
+
+def smtp_secret_ref(channel_id: int) -> str:
+    return f"notification-smtp-{int(channel_id)}"
+
+
+def _lookup(payload: dict[str, Any], path: str) -> str:
+    current: Any = payload
+    for part in path.split("."):
+        if isinstance(current, dict):
+            current = current.get(part)
+        elif isinstance(current, list) and part.isdigit() and int(part) < len(current):
+            current = current[int(part)]
+        else:
+            return ""
+    if current is None:
+        return ""
+    if isinstance(current, (dict, list)):
+        return json.dumps(current, ensure_ascii=False)
+    return str(current)
+
+
+def render_template(text: str, payload: dict[str, Any]) -> str:
+    """把 {{var}} / {{data.xxx}} 替换成 payload 里的值；未知变量替换为空串。"""
+    return _VAR_RE.sub(lambda match: _lookup(payload, match.group(1)), str(text or ""))
+
+
+def render_channel(
+    channel: dict[str, Any], payload: dict[str, Any]
+) -> tuple[str, str, Any]:
+    """按渠道类型渲染：返回 (标题, 正文, 实际投递体)。
+
+    webhook 保持原始 JSON 兼容；钉钉/企微/飞书按各自机器人协议组装；邮件只返回标题正文。
+    """
+    channel_type = normalize_channel_type(channel.get("channel_type"))
+    raw = channel.get("template_json")
+    try:
+        template = json.loads(str(raw or "{}"))
+    except (TypeError, ValueError):
+        template = {}
+    if not isinstance(template, dict):
+        template = {}
+    defaults = default_template(channel_type)
+    subject = render_template(str(template.get("title") or defaults["title"]), payload)
+    text = render_template(str(template.get("text") or defaults["text"]), payload)
+    if channel_type == "dingtalk":
+        body: Any = {"msgtype": "markdown", "markdown": {"title": subject, "text": text}}
+    elif channel_type == "wecom":
+        body = {"msgtype": "markdown", "markdown": {"content": text}}
+    elif channel_type == "feishu":
+        body = {"msg_type": "text", "content": {"text": f"{subject}\n{text}"}}
+    elif channel_type == "email":
+        body = None
+    else:
+        body = payload
+    return subject[:200], text, body
+
+
+def send_email(config: dict[str, Any], password: str, subject: str, text: str,
+               timeout: int = DEFAULT_TIMEOUT) -> tuple[int, str]:
+    """SMTP 发信；密码来自系统密钥库，不落库也不进接口响应。"""
+    host = str(config.get("smtpHost") or "").strip()
+    if not host:
+        raise ValueError("邮箱渠道缺少 SMTP 服务器地址")
+    port = int(config.get("smtpPort") or 465)
+    user = str(config.get("smtpUser") or "").strip()
+    from_addr = str(config.get("fromAddr") or user).strip()
+    recipients = [item.strip() for item in re.split(r"[,;\s]+", str(config.get("toAddrs") or ""))
+                  if item.strip()]
+    if not from_addr or not recipients:
+        raise ValueError("邮箱渠道缺少发件人或收件人")
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = from_addr
+    message["To"] = ", ".join(recipients)
+    message.set_content(text)
+    use_ssl = bool(config.get("useSsl", True))
+    use_tls = bool(config.get("useTls", False))
+    if use_ssl:
+        client: smtplib.SMTP = smtplib.SMTP_SSL(host, port, timeout=timeout)
+    else:
+        client = smtplib.SMTP(host, port, timeout=timeout)
+    try:
+        if use_tls and not use_ssl:
+            client.starttls()
+        if user:
+            client.login(user, password)
+        client.send_message(message)
+    finally:
+        try:
+            client.quit()
+        except (smtplib.SMTPException, OSError):
+            pass
+    return 0, f"已投递至 {', '.join(recipients)}"
+
+
+def _channel_config(channel: dict[str, Any]) -> dict[str, Any]:
+    try:
+        config = json.loads(str(channel.get("config_json") or "{}"))
+    except (TypeError, ValueError):
+        config = {}
+    return config if isinstance(config, dict) else {}
+
+
+def _channel_password(channel: dict[str, Any]) -> str:
+    if not channel.get("id"):
+        return ""
+    try:
+        return str(get_store().get(smtp_secret_ref(int(channel["id"]))) or "")
+    except Exception:  # noqa: BLE001 - 密钥库不可用时按未配置密码处理
+        return ""
+
 
 def base_url() -> str:
     host = os.environ.get("AITP_HOST", "127.0.0.1")
@@ -74,6 +233,15 @@ def _link(path: str) -> str:
     return base_url() + (path if path.startswith("/") else f"/{path}")
 
 
+def _data_summary(data: dict[str, Any]) -> str:
+    lines: list[str] = []
+    for key, value in (data or {}).items():
+        if isinstance(value, (dict, list)):
+            value = json.dumps(value, ensure_ascii=False)
+        lines.append(f"- {key}：{value}")
+    return "\n".join(lines)
+
+
 def build_payload(
     conn: sqlite3.Connection,
     *,
@@ -92,6 +260,7 @@ def build_payload(
         "occurredAt": utcnow_iso(),
         "link": _link(link),
         "data": data,
+        "dataSummary": _data_summary(data),
     }
 
 
@@ -171,6 +340,16 @@ def send_webhook(url: str, payload: dict[str, Any], timeout: int = DEFAULT_TIMEO
         return int(response.status), text
 
 
+def dispatch(channel: dict[str, Any], payload: dict[str, Any],
+             timeout: int = DEFAULT_TIMEOUT) -> tuple[int, str]:
+    """按渠道类型投递一次：邮件走 SMTP，其余走 HTTP（协议体已在 render_channel 组装）。"""
+    subject, text, body = render_channel(channel, payload)
+    if normalize_channel_type(channel.get("channel_type")) == "email":
+        return send_email(_channel_config(channel), _channel_password(channel),
+                          subject, text, timeout)
+    return send_webhook(str(channel.get("webhook_url") or ""), body, timeout)
+
+
 def deliver(conn: sqlite3.Connection, log_id: int) -> dict[str, Any]:
     """执行一次投递；失败时落库后抛异常，交给队列按次数重试。"""
     repo = NotificationLogRepository(conn)
@@ -191,7 +370,7 @@ def deliver(conn: sqlite3.Connection, log_id: int) -> dict[str, Any]:
 
     payload = json.loads(str(log.get("payload_json") or "{}"))
     try:
-        http_status, response_text = send_webhook(str(channel.get("webhook_url") or ""), payload)
+        http_status, response_text = dispatch(channel, payload)
     except urllib.error.HTTPError as exc:
         message = f"HTTP {exc.code}"
         repo.update(log_id, {
@@ -202,15 +381,15 @@ def deliver(conn: sqlite3.Connection, log_id: int) -> dict[str, Any]:
             "error_message": message,
         })
         conn.commit()
-        raise RuntimeError(f"Webhook 返回 {message}") from exc
-    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise RuntimeError(f"通知接口返回 {message}") from exc
+    except (urllib.error.URLError, smtplib.SMTPException, OSError, ValueError) as exc:
         repo.update(log_id, {
             "status": NOTIFICATION_FAILED,
             "attempts": attempts,
             "error_message": str(exc)[:500],
         })
         conn.commit()
-        raise RuntimeError(f"Webhook 调用失败：{exc}") from exc
+        raise RuntimeError(f"通知投递失败：{exc}") from exc
 
     repo.update(log_id, {
         "status": NOTIFICATION_SUCCESS,
@@ -248,7 +427,7 @@ def send_test(conn: sqlite3.Connection, channel_id: int) -> dict[str, Any]:
         "created_at": utcnow_iso(),
     })
     try:
-        http_status, response_text = send_webhook(str(channel.get("webhook_url") or ""), payload)
+        http_status, response_text = dispatch(channel, payload)
     except urllib.error.HTTPError as exc:
         NotificationLogRepository(conn).update(log_id, {
             "status": NOTIFICATION_FAILED,
@@ -258,7 +437,7 @@ def send_test(conn: sqlite3.Connection, channel_id: int) -> dict[str, Any]:
             "finished_at": utcnow_iso(),
         })
         return {"success": False, "httpStatus": int(exc.code), "message": f"HTTP {exc.code}"}
-    except (urllib.error.URLError, OSError, ValueError) as exc:
+    except (urllib.error.URLError, smtplib.SMTPException, OSError, ValueError) as exc:
         NotificationLogRepository(conn).update(log_id, {
             "status": NOTIFICATION_FAILED,
             "error_message": str(exc)[:500],

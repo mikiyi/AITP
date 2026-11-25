@@ -115,6 +115,15 @@
       </el-table>
     </div>
 
+    <div v-if="detail" class="panel panel-pad">
+      <AttachmentManager
+        owner-type="exploratory_session"
+        :owner-id="detail.session.id"
+        title="会话附件"
+        hint="探索过程产生的日志、录屏、问题截图等可挂在这里，与每一步的执行证据互补。"
+      />
+    </div>
+
     <el-drawer v-model="evidenceVisible" title="异常证据包" size="52%">
       <div v-if="evidence">
         <el-descriptions :column="2" border size="small">
@@ -167,6 +176,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Back } from '@element-plus/icons-vue'
 import { exploratoryApi } from '@/api'
+import AttachmentManager from '@/components/AttachmentManager.vue'
 import DetailNotFound from '@/components/DetailNotFound.vue'
 import { ApiError, ErrorCode } from '@/api/request'
 import { dateTimeText } from '@/utils/format'

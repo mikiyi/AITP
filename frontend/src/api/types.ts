@@ -596,6 +596,23 @@ export interface BugScreenshot {
   url: string
 }
 
+/** 业务对象持久附件：缺陷 / 用例 / 轮次 / 探索会话等挂的文档与图片。 */
+export interface BusinessAttachment {
+  id: Id
+  projectId: Id | null
+  ownerType: string
+  ownerId: Id
+  fileName: string
+  mime: string
+  sizeBytes: number
+  kind: 'image' | 'file'
+  sha256: string
+  /** 只有 PNG/JPEG/GIF/WebP/BMP 可在页面内直接预览。 */
+  previewable: boolean
+  createdAt: string
+  url: string
+}
+
 export interface BugLog {
   id: Id
   bugId: Id
@@ -2216,11 +2233,26 @@ export interface AssistantThinking {
 /** 多接口串联场景：步骤复用接口用例 extra 口径 + 变量提取/传递 */
 export interface ApiScenarioStep {
   name: string
-  type?: 'interface' | 'browser' | 'database' | 'automation'
+  /** app：真机 / 模拟器步骤（V2.7.0 由 adb 驱动执行）。 */
+  type?: 'interface' | 'browser' | 'database' | 'automation' | 'app'
   action?: string
   url?: string
   selector?: string
   value?: string
+  /** App 点选 / 断言目标文本。 */
+  target?: string
+  /** App 启动包名与 Activity。 */
+  package?: string
+  activity?: string
+  /** App 坐标点选 / 滑动坐标。 */
+  x?: string
+  y?: string
+  x2?: string
+  y2?: string
+  /** 滑动 / 长按持续毫秒数。 */
+  durationMs?: number
+  /** 指定设备序列号；留空走全局默认设备。 */
+  serial?: string
   statement?: string
   /** database 步引用数据库脚本编号（SQL-xxx），有则优先于 statement */
   dbRef?: string
@@ -2238,7 +2270,7 @@ export interface ApiScenario {
   projectId: number
   name: string
   description: string
-  /** 场景类型：web=浏览器场景 / app=App 场景（占位）/ api=接口场景 */
+  /** 场景类型：web=浏览器场景 / app=App 场景 / api=接口场景 */
   scenarioType: 'web' | 'app' | 'api'
   envId: number | null
   dataSource: string
@@ -2277,6 +2309,8 @@ export interface ApiScenarioRunResult {
   runs: ApiScenarioRun[]
   /** 开启 automation.auto_bug 后失败自动生成的缺陷 id。 */
   autoBugId?: number | null
+  /** V2.7.0 待审模式下自动生成的缺陷草稿 id（人工确认后才落正式缺陷）。 */
+  autoBugDraftId?: number | null
 }
 
 /** 问答助手的历史：默认最近一条会话，换菜单 / 重启后回到同一条对话线。 */
@@ -2287,6 +2321,50 @@ export interface AssistantHistory {
   messages: AssistantHistoryMessage[]
   /** 消息超过回放上限时为真，更早的问答去「会话记录」看。 */
   truncated: boolean
+  /** 该会话已归档的批次数（超过 50 轮的自动归档）。 */
+  archiveCount: number
+}
+
+/** 问答助手的历史归档条目。 */
+export interface AssistantArchiveItem {
+  id: number
+  sessionId: number
+  /** 归档编号，12 位数字如 202611241518。 */
+  archiveNo: string
+  /** 归档名称，如「历史对话归档202611241518」。 */
+  archiveName: string
+  /** 归档包含的轮数（一问一答=1 轮）。 */
+  turnCount: number
+  /** 归档包含的消息条数。 */
+  messageCount: number
+  periodFrom: string
+  periodTo: string
+  createdAt: string
+}
+
+/** 归档详情里的一条消息。 */
+export interface AssistantArchiveMessage {
+  id: number
+  role: 'user' | 'assistant'
+  content: string
+  reasoning?: string
+  model?: string
+  messageMeta?: Record<string, unknown>
+  createdAt: string
+}
+
+/** 问答助手的历史归档详情。 */
+export interface AssistantArchiveDetail {
+  id: number
+  sessionId: number
+  archiveNo: string
+  archiveName: string
+  turnCount: number
+  messageCount: number
+  periodFrom: string
+  periodTo: string
+  createdAt: string
+  messages: AssistantArchiveMessage[]
 }
 
 /** 问答链路的外发评估：以实际会用的首选模型为准，本地首选不外发。 */
@@ -2855,21 +2933,59 @@ export interface CiSettings {
   token?: string
 }
 
-/** Webhook 通知渠道；projectId 为空表示全局生效。 */
+/** 通知渠道：webhook=通用 / dingtalk / wecom / feishu 机器人 / email 邮箱。 */
 export interface NotificationChannel {
   id: Id
   name: string
   projectId: Id | null
   webhookUrl: string
+  /** 渠道类型，老渠道默认 webhook。 */
+  channelType: 'webhook' | 'dingtalk' | 'wecom' | 'feishu' | 'email'
+  /** 标题 / 正文模板，支持 {{eventLabel}} {{title}} {{link}} 等变量。 */
+  template: { title?: string; text?: string }
+  /** 邮箱渠道的 SMTP 配置；密码只回 hasPassword 标记。 */
+  config: NotificationChannelConfig
   events: string[]
   enabled: boolean
   createdAt?: string
   updatedAt?: string
 }
 
+/** 邮箱渠道 SMTP 配置（密码存系统密钥库，响应只回 hasPassword）。 */
+export interface NotificationChannelConfig {
+  smtpHost?: string
+  smtpPort?: number
+  smtpUser?: string
+  fromAddr?: string
+  toAddrs?: string
+  useSsl?: boolean
+  useTls?: boolean
+  hasPassword?: boolean
+}
+
+/** 渠道类型选项：默认模板用于「切类型自动填充」。 */
+export interface NotificationChannelTypeOption {
+  value: NotificationChannel['channelType']
+  label: string
+  defaultTemplate: { title: string; text: string }
+  needsWebhook: boolean
+}
+
 export interface NotificationChannelList {
   list: NotificationChannel[]
   eventOptions: CiEventOption[]
+  channelTypes: NotificationChannelTypeOption[]
+  /** 模板可用变量名，设置页渲染成可点击插入的标签。 */
+  templateVariables: string[]
+  emailHint: string
+}
+
+/** 模板预览结果：渲染后的标题 / 正文与实际投递体，不真正发送。 */
+export interface NotificationPreview {
+  channelType: NotificationChannel['channelType']
+  subject: string
+  text: string
+  body: unknown
 }
 
 export interface NotificationLog {
@@ -3512,4 +3628,155 @@ export interface FixSuggestionGenerateResult {
   mechanicalDiff?: string
   suggestion?: FixSuggestion
   executionId?: number
+}
+
+/* ------------------------------------------------------------------ V2.7.0 */
+
+/** 缺陷待审区条目：自动化 / App 场景 / MCP 提交、等待人工确认的候选缺陷。 */
+export interface BugDraft {
+  id: Id
+  projectId: Id | null
+  /** automation=b 自动化失败 / scenario=场景失败 / mcp=外部 MCP 提交。 */
+  source: string
+  sourceRef: string
+  title: string
+  description: string
+  actualResult: string
+  severity: string
+  priority: string
+  bugType: string
+  reporter: string
+  caseIds: Id[]
+  status: 'pending' | 'confirmed' | 'ignored'
+  statusLabel: string
+  bugId: Id | null
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface BugDraftList {
+  list: BugDraft[]
+  pendingCount: number
+}
+
+/** App 场景执行配置：adb 命令、默认设备与单条命令超时。 */
+export interface AppDriverSettings {
+  adbCommand: string
+  deviceSerial: string
+  commandTimeout: number
+  hint?: string
+}
+
+/** 探测 App 设备的结果。 */
+export interface AppDriverProbeResult {
+  ok: boolean
+  devices: Array<{ serial: string; state: string }>
+  version: string
+  message: string
+}
+
+/** MCP 工具定义（tools/list 同款）。 */
+export interface McpTool {
+  name: string
+  description: string
+  inputSchema: Record<string, unknown>
+}
+
+/** MCP 访问令牌记录：只含掩码与元数据，永远不含明文。 */
+export interface McpTokenRecord {
+  id: Id
+  preview: string
+  /** active / disabled / deleted */
+  status: string
+  /** manual / rotated / replaced / migrated */
+  disableReason: string
+  createdAt: string
+  lastUsedAt: string
+  lastClient: string
+  disabledAt: string
+  deletedAt: string
+}
+
+/** AITP MCP 服务端设置与工具清单。 */
+export interface McpSettings {
+  enabled: boolean
+  allowWrite: boolean
+  hasToken: boolean
+  /** 是否已启用令牌校验：历史上生成过令牌后一直为 true。 */
+  tokenRequired: boolean
+  tokenPreview: string
+  lastUsedAt: string
+  lastClient: string
+  endpoint: string
+  protocol: string
+  tools: McpTool[]
+  tokens: McpTokenRecord[]
+  notes: string[]
+}
+
+/** MCP 调用留痕。 */
+export interface McpCallLog {
+  id: Id
+  method: string
+  tool: string
+  status: string
+  durationMs: number
+  detail: string
+  client: string
+  createdAt: string
+}
+
+/** 跨轮次失败聚类：同一失败签名在最近 N 轮里的聚合。 */
+export interface FailureCluster {
+  key: string
+  label: string
+  count: number
+  caseCount: number
+  cases: Array<{ caseId: Id; caseNo: string; title: string }>
+  runIds: Id[]
+  runNames: string[]
+  firstSeen: string
+  lastSeen: string
+  trend: 'up' | 'down' | 'flat'
+  trendLabel: string
+  /** 按轮次从旧到新的失败条数。 */
+  series: number[]
+}
+
+export interface FailureClusterResult {
+  rounds: Array<{ id: Id; name: string; finishedAt: string | null }>
+  runCount: number
+  totalFailures: number
+  clusters: FailureCluster[]
+}
+
+/** 用例依赖关系：caseId 依赖 dependsOnCaseId。 */
+export interface CaseDependency {
+  id: Id
+  caseId: Id
+  caseNo: string
+  caseTitle: string
+  dependsOnCaseId: Id
+  dependsOnCaseNo: string
+  dependsOnCaseTitle: string
+  note: string
+  createdAt: string
+}
+
+/** 变更影响面中的一条用例，带最近失败率作为风险权重。 */
+export interface ImpactCase {
+  caseId: Id
+  caseNo: string
+  title: string
+  reason: string
+  depth: number
+  failureRate: number
+}
+
+export interface ImpactResult {
+  projectId: Id | null
+  direct: ImpactCase[]
+  affected: ImpactCase[]
+  total: number
+  requirementIds?: Id[]
 }

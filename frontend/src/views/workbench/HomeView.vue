@@ -154,13 +154,13 @@
         <el-table :data="recentTasks" size="small" empty-text="暂无 AI 任务">
           <el-table-column prop="capability" label="能力" min-width="300" class-name="home__task-cap-col">
             <template #default="scope">
-              <span class="home__task-cap">{{ scope.row.sessionTitle || scope.row.capability || scope.row.taskType || '-' }}</span>
+              <span class="home__task-cap">{{ taskCapabilityText(scope.row) }}</span>
             </template>
           </el-table-column>
           <el-table-column prop="status" label="状态" width="100">
             <template #default="scope">
               <el-tag :type="statusTag(scope.row.status)" size="small" effect="plain">
-                {{ scope.row.status }}
+                {{ taskStatusText(scope.row.status) }}
               </el-tag>
             </template>
           </el-table-column>
@@ -473,9 +473,11 @@ import type {
 import { useEchart } from '@/composables/useEchart'
 import { useChartTheme } from '@/composables/useChartTheme'
 import { useAppStore } from '@/stores/app'
+import { useLabStore } from '@/stores/lab'
 
 const router = useRouter()
 const appStore = useAppStore()
+const labStore = useLabStore()
 const { panel, text, weak, primary, border } = useChartTheme()
 
 const loading = ref(false)
@@ -1162,6 +1164,27 @@ function statusTag(status: string): 'success' | 'warning' | 'danger' | 'info' {
   return 'warning'
 }
 
+/** 任务状态与能力名都来自后端英文标识，首页展示统一转中文。 */
+const TASK_STATUS_TEXT: Record<string, string> = {
+  running: '执行中',
+  success: '成功',
+  failed: '失败',
+  cancelled: '已取消',
+  pending: '等待中',
+}
+
+function taskStatusText(status: string): string {
+  return TASK_STATUS_TEXT[status] ?? status
+}
+
+function taskCapabilityText(row: {
+  sessionTitle?: string
+  capability?: string | null
+  taskType?: string
+}): string {
+  return row.sessionTitle || labStore.capabilityLabel(row.capability || row.taskType)
+}
+
 async function reload(): Promise<void> {
   loading.value = true
   errorMessage.value = ''
@@ -1225,6 +1248,8 @@ onMounted(async () => {
   void loadCardLayout()
   void loadOverviewVersions()
   void reload()
+  // 最近任务按能力编码回显中文名，缺了目录就会露出英文编号
+  void labStore.loadAllCapabilities()
   // 服务端已在持续采样，进首页直接读历史；服务刚启动没有点位时才补探一轮
   await loadEnvs()
   if (envRows.value.length) {

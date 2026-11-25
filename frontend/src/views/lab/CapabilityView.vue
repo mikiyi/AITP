@@ -313,7 +313,7 @@
             :icon="Document"
             :loading="exportingWord"
             :disabled="!finished || !output"
-            @click="exportWord"
+            @click="exportWord()"
           >
             导出 Word
           </el-button>
@@ -1672,6 +1672,15 @@ function finishMaskPreview(): void {
   maskPreviewResolve = null
 }
 
+/** 后端校验失败会带英文变量名与提示词编码，展示前换成中文。 */
+function localizedError(message: string): string {
+  let text = message
+  ;(CAPABILITY_FORMS[capability.value] ?? []).forEach((field) => {
+    text = text.split(field.name).join(field.label)
+  })
+  return text.replace(/^提示词\s+\S+\s+缺少变量：/, '缺少必填输入：')
+}
+
 async function run(): Promise<void> {
   const missing = fields.value
     .filter((field) => {
@@ -1761,7 +1770,7 @@ async function run(): Promise<void> {
         onError: (message) => {
           // 用户自己点停止时流会以「用户取消」收尾，这是预期结果，不该再弹红色错误
           if (!cancelled.value) {
-            ElMessage.error(message)
+            ElMessage.error(localizedError(message))
           }
         },
       },

@@ -8,16 +8,20 @@
  */
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Paperclip, Picture } from '@element-plus/icons-vue'
 import { labApi } from '@/api'
 import type { DocumentAttachment, ImageAttachment } from '@/api/types'
 
 const props = withDefaults(defineProps<{
   attachmentIds?: string[]
   compact?: boolean
+  /** 内嵌到输入框内使用：按钮改为轻量链接样式并带图标 */
+  inline?: boolean
   paste?: boolean
 }>(), {
   attachmentIds: () => [],
   compact: false,
+  inline: false,
   paste: true,
 })
 
@@ -192,10 +196,22 @@ defineExpose({ reset, dispose })
 </script>
 
 <template>
-  <div class="ai-attach" :class="{ 'ai-attach--compact': compact }">
+  <div class="ai-attach" :class="[{ 'ai-attach--compact': compact }, { 'ai-attach--inline': inline }]">
     <div class="ai-attach__actions">
-      <el-button size="small" :loading="importing" @click="docInput?.click()">导入文档</el-button>
-      <el-button size="small" :loading="uploading" @click="imageInput?.click()">上传图片</el-button>
+      <el-button
+        size="small"
+        :link="inline"
+        :icon="inline ? Paperclip : undefined"
+        :loading="importing"
+        @click="docInput?.click()"
+      >导入文档</el-button>
+      <el-button
+        size="small"
+        :link="inline"
+        :icon="inline ? Picture : undefined"
+        :loading="uploading"
+        @click="imageInput?.click()"
+      >上传图片</el-button>
       <span class="ai-attach__hint">文档自动抽取文本；图片先去水印，支持 Ctrl+V 粘贴</span>
     </div>
     <input ref="docInput" type="file" :accept="DOC_ACCEPT" hidden @change="onDocPick" />
@@ -289,5 +305,17 @@ defineExpose({ reset, dispose })
 }
 .ai-attach--compact .ai-attach__hint {
   display: none;
+}
+/* 内嵌输入框的变体：链接式按钮与更小的图片预览，不撑高问题框 */
+.ai-attach--inline .ai-attach__actions {
+  gap: 12px;
+}
+.ai-attach--inline .ai-attach__docs,
+.ai-attach--inline .ai-attach__images {
+  margin-top: 4px;
+}
+.ai-attach--inline .ai-attach__image {
+  width: 52px;
+  height: 52px;
 }
 </style>

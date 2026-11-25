@@ -1060,12 +1060,14 @@ def execute_script(
     conn.commit()
     # 残留子项：失败自动转缺陷（配置 automation.auto_bug 开启时）
     if status in (RUN_STATUS_FAILED, RUN_STATUS_TIMEOUT, RUN_STATUS_ERROR):
-        bug_id = auto_bug_service.from_automation(
+        outcome = auto_bug_service.from_automation(
             conn, script, final_row,
             automation_writeback.case_results(conn, run_id), error_message,
         )
-        if bug_id:
-            final_row["autoBugId"] = bug_id
+        if outcome:
+            final_row["autoBugId"] = outcome.get("bugId")
+            final_row["autoBugDraftId"] = outcome.get("draftId")
+            final_row["autoBugMode"] = outcome.get("mode")
     return final_row
 
 

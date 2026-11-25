@@ -9,6 +9,50 @@
       </div>
     </div>
 
+    <div v-if="drafts.length" class="panel panel-pad drafts-panel">
+      <div class="drafts-head">
+        <h3>缺陷待审区</h3>
+        <el-tag type="warning" effect="plain" size="small">{{ draftPendingCount }} 条待确认</el-tag>
+        <span class="muted">自动化 / 场景 / MCP 提交的候选缺陷，确认后才生成正式缺陷</span>
+        <el-button link type="primary" size="small" :loading="draftsLoading" @click="loadDrafts">
+          刷新
+        </el-button>
+      </div>
+      <el-table :data="drafts" size="small" border v-loading="draftsLoading">
+        <el-table-column type="expand">
+          <template #default="{ row }">
+            <div class="draft-detail">
+              <div><strong>描述：</strong>{{ row.description || '-' }}</div>
+              <div><strong>实际结果：</strong>{{ row.actualResult || '-' }}</div>
+              <div><strong>来源：</strong>{{ row.source }}{{ row.sourceRef ? ` · ${row.sourceRef}` : '' }}</div>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="来源" width="120">
+          <template #default="{ row }">
+            <el-tag size="small" effect="plain">{{ draftSourceLabel(row.source) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="title" label="标题" min-width="260" show-overflow-tooltip />
+        <el-table-column label="严重度" width="90" align="center">
+          <template #default="{ row }">
+            <el-tag :type="severityTag(row.severity)" size="small" effect="plain">{{ row.severity }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="createdAt" label="提交时间" width="180" />
+        <el-table-column label="操作" width="160" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" :loading="draftActionId === row.id" @click="confirmDraft(row)">
+              确认转缺陷
+            </el-button>
+            <el-button link type="danger" :disabled="draftActionId === row.id" @click="ignoreDraft(row)">
+              忽略
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+
     <div class="panel panel-pad">
       <BaseProTable
         ref="tableRef"
@@ -103,6 +147,15 @@
           <el-input v-model="form.description" type="textarea" :rows="3" />
         </el-form-item>
       </el-form>
+      <div class="bug-attach">
+        <AttachmentManager
+          ref="attachmentRef"
+          owner-type="bug"
+          :owner-id="editing?.id ?? null"
+          title="附件"
+          hint="新建时先选择文件，保存缺陷后自动上传；编辑时上传立即生效。支持文档、日志、接口报文、录屏与图片。"
+        />
+      </div>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="save">保存</el-button>
@@ -122,17 +175,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import BaseProTable, { type ColumnDef, type SearchField, type TableExpose } from '@/components/BaseProTable.vue'
 import BaseExportMenu from '@/components/BaseExportMenu.vue'
 import AddToKnowledgeDialog from '@/components/AddToKnowledgeDialog.vue'
+import AttachmentManager from '@/components/AttachmentManager.vue'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import { BUG_SEVERITY_OPTIONS } from '@/constants/enums'
 import { bugApi, moduleApi, projectVersionApi } from '@/api'
-import type { Bug, ModuleOption } from '@/api/types'
+import type { Bug, BugDraft, ModuleOption } from '@/api/types'
 import { useProjectScope } from '@/composables/useProjectScope'
 import {
   useProjectExtraQuery,
@@ -177,6 +231,77 @@ function openKnowledge(row: Bug): void {
 }
 const appStore = useAppStore()
 const tableRef = ref<TableExpose | null>(null)
+
+const drafts = ref<BugDraft[]>([])
+const draftPendingCount = ref(0)
+const draftsLoading = ref(false)
+const draftActionId = ref<number | null>(null)
+
+function draftSourceLabel(source: string): string {
+  const labels: Record<string, string> = { automation: '自动化失败', scenario: '场景失败', mcp: 'MCP 提交' }
+  return labels[source] ?? source
+}
+
+/** 待审区只展示待确认条目；确认或忽略后从列表消失，正式缺陷进主表。 */
+async function loadDrafts(): Promise<void> {
+  if (!appStore.currentProjectId) {
+    drafts.value = []
+    draftPendingCount.value = 0
+    return
+  }
+  draftsLoading.value = true
+  try {
+    const payload = await bugApi.drafts({
+      projectId: appStore.currentProjectId,
+      status: 'pending',
+    })
+    drafts.value = payload.list
+    draftPendingCount.value = payload.pendingCount
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '加载待审缺陷失败')
+  } finally {
+    draftsLoading.value = false
+  }
+}
+
+async function confirmDraft(row: BugDraft): Promise<void> {
+  draftActionId.value = row.id
+  try {
+    const result = await bugApi.confirmDraft(row.id, { reporter: 'manual' })
+    ElMessage.success(`已生成缺陷 ${result.bugNo}`)
+    await loadDrafts()
+    tableRef.value?.reload()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '确认待审缺陷失败')
+  } finally {
+    draftActionId.value = null
+  }
+}
+
+async function ignoreDraft(row: BugDraft): Promise<void> {
+  let note = ''
+  try {
+    const result = await ElMessageBox.prompt('忽略后不会生成正式缺陷，可填写原因备查。', '忽略待审缺陷', {
+      inputPlaceholder: '忽略原因（可选）',
+      confirmButtonText: '忽略',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+    note = result.value ?? ''
+  } catch {
+    return
+  }
+  draftActionId.value = row.id
+  try {
+    await bugApi.ignoreDraft(row.id, note)
+    ElMessage.success('已忽略该待审缺陷')
+    await loadDrafts()
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '忽略待审缺陷失败')
+  } finally {
+    draftActionId.value = null
+  }
+}
 
 const bugStatusOptions = [
   { label: '新建', value: 'open' },
@@ -277,6 +402,7 @@ function moduleName(id: number | null): string {
 const dialogVisible = ref(false)
 const saving = ref(false)
 const editing = ref<Bug | null>(null)
+const attachmentRef = ref<InstanceType<typeof AttachmentManager> | null>(null)
 const form = reactive({
   title: '',
   projectId: null as number | null,
@@ -317,6 +443,7 @@ function openCreate(): void {
     description: '',
   })
   dialogVisible.value = true
+  void nextTick(() => attachmentRef.value?.reset())
 }
 
 async function openEdit(row: Bug): Promise<void> {
@@ -341,6 +468,7 @@ async function openEdit(row: Bug): Promise<void> {
       description: detail.description ?? '',
     })
     dialogVisible.value = true
+    void nextTick(() => attachmentRef.value?.reset())
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '加载缺陷失败')
   }
@@ -363,10 +491,19 @@ async function save(): Promise<void> {
       steps,
       stepsText: undefined as unknown as string,
     }
-    if (editing.value) {
-      await bugApi.update(editing.value.id, payload)
-    } else {
-      await bugApi.create(payload)
+    const saved = editing.value
+      ? await bugApi.update(editing.value.id, payload)
+      : await bugApi.create(payload)
+    const savedId = Number(saved?.id ?? editing.value?.id ?? 0)
+    if (savedId) {
+      try {
+        await attachmentRef.value?.flush(savedId)
+      } catch (err) {
+        // 缺陷已保存，附件没传成功：留在弹窗里可直接重试，重试按内容去重不会重复
+        editing.value = saved ?? editing.value
+        ElMessage.error(err instanceof Error ? `缺陷已保存，但附件上传失败：${err.message}` : '缺陷已保存，但附件上传失败')
+        return
+      }
     }
     ElMessage.success('保存成功')
     dialogVisible.value = false
@@ -431,6 +568,7 @@ useProjectScope({
   load: () => {
     void loadModuleOptions()
     void loadVersionOptions()
+    void loadDrafts()
   },
   // 旧项目的版本筛选在新项目里不存在，留着会把列表筛成空。
   resetScopedFilters: () => tableRef.value?.clearFilter('versionId'),
@@ -487,3 +625,37 @@ function onProjectChange(): void {
   form.moduleId = null
 }
 </script>
+
+<style scoped>
+.bug-attach {
+  margin-top: 4px;
+}
+
+.drafts-panel {
+  margin-bottom: 16px;
+}
+
+.drafts-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.drafts-head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.draft-detail {
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+</style>

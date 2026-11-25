@@ -91,6 +91,15 @@
         </div>
       </div>
 
+      <div class="panel panel-pad">
+        <AttachmentManager
+          owner-type="bug"
+          :owner-id="detail.id"
+          title="缺陷附件"
+          hint="文档、日志、接口报文、录屏与图片都可以挂在这里，随缺陷长期保留；仅图片证据也可直接用上方截图。"
+        />
+      </div>
+
       <div v-if="detail.linkedCases?.length" class="panel panel-pad">
         <div class="section-title">关联用例</div>
         <el-table :data="detail.linkedCases" size="small" border>
@@ -184,6 +193,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Back } from '@element-plus/icons-vue'
 import EvidenceDrawer from '@/components/EvidenceDrawer.vue'
+import AttachmentManager from '@/components/AttachmentManager.vue'
 import { bugApi } from '@/api'
 import DetailNotFound from '@/components/DetailNotFound.vue'
 import { ApiError, ErrorCode } from '@/api/request'

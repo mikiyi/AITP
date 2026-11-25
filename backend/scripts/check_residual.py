@@ -212,6 +212,8 @@ def main() -> int:
               str(run_off.get("autoBugId")))
         api.data("PUT", "/api/v1/settings/config", {"items": [
             {"key": "automation.auto_bug", "value": "true", "valueType": "boolean"},
+            # V2.7.0 起新增三档开关；旧开关仍兼容，但需显式选 auto 才落正式缺陷
+            {"key": "automation.auto_bug_mode", "value": "auto", "valueType": "string"},
         ]})
         run_on = api.data("POST", f"/api/v1/api-scenarios/{bad_scn['id']}/run", {})
         check("开启后场景失败自动建缺陷", bool(run_on.get("autoBugId")), str(run_on))
@@ -228,11 +230,12 @@ def main() -> int:
                              "caseId": case["id"]}]
             first = auto_bug_service.from_automation(conn, script, run_row, case_results, "退出码 1")
             second = auto_bug_service.from_automation(conn, script, run_row, case_results, "退出码 1")
+            first_bug_id = int((first or {}).get("bugId") or 0)
             linked = conn.execute(
                 "SELECT COUNT(*) FROM biz_case_bug_rel WHERE bug_id = ?",
-                (first,),
-            ).fetchone()[0] if first else 0
-        check("自动化失败自动建缺陷", bool(first), str(first))
+                (first_bug_id,),
+            ).fetchone()[0] if first_bug_id else 0
+        check("自动化失败自动建缺陷", bool(first_bug_id), str(first))
         check("同一次执行只建一条", second is None, str(second))
         check("自动缺陷关联失败用例", linked >= 1, str(linked))
 

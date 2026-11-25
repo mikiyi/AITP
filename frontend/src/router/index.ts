@@ -186,6 +186,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '报告详情', hidden: true },
   },
   {
+    path: '/insights',
+    name: 'insights',
+    component: () => import('@/views/insights/InsightView.vue'),
+    meta: { title: '质量洞察', icon: 'DataBoard' },
+  },
+  {
     path: '/sql-scripts',
     name: 'sql-scripts',
     component: () => import('@/views/automation/DbScriptView.vue'),
@@ -322,6 +328,12 @@ const routes: RouteRecordRaw[] = [
     name: 'settings-ci',
     component: () => import('@/views/settings/CiNotificationView.vue'),
     meta: { title: 'CI 与通知', hidden: true },
+  },
+  {
+    path: '/settings/mcp',
+    name: 'settings-mcp',
+    component: () => import('@/views/settings/McpSettingsView.vue'),
+    meta: { title: 'MCP 服务', hidden: true },
   },
   {
     path: '/settings/assertions',

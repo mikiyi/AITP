@@ -28,6 +28,8 @@ import type {
   AiSession,
   AiStatus,
   AiTask,
+  AppDriverProbeResult,
+  AppDriverSettings,
   AuditLog,
   AuthSession,
   AuthSessionPrecheck,
@@ -44,9 +46,13 @@ import type {
   BatchDeleteResult,
   BatchReviewResult,
   Bug,
+  BugDraft,
+  BugDraftList,
   BugLog,
   BugScreenshot,
+  BusinessAttachment,
   CapabilitySpec,
+  CaseDependency,
   CaseImportApplyResult,
   CaseImportBatch,
   CaseImportPreview,
@@ -67,6 +73,8 @@ import type {
   ExecutionEvidence,
   HomeCardItem,
   KnowledgeAnswer,
+  AssistantArchiveDetail,
+  AssistantArchiveItem,
   AssistantEgress,
   AssistantHistory,
   AssistantPreview,
@@ -176,6 +184,11 @@ import type {
   ExploratoryMeta,
   ExplorationSession,
   ExplorationSessionDetail,
+  FailureClusterResult,
+  ImpactResult,
+  McpCallLog,
+  McpSettings,
+  NotificationPreview,
 } from './types'
 
 /** 拼接下载类接口的查询串，跳过空值；缺 projectId 时补当前项目。 */
@@ -491,8 +504,12 @@ export const apiScenarioApi = {
   update: (id: number, body: Record<string, unknown>) => put<ApiScenario>(`/api-scenarios/${id}`, body),
   remove: (id: number) => del(`/api-scenarios/${id}`),
   copy: (id: number) => post<ApiScenario>(`/api-scenarios/${id}/copy`, {}),
-  run: (id: number, body: Record<string, unknown> = {}) =>
-    post<ApiScenarioRunResult>(`/api-scenarios/${id}/run`, body),
+  /** 执行场景：projectId 走 query（服务端作用域校验只读 query 参数）。 */
+  run: (id: number, body: Record<string, unknown> = {}) => {
+    const projectId = getRequestProjectId()
+    const suffix = projectId ? `?projectId=${projectId}` : ''
+    return post<ApiScenarioRunResult>(`/api-scenarios/${id}/run${suffix}`, body)
+  },
   runs: (id: number, query: Record<string, unknown> = {}) =>
     get<PagePayload<ApiScenarioRunResult>>(`/api-scenarios/${id}/runs`, query as never),
   trend: (id: number) => get<{ points: { runNo: string; passed: boolean; durationMs: number; createdAt: string }[]; total: number; passRate: number | null }>(`/api-scenarios/${id}/trend`),
@@ -671,7 +688,33 @@ export const bugApi = {
   screenshotUrl: (id: number, shotId: number) =>
     scopedUrl(`/api/v1/bugs/${id}/screenshots/${shotId}/file`),
   stats: () => get('/bugs/stats'),
+  /** 缺陷待审区：自动化 / 场景 / MCP 提交的候选缺陷。 */
+  drafts: (query: Record<string, unknown> = {}) =>
+    get<BugDraftList>('/bugs/drafts', query as never),
+  /** 确认待审缺陷：生成正式缺陷并回填 draft.bugId。 */
+  confirmDraft: (id: number, body: Record<string, unknown> = {}) =>
+    post<{ draft: BugDraft; bugId: number; bugNo: string; title: string }>(
+      `/bugs/drafts/${id}/confirm`,
+      body,
+    ),
+  /** 忽略待审缺陷：不生成正式缺陷，原因写回草稿描述。 */
+  ignoreDraft: (id: number, note = '') =>
+    post<{ draft: BugDraft }>(`/bugs/drafts/${id}/ignore`, { note }),
   exportUrl: (query: Record<string, unknown>) => exportUrl('bugs/export', query),
+}
+
+/** 业务对象持久附件：缺陷 / 用例 / 轮次 / 探索会话等。 */
+export const attachmentApi = {
+  list: (ownerType: string, ownerId: number) =>
+    get<{ list: BusinessAttachment[]; total: number }>('/attachments', { ownerType, ownerId }),
+  upload: (form: FormData) =>
+    request<{ list: BusinessAttachment[]; skipped: BusinessAttachment[] }>('/attachments', {
+      method: 'POST',
+      body: form,
+      timeoutMs: LONG_TIMEOUT_MS,
+    }),
+  remove: (id: number) => del<{ id: number; deleted: boolean }>(`/attachments/${id}`),
+  fileUrl: (id: number) => scopedUrl(`/api/v1/attachments/${id}/file`),
 }
 
 /** 知识库：待审池 + 正式库。 */
@@ -687,6 +730,12 @@ export const knowledgeApi = {
   /** 问答助手历史：默认最近一条会话，页面挂载时回放，换菜单/重启后不丢问答。 */
   assistantHistory: (sessionId?: number | null) =>
     get<AssistantHistory>('/knowledge/assistant/history', sessionId ? { sessionId } : {}),
+  /** 列出指定会话的历史归档（超过 50 轮的对话自动归档）。 */
+  assistantArchives: (sessionId: number) =>
+    get<{ list: AssistantArchiveItem[] }>('/knowledge/assistant/archives', { sessionId }),
+  /** 查看某个归档的完整对话内容。 */
+  assistantArchiveDetail: (archiveId: number) =>
+    get<AssistantArchiveDetail>(`/knowledge/assistant/archives/${archiveId}`),
   assistantSaveThinking: (body: { sessionId: number; answeredAt: string; text: string }) =>
     post<{ saved: boolean; messageId: number }>('/knowledge/assistant/save-thinking', body),
   /** 把模型回答连同溯源信息加入待审池；同一问同答同时间只入池一次。 */
@@ -1279,8 +1328,55 @@ export const exploratoryApi = {
     ),
   notificationLogs: (query: Record<string, unknown> = {}) =>
     get<NotificationLogPage>('/settings/notification-logs', query as never),
+  /** V2.7.0 模板预览：按渠道类型渲染示例数据，不真正发送。 */
+  notificationPreview: (body: {
+    channelType: string
+    template?: { title?: string; text?: string }
+    projectId?: number | null
+  }) => post<NotificationPreview>('/settings/notifications/preview', body),
+  /** App 场景执行配置（adb 命令 / 默认设备 / 超时）。 */
+  appDriver: () => get<AppDriverSettings>('/settings/app-driver'),
+  saveAppDriver: (body: {
+    adbCommand: string
+    deviceSerial: string
+    commandTimeout: number
+  }) => put<AppDriverSettings>('/settings/app-driver', body),
+  probeAppDriver: (body: Record<string, unknown> = {}) =>
+    post<AppDriverProbeResult>('/settings/app-driver/probe', body),
+  /** MCP 服务端设置：开关、写权限、令牌与工具清单。 */
+  mcpSettings: () => get<McpSettings>('/settings/mcp'),
+  saveMcpSettings: (body: { enabled?: boolean; allowWrite?: boolean }) =>
+    put<McpSettings>('/settings/mcp', body),
+  /** 生成或轮换 MCP 令牌：响应里只带一次明文 token。 */
+  rotateMcpToken: () =>
+    post<{ token: string; tokenPreview: string; id: number; rotated: boolean }>('/settings/mcp/token'),
+  /** 停用/启用/删除历史令牌，响应都是最新的 MCP 设置。 */
+  disableMcpToken: (id: number) => post<McpSettings>(`/settings/mcp/tokens/${id}/disable`),
+  enableMcpToken: (id: number) => post<McpSettings>(`/settings/mcp/tokens/${id}/enable`),
+  deleteMcpToken: (id: number) => del<McpSettings>(`/settings/mcp/tokens/${id}`),
+  mcpLogs: () => get<{ list: McpCallLog[] }>('/settings/mcp/logs'),
   enums: () => get('/meta/enums'),
   capabilities: () => get('/meta/capabilities'),
+}
+
+/** 质量洞察（V2.7.0）：跨轮次失败聚类、用例依赖与变更影响面。 */
+export const insightApi = {
+  failureClusters: (query: { projectId?: number | null; rounds?: number } = {}) =>
+    get<FailureClusterResult>('/insights/failure-clusters', query as never),
+  dependencies: (query: { projectId?: number | null } = {}) =>
+    get<{ total: number; items: CaseDependency[] }>('/insights/dependencies', query as never),
+  addDependency: (body: {
+    projectId?: number | null
+    caseId: number
+    dependsOnCaseId: number
+    note?: string
+  }) => post<{ id: number; caseId: number; dependsOnCaseId: number }>('/insights/dependencies', body),
+  removeDependency: (id: number) => del(`/insights/dependencies/${id}`),
+  impact: (body: {
+    projectId?: number | null
+    caseIds: number[]
+    requirementIds: number[]
+  }) => post<ImpactResult>('/insights/impact', body),
 }
 
 /** 导航未读角标：AI 产出一键添加到资产后累加，进入对应页面后清零。 */

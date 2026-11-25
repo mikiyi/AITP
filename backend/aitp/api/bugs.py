@@ -7,7 +7,7 @@ from typing import Any
 from flask import Blueprint, Response, request
 
 from ..common.enums import BUG_RELATION, BUG_SEVERITY, BUG_STATUS, BUG_TYPE
-from ..common.validators import check_choice, optional_str, require_int, require_str
+from ..common.validators import check_choice, optional_int, optional_str, require_int, require_str
 from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.base import dumps, loads
@@ -15,6 +15,7 @@ from ..repositories.bug_repo import BugRepository
 from ..repositories.test_case_repo import TestCaseRepository
 from ..services import (
     audit_service,
+    bug_draft_service,
     bug_screenshot_service,
     execution_protocol,
     export_jobs,
@@ -532,6 +533,44 @@ def unlink_bug_cases(pk: str) -> Response:
     removed = repo.unlink_cases(target, ids)
     commit(conn)
     return ok({"bugId": target, "removed": removed, "caseIds": repo.linked_case_ids(target)})
+
+
+@bp.get("/drafts")
+def list_bug_drafts() -> Response:
+    """缺陷待审区：自动化 / App 场景 / MCP 提交的候选缺陷。"""
+    conn = db()
+    project_id = optional_int(request.args.get("projectId"), "projectId")
+    status = optional_str(request.args.get("status"), "status", 20) or None
+    return ok(bug_draft_service.list_drafts(conn, project_id, status))
+
+
+@bp.post("/drafts/<pk>/confirm")
+def confirm_bug_draft(pk: str) -> Response:
+    conn = db()
+    target = path_int(pk)
+    data = body()
+    try:
+        result = bug_draft_service.confirm(conn, target, str(data.get("reporter") or ""))
+    except ValueError as exc:
+        raise AppError(ErrorCode.ILLEGAL_OPERATION, str(exc)) from exc
+    audit(conn, audit_service.AUDIT_ACTION_EXECUTE, audit_service.RESOURCE_BUG,
+          result["bugId"], str(result.get("title") or ""),
+          {"draftId": target}, result="success")
+    return ok(result)
+
+
+@bp.post("/drafts/<pk>/ignore")
+def ignore_bug_draft(pk: str) -> Response:
+    conn = db()
+    target = path_int(pk)
+    data = body()
+    try:
+        result = bug_draft_service.ignore(conn, target, str(data.get("note") or ""))
+    except ValueError as exc:
+        raise AppError(ErrorCode.ILLEGAL_OPERATION, str(exc)) from exc
+    audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_BUG, target,
+          "忽略待审缺陷", {"note": str(data.get("note") or "")[:200]})
+    return ok(result)
 
 
 export_jobs.register(export_jobs.ExportSpec(

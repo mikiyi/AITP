@@ -1,7 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { knowledgeApi } from '@/api'
-import type { AssistantHistoryMessage, AssistantRef, AssistantThinking, MaskInfo } from '@/api/types'
+import type {
+  AssistantArchiveDetail, AssistantArchiveItem, AssistantHistoryMessage,
+  AssistantRef, AssistantThinking, MaskInfo,
+} from '@/api/types'
 
 export type AssistantMode = 'kb' | 'llm' | 'hybrid'
 
@@ -77,6 +80,9 @@ function toChatItem(item: AssistantHistoryMessage): AssistantChatItem {
  *
  * 对话本身也放 store：后端按会话留痕，页面挂载时回放，再加上 store 是进程级单例，
  * 于是「换个菜单再回来问题历史就没了」这条路被堵死——首页卡片与问答页也共用同一份。
+ *
+ * 归档：会话超过 50 轮时，老对话自动归档到 biz_assistant_archive，
+ * 页面只展示最近 50 轮；归档列表和详情通过独立 API 获取。
  */
 export const useKnowledgeAssistantStore = defineStore('knowledgeAssistant', () => {
   const defaultMode = ref<AssistantMode>(DEFAULT_ASSISTANT_MODE)
@@ -85,10 +91,18 @@ export const useKnowledgeAssistantStore = defineStore('knowledgeAssistant', () =
 
   const messages = ref<AssistantChatItem[]>([])
   const sessionId = ref<number | null>(null)
-  /** 历史超过后端回放上限：更早的问答去「会话记录」看。 */
+  /** 历史超过后端回放上限（50 轮）：更早的自动归档，去历史对话查看。 */
   const truncated = ref(false)
+  /** 当前会话的归档批次数（超过 50 轮后自动归档产生）。 */
+  const archiveCount = ref(0)
   const historyLoaded = ref(false)
   let historyLoading: Promise<void> | null = null
+
+  /** 历史对话抽屉：归档列表与选中的归档详情。 */
+  const archiveList = ref<AssistantArchiveItem[]>([])
+  const archiveListLoading = ref(false)
+  const archiveDetail = ref<AssistantArchiveDetail | null>(null)
+  const archiveDetailLoading = ref(false)
 
   async function load(force = false): Promise<void> {
     if (loaded.value && !force) {
@@ -131,6 +145,7 @@ export const useKnowledgeAssistantStore = defineStore('knowledgeAssistant', () =
         sessionId.value = history.sessionId ?? null
         messages.value = (history.messages ?? []).map(toChatItem)
         truncated.value = Boolean(history.truncated)
+        archiveCount.value = Number(history.archiveCount ?? 0)
         historyLoaded.value = true
       })
       .catch(() => {
@@ -143,6 +158,40 @@ export const useKnowledgeAssistantStore = defineStore('knowledgeAssistant', () =
     return historyLoading
   }
 
+  /** 加载当前会话的归档列表。 */
+  async function loadArchives(): Promise<void> {
+    if (!sessionId.value) {
+      archiveList.value = []
+      return
+    }
+    archiveListLoading.value = true
+    try {
+      const resp = await knowledgeApi.assistantArchives(sessionId.value)
+      archiveList.value = resp.list ?? []
+    } catch {
+      archiveList.value = []
+    } finally {
+      archiveListLoading.value = false
+    }
+  }
+
+  /** 查看某个归档的完整对话。 */
+  async function viewArchive(archiveId: number): Promise<void> {
+    archiveDetailLoading.value = true
+    try {
+      archiveDetail.value = await knowledgeApi.assistantArchiveDetail(archiveId)
+    } catch {
+      archiveDetail.value = null
+    } finally {
+      archiveDetailLoading.value = false
+    }
+  }
+
+  /** 清除归档详情（关闭抽屉时）。 */
+  function clearArchiveDetail(): void {
+    archiveDetail.value = null
+  }
+
   /**
    * 「清空对话」= 另起一条会话：当前线程清空，已经问过的仍留在库里，
    * 在「会话记录」页按「知识库问答」继续可查。
@@ -151,6 +200,9 @@ export const useKnowledgeAssistantStore = defineStore('knowledgeAssistant', () =
     messages.value = []
     sessionId.value = null
     truncated.value = false
+    archiveCount.value = 0
+    archiveList.value = []
+    archiveDetail.value = null
     historyLoaded.value = true
   }
 
@@ -162,8 +214,16 @@ export const useKnowledgeAssistantStore = defineStore('knowledgeAssistant', () =
     messages,
     sessionId,
     truncated,
+    archiveCount,
     historyLoaded,
     loadHistory,
+    loadArchives,
+    viewArchive,
+    clearArchiveDetail,
+    archiveList,
+    archiveListLoading,
+    archiveDetail,
+    archiveDetailLoading,
     resetThread,
   }
 })

@@ -84,6 +84,7 @@ const AUDIT_RESOURCE_OPTIONS = [
   { label: '发布门禁', value: 'release_gate' },
   { label: '后台任务', value: 'task' },
   { label: 'CI 令牌', value: 'ci_token' },
+  { label: 'MCP 令牌', value: 'mcp_token' },
   { label: '通知渠道', value: 'notification_channel' },
   { label: '访问口令', value: 'access_guard' },
 ]

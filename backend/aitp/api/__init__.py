@@ -8,6 +8,7 @@ from flask import Flask
 def register_blueprints(app: Flask) -> None:
     from .ai import bp as ai_bp
     from .ai_records import bp as ai_records_bp
+    from .attachments import bp as attachments_bp
     from .auth import bp as auth_bp
     from .automation import bp as automation_bp
     from .badges import bp as badges_bp
@@ -25,9 +26,11 @@ def register_blueprints(app: Flask) -> None:
     from .schedules import bp as schedules_bp
     from .knowledge import bp as knowledge_bp
     from .lab import bp as lab_bp
+    from .mcp import bp as mcp_bp
     from .meta import bp as meta_bp
     from .modules import bp as modules_bp
     from .onboarding import bp as onboarding_bp
+    from .insights import bp as insights_bp
     from .projects import bp as projects_bp
     from .project_packages import bp as project_packages_bp
     from .project_versions import bp as project_versions_bp
@@ -53,6 +56,7 @@ def register_blueprints(app: Flask) -> None:
 
     for bp, prefix in (
         (auth_bp, "/api/v1/auth"),
+        (attachments_bp, "/api/v1/attachments"),
         (workbench_bp, "/api/v1/workbench"),
         (badges_bp, "/api/v1/badges"),
         (lab_bp, "/api/v1/lab"),
@@ -96,5 +100,7 @@ def register_blueprints(app: Flask) -> None:
         (settings_bp, "/api/v1/settings"),
         (meta_bp, "/api/v1/meta"),
         (onboarding_bp, "/api/v1/onboarding"),
+        (insights_bp, "/api/v1/insights"),
+        (mcp_bp, "/api/v1/mcp"),
     ):
         app.register_blueprint(bp, url_prefix=prefix)

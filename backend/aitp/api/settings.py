@@ -14,6 +14,7 @@ from flask import Blueprint, Response, current_app, request, send_file
 from ..ai import cost as ai_cost
 from ..common.constants import AI_DEFAULT_TIMEOUT, PLANS, PROVIDERS
 from ..common.env_scope import normalize_scope
+from ..common.secret_store import get_store
 from ..common.time_utils import utcnow_iso
 from ..common.validators import (
     optional_int,
@@ -37,7 +38,17 @@ from ..repositories.ci_repo import (
     token_summary,
 )
 from ..repositories.sys_config_repo import SysConfigRepository
-from ..services import ai_check, audit_service, backup_schedule, backup_service, home_card_service, notification_service
+from ..services import (
+    ai_check,
+    app_scenario_service,
+    audit_service,
+    backup_schedule,
+    backup_service,
+    home_card_service,
+    mcp_service,
+    mcp_token_service,
+    notification_service,
+)
 from .helpers import audit, body, commit, db, keyword_of, page_args, page_payload, path_int, query_filters
 
 bp = Blueprint("settings", __name__)
@@ -734,6 +745,72 @@ def _events_of(raw: Any, fallback: list[str] | None = None) -> list[str]:
     return list(dict.fromkeys(events))
 
 
+#: 通知渠道私有配置白名单（密码单独进密钥库，不在此列）
+NOTIFICATION_CONFIG_KEYS = ("smtpHost", "smtpPort", "smtpUser", "fromAddr", "toAddrs", "useSsl", "useTls")
+
+
+def _notification_type(raw: Any, fallback: str = "webhook") -> str:
+    if raw is None:
+        return fallback
+    return notification_service.normalize_channel_type(raw)
+
+
+def _notification_template(raw: Any) -> dict[str, str]:
+    data = raw if isinstance(raw, dict) else {}
+    template: dict[str, str] = {}
+    for key in ("title", "text"):
+        if key in data:
+            template[key] = str(data[key] or "")[:4000]
+    return template
+
+
+def _notification_config(raw: Any) -> dict[str, Any]:
+    data = raw if isinstance(raw, dict) else {}
+    config: dict[str, Any] = {}
+    for key in NOTIFICATION_CONFIG_KEYS:
+        if key not in data:
+            continue
+        if key == "smtpPort":
+            port = require_int(data[key], "smtpPort")
+            if not 1 <= port <= 65535:
+                raise AppError(ErrorCode.PARAM_ERROR, "参数 smtpPort 必须在 1-65535 之间")
+            config[key] = port
+        elif key in ("useSsl", "useTls"):
+            config[key] = bool(data[key])
+        else:
+            config[key] = str(data[key] or "").strip()[:300]
+    return config
+
+
+def _raw_channel_config(data: dict[str, Any]) -> dict[str, Any]:
+    value = data.get("config")
+    return value if isinstance(value, dict) else {}
+
+
+def _check_notification_shape(channel_type: str, webhook_url: str, config: dict[str, Any]) -> None:
+    if channel_type != "email":
+        if not webhook_url:
+            raise AppError(ErrorCode.PARAM_ERROR, "Webhook 渠道必须填写地址")
+        return
+    if not config.get("smtpHost"):
+        raise AppError(ErrorCode.PARAM_ERROR, "邮箱渠道必须填写 SMTP 服务器")
+    if not (config.get("fromAddr") or config.get("smtpUser")):
+        raise AppError(ErrorCode.PARAM_ERROR, "邮箱渠道必须填写发件人")
+    if not config.get("toAddrs"):
+        raise AppError(ErrorCode.PARAM_ERROR, "邮箱渠道必须填写收件人")
+
+
+def _save_smtp_password(channel_id: int, password: Any, config: dict[str, Any]) -> None:
+    """密码写系统密钥库，config_json 只保留 hasPassword 标记。"""
+    if password is None or password == "":
+        return
+    try:
+        get_store().set(notification_service.smtp_secret_ref(channel_id), str(password))
+    except Exception as exc:  # noqa: BLE001
+        raise AppError(ErrorCode.INTERNAL_ERROR, f"密钥库不可用，邮箱密码未保存：{exc}") from exc
+    config["hasPassword"] = True
+
+
 def _check_project(conn: Any, project_id: int | None) -> None:
     if project_id is None:
         return
@@ -755,6 +832,46 @@ def list_notifications() -> Response:
             for key, label in notification_service.EVENT_LABELS.items()
             if key in notification_service.SUBSCRIBABLE_EVENTS
         ],
+        "channelTypes": [
+            {
+                "value": key,
+                "label": notification_service.CHANNEL_TYPE_LABELS[key],
+                "defaultTemplate": notification_service.default_template(key),
+                "needsWebhook": key != "email",
+            }
+            for key in notification_service.CHANNEL_TYPES
+        ],
+        "templateVariables": list(notification_service.TEMPLATE_VARIABLES),
+        "emailHint": "测试邮箱可填 yichengrenhg@126.com；密码保存在本机密钥库，不回传。",
+    })
+
+
+@bp.post("/notifications/preview")
+def preview_notification() -> Response:
+    """模板预览：用示例数据渲染标题/正文与平台投递体，不真正发送。"""
+    conn = db()
+    data = body()
+    channel_type = _notification_type(data.get("channelType"))
+    template = _notification_template(data.get("template"))
+    if not template:
+        template = notification_service.default_template(channel_type)
+    payload = notification_service.build_payload(
+        conn,
+        event=notification_service.EVENT_TEST,
+        title="示例：登录模块回归失败 3 条",
+        project_id=optional_int(data.get("projectId"), "projectId"),
+        data={"runName": "示例回归轮次", "failed": 3, "passRate": 87.5,
+              "message": "这是一条模板预览，不会真正发送。"},
+        link="/settings/ci",
+    )
+    subject, text, body_payload = notification_service.render_channel(
+        {"channel_type": channel_type, "template_json": dumps(template)}, payload
+    )
+    return ok({
+        "channelType": channel_type,
+        "subject": subject,
+        "text": text,
+        "body": body_payload,
     })
 
 
@@ -765,17 +882,28 @@ def create_notification() -> Response:
     name = require_str(data.get("name"), "name", 100)
     project_id = optional_int(data.get("projectId"), "projectId")
     _check_project(conn, project_id)
+    channel_type = _notification_type(data.get("channelType"))
+    webhook_url = "" if channel_type == "email" else _webhook_url(data.get("webhookUrl"))
+    config = _notification_config(data.get("config"))
+    template = _notification_template(data.get("template"))
+    _check_notification_shape(channel_type, webhook_url, config)
+    raw_config = _raw_channel_config(data)
     repo = NotificationChannelRepository(conn)
     new_id = repo.insert({
         "name": name,
         "project_id": project_id,
-        "webhook_url": _webhook_url(data.get("webhookUrl")),
+        "webhook_url": webhook_url,
+        "channel_type": channel_type,
+        "template_json": dumps(template),
+        "config_json": dumps(config),
         "events_json": events_json(_events_of(data.get("events"), [])),
         "enabled": 1 if data.get("enabled", True) else 0,
     })
+    _save_smtp_password(new_id, raw_config.get("password"), config)
+    repo.update(new_id, {"config_json": dumps(config)})
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_CREATE, audit_service.RESOURCE_NOTIFICATION, new_id,
-          name, {"projectId": project_id})
+          name, {"projectId": project_id, "channelType": channel_type})
     return ok(channel_summary(repo.get(new_id) or {}))
 
 
@@ -789,19 +917,36 @@ def update_notification(pk: str) -> Response:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "通知渠道不存在")
     data = body()
     payload: dict[str, Any] = {}
+    current = channel_summary(row)
+    channel_type = _notification_type(data.get("channelType"), current["channelType"])
     if "name" in data:
         payload["name"] = require_str(data["name"], "name", 100)
     if "projectId" in data:
         project_id = optional_int(data["projectId"], "projectId")
         _check_project(conn, project_id)
         payload["project_id"] = project_id
+    webhook_url = current.get("webhookUrl") or ""
     if "webhookUrl" in data:
-        payload["webhook_url"] = _webhook_url(data["webhookUrl"])
+        webhook_url = "" if channel_type == "email" else _webhook_url(data["webhookUrl"])
+        payload["webhook_url"] = webhook_url
+    if "channelType" in data:
+        payload["channel_type"] = channel_type
+    config = dict(current.get("config") or {})
+    config.pop("hasPassword", None)
+    if "config" in data:
+        config.update(_notification_config(data.get("config")))
+        payload["config_json"] = dumps(config)
+    if "template" in data:
+        payload["template_json"] = dumps(_notification_template(data.get("template")))
     if "events" in data:
-        current = channel_summary(row)["events"]
-        payload["events_json"] = events_json(_events_of(data["events"], current))
+        payload["events_json"] = events_json(_events_of(data["events"], current["events"]))
     if "enabled" in data:
         payload["enabled"] = 1 if data["enabled"] else 0
+    _check_notification_shape(channel_type, webhook_url, config)
+    raw_config = _raw_channel_config(data)
+    _save_smtp_password(target, raw_config.get("password"), config)
+    if "config" in data or raw_config.get("password"):
+        payload["config_json"] = dumps(config)
     repo.update(target, payload)
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_NOTIFICATION, target,
@@ -818,6 +963,10 @@ def delete_notification(pk: str) -> Response:
     if row is None:
         raise AppError(ErrorCode.RESOURCE_NOT_FOUND, "通知渠道不存在")
     repo.soft_delete(target)
+    try:
+        get_store().delete(notification_service.smtp_secret_ref(target))
+    except Exception as exc:  # noqa: BLE001 - 密钥清理失败不影响停用
+        current_app.logger.warning("通知渠道 %s 的 SMTP 密码清理失败：%s", target, exc)
     commit(conn)
     audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_NOTIFICATION, target,
           row.get("name", ""))
@@ -982,3 +1131,160 @@ def delete_backup(name: str) -> Response:
     removed = backup_service.remove(name)
     audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_DB_BACKUP, None, removed)
     return ok({"name": removed, "deleted": True})
+
+
+# --------------------------------------------------------------------------- App 执行配置
+
+
+@bp.get("/app-driver")
+def get_app_driver() -> Response:
+    conn = db()
+    config = app_scenario_service.driver_config(conn)
+    return ok({
+        "adbCommand": config["adbCommand"],
+        "deviceSerial": config["deviceSerial"],
+        "commandTimeout": config["timeout"],
+        "hint": "可填 adb，也可指向自定义可执行文件；设备序列号留空时使用唯一在线设备。",
+    })
+
+
+@bp.put("/app-driver")
+def save_app_driver() -> Response:
+    conn = db()
+    data = body()
+    command = require_str(data.get("adbCommand"), "adbCommand", 300)
+    serial = optional_str(data.get("deviceSerial"), "deviceSerial", 120) or ""
+    timeout = require_int(data.get("commandTimeout") or 20, "commandTimeout")
+    if not 3 <= timeout <= 120:
+        raise AppError(ErrorCode.PARAM_ERROR, "参数 commandTimeout 必须在 3-120 之间")
+    repo = SysConfigRepository(conn)
+    repo.set_value("app.adb_command", command, "string", "App 场景执行的 adb 命令")
+    repo.set_value("app.device_serial", serial, "string", "App 场景默认设备序列号")
+    repo.set_value("app.command_timeout", str(timeout), "int", "App 场景单条 adb 命令超时秒数")
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_SYSTEM_CONFIG, None,
+          "App 执行配置", {"adbCommand": command, "deviceSerial": serial})
+    return ok({"adbCommand": command, "deviceSerial": serial, "commandTimeout": timeout})
+
+
+@bp.post("/app-driver/probe")
+def probe_app_driver() -> Response:
+    conn = db()
+    data = body()
+    overrides = {
+        "adbCommand": data.get("adbCommand"),
+        "deviceSerial": data.get("deviceSerial"),
+    }
+    result = app_scenario_service.probe(conn, overrides)
+    audit(conn, audit_service.AUDIT_ACTION_EXECUTE, audit_service.RESOURCE_SYSTEM_CONFIG, None,
+          "探测 App 设备", {"ok": result["ok"], "devices": result["devices"]})
+    return ok(result)
+
+
+# --------------------------------------------------------------------------- MCP 服务端
+
+
+def _truthy(value: Any) -> bool:
+    return str(value or "").strip().lower() in ("1", "true", "on", "yes")
+
+
+@bp.get("/mcp")
+def get_mcp_settings() -> Response:
+    conn = db()
+    repo = SysConfigRepository(conn)
+    active, token_required = mcp_token_service.state(conn)
+    tokens = [mcp_token_service.to_public(row) for row in mcp_token_service.list_tokens(conn)]
+    return ok({
+        "enabled": _truthy(repo.get_value("mcp.enabled", "0")),
+        "allowWrite": _truthy(repo.get_value("mcp.allow_write", "0")),
+        "hasToken": active is not None,
+        "tokenRequired": token_required,
+        "tokenPreview": str(active["preview"]) if active is not None else "",
+        "lastUsedAt": str(active["last_used_at"] or "") if active is not None else "",
+        "lastClient": str(active["last_client"] or "") if active is not None else "",
+        "endpoint": f"{request.host_url.rstrip('/')}/api/v1/mcp",
+        "protocol": "JSON-RPC 2.0 / MCP 2024-11-05",
+        "tools": mcp_service.tool_definitions(),
+        "tokens": tokens,
+        "notes": [
+            "只接受本机回环请求；配置令牌后需在请求头携带 Bearer。",
+            "令牌明文只在生成或轮换时展示一次，关闭后只能重新轮换。",
+            "写工具只落缺陷待审区，需在 AITP 中人工确认后才生成正式缺陷。",
+        ],
+    })
+
+
+@bp.put("/mcp")
+def save_mcp_settings() -> Response:
+    conn = db()
+    data = body()
+    repo = SysConfigRepository(conn)
+    if "enabled" in data:
+        repo.set_value("mcp.enabled", "1" if data["enabled"] else "0", "bool", "是否开放 MCP 服务端")
+    if "allowWrite" in data:
+        repo.set_value("mcp.allow_write", "1" if data["allowWrite"] else "0", "bool",
+                       "MCP 是否允许写操作（只落待审区）")
+    commit(conn)
+    audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_SYSTEM_CONFIG, None,
+          "MCP 服务设置", {"fields": sorted(item for item in ("enabled", "allowWrite") if item in data)})
+    return get_mcp_settings()
+
+
+@bp.post("/mcp/token")
+def create_mcp_token() -> Response:
+    """生成或轮换 MCP 令牌；明文只在此响应里返回一次。"""
+    conn = db()
+    raw, row, rotated = mcp_token_service.create_token(conn)
+    audit(
+        conn,
+        audit_service.AUDIT_ACTION_UPDATE if rotated else audit_service.AUDIT_ACTION_GENERATE,
+        audit_service.RESOURCE_MCP_TOKEN,
+        int(row["id"]),
+        "轮换 MCP 令牌" if rotated else "生成 MCP 令牌",
+        {"preview": row["preview"], "rotatedFrom": row["rotated_from"]},
+    )
+    return ok({"token": raw, "tokenPreview": row["preview"], "id": row["id"], "rotated": rotated})
+
+
+@bp.post("/mcp/tokens/<pk>/disable")
+def disable_mcp_token(pk: str) -> Response:
+    conn = db()
+    target = path_int(pk)
+    row = mcp_token_service.disable_token(conn, target)
+    audit(conn, audit_service.AUDIT_ACTION_REVOKE, audit_service.RESOURCE_MCP_TOKEN, target,
+          "停用 MCP 令牌", {"preview": row["preview"]})
+    return get_mcp_settings()
+
+
+@bp.post("/mcp/tokens/<pk>/enable")
+def enable_mcp_token(pk: str) -> Response:
+    conn = db()
+    target = path_int(pk)
+    row = mcp_token_service.enable_token(conn, target)
+    audit(conn, audit_service.AUDIT_ACTION_UPDATE, audit_service.RESOURCE_MCP_TOKEN, target,
+          "启用 MCP 令牌", {"preview": row["preview"]})
+    return get_mcp_settings()
+
+
+@bp.delete("/mcp/tokens/<pk>")
+def delete_mcp_token(pk: str) -> Response:
+    conn = db()
+    target = path_int(pk)
+    row = mcp_token_service.delete_token(conn, target)
+    audit(conn, audit_service.AUDIT_ACTION_DELETE, audit_service.RESOURCE_MCP_TOKEN, target,
+          "删除 MCP 令牌", {"preview": row["preview"]})
+    return get_mcp_settings()
+
+
+@bp.get("/mcp/logs")
+def list_mcp_logs() -> Response:
+    conn = db()
+    rows = conn.execute("""
+        SELECT id, method, tool, status, duration_ms, detail, client, created_at
+        FROM sys_mcp_call_log ORDER BY id DESC LIMIT 30
+    """).fetchall()
+    return ok({"list": [{
+        "id": row["id"], "method": row["method"], "tool": row["tool"],
+        "status": row["status"], "durationMs": row["duration_ms"],
+        "detail": row["detail"], "client": row["client"], "createdAt": row["created_at"],
+    } for row in rows]})

@@ -106,11 +106,23 @@ class NotificationLogRepository(BaseRepository):
 def channel_summary(row: dict[str, Any]) -> dict[str, Any]:
     raw_events = loads(row.get("events_json"), []) or []
     events = [str(item) for item in raw_events] if isinstance(raw_events, list) else []
+    template = loads(row.get("template_json"), {}) or {}
+    config = loads(row.get("config_json"), {}) or {}
+    if not isinstance(template, dict):
+        template = {}
+    if not isinstance(config, dict):
+        config = {}
+    # 密码只存系统密钥库，这里仅回传是否已配置，避免接口泄露
+    safe_config = {key: value for key, value in config.items() if key != "password"}
+    safe_config["hasPassword"] = bool(config.get("hasPassword"))
     return {
         "id": row.get("id"),
         "name": row.get("name"),
         "projectId": row.get("project_id"),
         "webhookUrl": row.get("webhook_url"),
+        "channelType": row.get("channel_type") or "webhook",
+        "template": template,
+        "config": safe_config,
         "events": events,
         "enabled": bool(row.get("enabled")),
         "createdAt": row.get("created_at"),

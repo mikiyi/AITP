@@ -36,7 +36,9 @@
           <el-tag size="small" effect="plain">{{ record.evidence.length }} 条</el-tag>
         </h3>
         <el-table v-if="record.evidence.length" :data="record.evidence" border size="small">
-          <el-table-column prop="kind" label="类型" width="100" />
+          <el-table-column label="类型" width="100">
+            <template #default="scope">{{ evidenceKindText(scope.row.kind) }}</template>
+          </el-table-column>
           <el-table-column prop="ref" label="引用" width="140" class-name="text-mono" />
           <el-table-column prop="title" label="标题" min-width="200">
             <template #default="scope">
@@ -62,7 +64,7 @@
         </h3>
         <ul v-if="record.missing.length" class="plain-list">
           <li v-for="(item, index) in record.missing" :key="index">
-            <strong>{{ item.label }}</strong>
+            <strong>{{ missingText(item) }}</strong>
             <span class="muted">{{ item.detail }}</span>
           </li>
         </ul>
@@ -79,7 +81,9 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="rule" label="规则" width="180" class-name="text-mono" />
+          <el-table-column prop="rule" label="规则" width="180">
+            <template #default="scope">{{ riskRuleText(scope.row.rule) }}</template>
+          </el-table-column>
           <el-table-column prop="detail" label="说明" min-width="200" />
         </el-table>
         <p v-else class="muted">未命中行为安全规则。</p>
@@ -140,7 +144,9 @@
           <el-tag size="small" effect="plain">{{ record.route.length }} 条</el-tag>
         </h3>
         <el-table v-if="record.route.length" :data="record.route" border size="small">
-          <el-table-column prop="capability" label="能力" width="160" class-name="text-mono" />
+          <el-table-column label="能力" width="160">
+            <template #default="scope">{{ labStore.capabilityLabel(scope.row.capability) }}</template>
+          </el-table-column>
           <el-table-column label="分" width="80" align="right">
             <template #default="scope">
               {{ scope.row.score != null ? Math.round(scope.row.score * 100) : '-' }}
@@ -182,11 +188,11 @@
         <h3 class="section-title">模型用量</h3>
         <el-descriptions v-if="hasUsage" :column="3" border>
           <el-descriptions-item
-            v-for="(value, key) in usageEntries"
-            :key="key"
-            :label="key"
+            v-for="entry in usageEntries"
+            :key="entry.key"
+            :label="usageLabel(entry.key)"
           >
-            {{ value }}
+            {{ usageText(entry.key, entry.value) }}
           </el-descriptions-item>
         </el-descriptions>
         <p v-else class="muted">本次执行没有记录用量（离线规则或本地模型不返回用量）。</p>
@@ -239,11 +245,66 @@ import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import MarkdownView from '@/components/MarkdownView.vue'
 import { recordApi } from '@/api'
-import type { AiRecord } from '@/api/types'
+import type { AiRecord, AiRecordMissing } from '@/api/types'
 import { dateTimeText, riskLevelTagType as riskTagType, riskLevelText as riskText } from '@/utils/format'
+import { variableLabel } from './capabilityForms'
+import { useLabStore } from '@/stores/lab'
 
 const route = useRoute()
 const router = useRouter()
+const labStore = useLabStore()
+
+/** 证据类型、风险规则、用量字段都是后端英文标识，页面统一给中文名。 */
+const EVIDENCE_KIND_LABELS: Record<string, string> = {
+  knowledge: '知识库',
+  bug: '缺陷',
+  case: '用例',
+  requirement: '需求',
+}
+
+const RISK_RULE_LABELS: Record<string, string> = {
+  approval: '批准性结论',
+  high_risk: 'P0/P1 场景',
+  prompt_test: '提示词测试',
+  fabrication: '引用核实',
+  insufficient: '信息不足',
+}
+
+const USAGE_LABELS: Record<string, string> = {
+  promptTokens: '输入 Token',
+  completionTokens: '输出 Token',
+  totalTokens: '总 Token',
+  reasoningTokens: '推理 Token',
+  estimated: '是否估算',
+}
+
+function evidenceKindText(kind: string): string {
+  return EVIDENCE_KIND_LABELS[kind] ?? kind
+}
+
+function riskRuleText(rule: string): string {
+  return RISK_RULE_LABELS[rule] ?? rule
+}
+
+function usageLabel(key: string): string {
+  return USAGE_LABELS[key] ?? key
+}
+
+function usageText(key: string, value: string): string {
+  if (key === 'estimated') {
+    return value === 'true' ? '是' : '否'
+  }
+  return value
+}
+
+/** 可选变量没填时后端会写「未提供 xxx」，展示前换成中文标签。 */
+function missingText(item: AiRecordMissing): string {
+  const match = /^未提供\s+(\w+)$/.exec(item.label)
+  if (!match) {
+    return item.label
+  }
+  return `未提供${variableLabel(record.value?.capability ?? '', match[1])}`
+}
 
 const record = ref<AiRecord | null>(null)
 const loading = ref(false)
@@ -302,6 +363,7 @@ async function load(): Promise<void> {
   const id = Number(route.params.id)
   loading.value = true
   try {
+    await labStore.loadAllCapabilities()
     record.value = await recordApi.get(id)
     reviewStatus.value = record.value.reviewStatus === 'rejected' ? 'rejected' : 'approved'
     reviewNote.value = record.value.reviewNote ?? ''

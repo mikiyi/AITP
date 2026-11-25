@@ -12,7 +12,7 @@ from ..envelope import ok
 from ..errors import AppError, ErrorCode
 from ..repositories.api_scenario_repo import ApiScenarioRepository, ApiScenarioRunRepository
 from ..repositories.base import dumps, loads
-from ..services import api_scenario_service, audit_service
+from ..services import api_scenario_service, app_scenario_service, audit_service
 from .helpers import (
     audit,
     body,
@@ -32,7 +32,7 @@ bp = Blueprint("api_scenarios", __name__)
 
 FILTERS = {"projectId": "project_id", "status": "status", "scenarioType": "scenario_type"}
 
-#: 场景类型：web=浏览器场景 / app=App 场景（占位，引擎待接入） / api=接口场景
+#: 场景类型：web=浏览器场景 / app=App 场景（adb 驱动） / api=接口场景
 SCENARIO_TYPES = ("web", "app", "api")
 
 
@@ -99,6 +99,34 @@ def _steps_of(data: dict[str, Any]) -> list[dict[str, Any]]:
             steps.append({
                 "name": str(item.get("name") or ""), "type": "automation",
                 "scriptNo": script_no,
+                "extract": item.get("extract") if isinstance(item.get("extract"), list) else [],
+                "continueOnError": bool(item.get("continueOnError")),
+                "waitMs": int(item.get("waitMs") or 0),
+            })
+            continue
+        if stype == "app":
+            action = str(item.get("action") or "launch")
+            if action not in app_scenario_service.ACTIONS:
+                raise AppError(
+                    ErrorCode.PARAM_ERROR,
+                    f"不支持的 App 动作：{action}（可选 {' / '.join(app_scenario_service.ACTIONS)}）",
+                )
+            if action == "launch" and not str(item.get("package") or "").strip():
+                raise AppError(ErrorCode.PARAM_ERROR, "App 启动步骤必须填写包名")
+            if action in ("tap", "assertText") and not (
+                str(item.get("target") or "").strip() or str(item.get("value") or "").strip()
+            ) and not (str(item.get("x") or "").strip() and str(item.get("y") or "").strip()):
+                raise AppError(ErrorCode.PARAM_ERROR, "App 点选/断言步骤需要填写文本或坐标")
+            if action == "input" and not str(item.get("value") or "").strip():
+                raise AppError(ErrorCode.PARAM_ERROR, "App 输入步骤必须填写文本")
+            steps.append({
+                "name": str(item.get("name") or ""), "type": "app", "action": action,
+                "target": str(item.get("target") or ""), "value": str(item.get("value") or ""),
+                "package": str(item.get("package") or ""), "activity": str(item.get("activity") or ""),
+                "x": str(item.get("x") or ""), "y": str(item.get("y") or ""),
+                "x2": str(item.get("x2") or ""), "y2": str(item.get("y2") or ""),
+                "durationMs": int(item.get("durationMs") or 300),
+                "serial": str(item.get("serial") or ""),
                 "extract": item.get("extract") if isinstance(item.get("extract"), list) else [],
                 "continueOnError": bool(item.get("continueOnError")),
                 "waitMs": int(item.get("waitMs") or 0),
