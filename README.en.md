@@ -49,6 +49,8 @@ python tools/eval_toolkit/build_config.py
 
 **Data boundary**: the engine is open source, the evaluation corpus is not. Only public-rule demo cases ship in this repository — no real business samples or customer data.
 
+- **Numbers**: 86 migrations (up to 089), 524 `/api/v1` routes across 49 blueprints, 84 deterministic gates (83 `check_*.py` + `smoke_api.py`)
+
 Design notes: [EVAL.md](EVAL.md).
 
 ## v2.7.0 changes (closing the last execution path + platform outreach)
