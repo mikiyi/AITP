@@ -17,6 +17,7 @@ def register_blueprints(app: Flask) -> None:
     from .ci import bp as ci_bp
     from .data_pools import bp as data_pools_bp
     from .doc_templates import bp as doc_templates_bp
+    from .evals import bp as evals_bp
     from .execution_matrices import bp as execution_matrices_bp
     from .auth_sessions import bp as auth_sessions_bp
     from .exploratory import bp as exploratory_bp
@@ -89,6 +90,7 @@ def register_blueprints(app: Flask) -> None:
         (ci_bp, "/api/v1/ci"),
         (traceability_bp, "/api/v1/traceability"),
         (release_gates_bp, "/api/v1/release-gates"),
+        (evals_bp, "/api/v1/evals"),
         (relations_bp, "/api/v1/relations"),
         (todos_bp, "/api/v1/todos"),
         (test_data_bp, "/api/v1/test-data"),
