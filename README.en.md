@@ -27,6 +27,30 @@ The library gets sharper with use, and every output fits your project better —
 - AI settings are read from local environment variables, from in-app configuration, and from local models (Ollama).
 - When there is no cloud model, the model is unavailable, or the network is down, AITP degrades to local rules automatically and never blocks the main workflow.
 
+## Eval subsystem preview (v0.1, Nov 2026) — now it can also test AI software
+
+AITP used to answer "test software with AI". This release adds the other half: **evaluating AI software**.
+
+- **Schema**: migration `089_eval_core.sql` with ten tables — suite / case / config / judge / run / result / metric / calibration / gate / gate result
+- **Pure domain layer**: `backend/aitp/eval/` (metrics, assertions, gate evaluation; no IO, unit-testable)
+  - Metrics carry **95% Wilson intervals**; `min` gates use the **lower bound**, `max` gates use the **upper bound**
+  - Severity weighting S0/S1/S2 = 50/10/1: one "you can buy it" when the client can't ≈ 50 formatting misses
+  - Sample tiers: n<30 evidence only, n<200 warn only, n>=200 may pass/fail
+- **Runs**: `eval_service.execute_replay()` scores supplied outputs, then persists results, metrics, gate conclusion and a Markdown report
+- **API**: 12 routes under `/api/v1/evals`
+- **Gates & demo**: `check_eval_metrics.py` (6/6), `eval_demo.py` (12 finance cases, good → pass, bad → fail)
+- **Cross-check toolkit**: `tools/eval_toolkit/` runs the same cases through Promptfoo with **24/24 agreement**; a minimal Ragas demo shows faithfulness attribution
+
+```bash
+python backend/scripts/check_eval_metrics.py
+python backend/scripts/eval_demo.py
+python tools/eval_toolkit/build_config.py
+```
+
+**Data boundary**: the engine is open source, the evaluation corpus is not. Only public-rule demo cases ship in this repository — no real business samples or customer data.
+
+Design notes: [EVAL.md](EVAL.md).
+
 ## v2.7.0 changes (closing the last execution path + platform outreach)
 
 - **App scenario engine**: scenario automation now covers its last execution path — the App tab is natively usable. Steps support launch / stop / tap / input / swipe / back / home / wait / assertText / screenshot, reuse the adb driver and the unified evidence contract; text assertions read the real UI through `uiautomator dump`, screenshots land in `data/app-shots/`; the adb command, device serial and command timeout are configurable on the page with a "test connection" probe that lists online devices

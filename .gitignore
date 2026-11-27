@@ -26,6 +26,9 @@ venv/
 .env
 *.key
 
+# 评测实验产物（跑批输出 / 报告 / 数据）
+/eval_outputs/
+
 # 日志与导出
 *.log
 logs/

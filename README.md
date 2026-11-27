@@ -27,6 +27,30 @@
 - AI 能力直接读取本地环境变量中的 AI 配置信息获取，同时支持工作台内配置与本地大模型（Ollama）。
 - 没有云端模型、模型不可用或断网时，自动降级到本地规则，不阻塞主流程。
 
+## Eval 子包预览（v0.1，2026-11）——「也能测 AI 软件」
+
+AITP 过去解决的是「用 AI 测软件」。这一版补上另一半：**测 AI 软件**。
+
+- **数据模型**：迁移 `089_eval_core.sql` 十张表——评测集 / 用例 / 配置 / 判定器 / 跑批 / 逐条结果 / 指标 / 校准 / 门禁 / 门禁结论
+- **纯领域层**：`backend/aitp/eval/`（指标、断言、门禁求值，零 IO、可单测）
+  - 指标带 **95% Wilson 区间**；`min` 类门禁卡**下界**、`max` 类卡**上界**（对 max 用下界等于放宽）
+  - 风险加权：S0/S1/S2 = 50/10/1，一条「把不能买说成能买」≈ 50 条格式错误
+  - 样本分级：n<30 只出逐条证据，n<200 只出 warn，n≥200 才判 pass/fail
+- **跑批**：`eval_service.execute_replay()` 回放评测（输出由调用方提供：真实调用、线上留痕、人工构造都行），落逐条结果 + 指标 + 门禁结论 + Markdown 报告
+- **接口**：`/api/v1/evals` 12 条路由（评测集/用例/跑批/执行/门禁/报告）
+- **门禁与演示**：`check_eval_metrics.py`（6 项断言全过）、`eval_demo.py`（12 条金融题，good → pass / bad → fail）
+- **对拍工具**：`tools/eval_toolkit/` 用 Promptfoo 跑同一批用例，规则断言 **24/24 一致**；Ragas 最小 demo 演示 faithfulness 归因
+
+```bash
+python backend/scripts/check_eval_metrics.py   # 指标与判定链门禁
+python backend/scripts/eval_demo.py            # 端到端演示（示例数据，非真实模型成绩）
+python tools/eval_toolkit/build_config.py      # 生成 Promptfoo 配置
+```
+
+**数据边界**：引擎开源、评测集私有。仓库内只有公开规则构造的演示用例（T+1 交收、印花税、适当性等），不含任何真实业务样本与客户数据。
+
+设计说明见 [EVAL.md](EVAL.md)。
+
 ## v2.7.0 更新（执行路径收口 + 平台化外联）
 
 - **App 场景引擎**：场景自动化补齐最后一条执行路径，App 场景页签原生可用；步骤支持启动 / 停止 / 点选 / 输入 / 滑动 / 返回 / Home / 等待 / 文本断言 / 截图十类动作，复用 adb 驱动与统一证据口径，文本断言基于 `uiautomator dump` 真读界面，截图落 `data/app-shots/`；adb 命令、设备序列号、命令超时可在场景页配置并「测试连接」列出在线设备
