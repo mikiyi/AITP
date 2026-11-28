@@ -1259,30 +1259,40 @@ export const exploratoryApi = {
     }>(`/exploratory/sessions/${sessionId}/steps/${stepId}/to-bug`, {}),
 }
 
-/** 在线检查更新：探测 Gitee master 版本、后台断点续传下载并暂存为「重启后生效」。 */
+/** 在线检查更新：git 增量拉取，工作区脏时拒绝，重启生效。 */
 export interface UpdateCheckResult {
   local: string
   latest: string
   hasUpdate: boolean
+  branch: string
+  dirty: string[]
+  behind: number
   error?: string
   checkedAt: string
 }
 
+export interface UpdateApplyResult {
+  applied: boolean
+  needsRestart: boolean
+  version?: string
+  changed?: number
+  from?: string
+  to?: string
+  dirty?: string[]
+  error?: string
+}
+
 export interface UpdateStatusResult {
-  phase: 'idle' | 'downloading' | 'verifying' | 'ready' | 'error'
+  phase: 'idle' | 'rebuilding' | 'ready' | 'error'
   message: string
   version: string
-  downloaded: number
-  total: number
-  resumable: boolean
   updatedAt: string
-  pending: { version: string; fileCount: number; createdAt: string } | null
 }
 
 export const updateApi = {
   check: () => get<UpdateCheckResult>('/system/update-check'),
   status: () => get<UpdateStatusResult>('/system/update-status'),
-  download: (version: string) => post<UpdateStatusResult>('/system/update-download', { version }),
+  apply: () => post<UpdateApplyResult>('/system/update-apply', {}),
 }
 
 /** 设置：AI 档案、系统配置、枚举。 */export const settingsApi = {

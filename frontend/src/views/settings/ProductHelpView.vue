@@ -211,7 +211,7 @@
               <li>首次运行会创建 <code class="text-mono">.venv</code>、安装依赖、构建前端，随后自动打开 <code class="text-mono">http://127.0.0.1:8760</code>。</li>
               <li>脚本先检查端口：AITP 已在运行则直接打开页面；端口被其它程序占用会明确报错退出。可用参数：<code class="text-mono">--build</code>（强制重建前端）、<code class="text-mono">--reinstall</code>（重建虚拟环境）、<code class="text-mono">--no-browser</code>（不自动开浏览器）。</li>
               <li>停止服务：Windows <code class="text-mono">stop.bat</code>，macOS / Linux <code class="text-mono">./stop.sh</code>。</li>
-              <li>升级：拉新代码后再跑一次 <code class="text-mono">start.bat --build</code>；数据库迁移在启动时按序自动执行，不需要手动跑 SQL。也可以在「帮助文档 → 版本迭代信息」点「检查更新」在线升级：探测 Gitee master 版本，确认后断点续传下载、校验并暂存，重启应用生效（覆盖前自动备份，过程写 <code class="text-mono">logs/deploy.log</code>）。</li>
+              <li>升级：拉新代码后再跑一次 <code class="text-mono">start.bat --build</code>；数据库迁移在启动时按序自动执行，不需要手动跑 SQL。也可以在「帮助文档 → 版本迭代信息」点「检查更新」在线升级：git 拉取探测 Gitee master 版本，确认后 git 增量拉取（自带断点续传；本地有未提交改动会被拦下，不会被覆盖）并自动重建前端，重启应用生效（过程写 <code class="text-mono">logs/deploy.log</code>）。</li>
               <li>首次启动（空数据库）首页会自动弹出四步引导：配置 AI 模型 → 载入示例项目 → 跑一次 AI 生成 → 看报告与追溯；可跳过，完成或跳过后不再自动弹出。存量数据库升级默认不弹引导。</li>
               <li>引导里的「载入示例项目」以追加方式注入 <code class="text-mono">DEMO-EC</code> 示例（需求 / 用例 / 缺陷 / 知识 / 报告，外加可执行的接口断言脚本 <code class="text-mono">AUTO-API-001</code>），只重建示例自身、不动既有数据；项目列表空态也能一键载入。</li>
               <li>想重看引导，点本页右上角「重新打开首启引导」即可回到首页重新弹出。</li>
@@ -373,21 +373,29 @@
 
       <el-dialog v-model="updateDialog" title="检查更新" width="520px" :close-on-click-modal="!updateBusy">
         <template v-if="updateInfo">
-          <p class="doc-p">当前最新版本是 <strong>v{{ updateInfo.latest }}</strong>，本机版本是 v{{ updateInfo.local }}，是否确认更新到最新版本？</p>
-          <p class="doc-p muted">
-            更新包从 Gitee master 下载，支持断点续传；下载、校验、解压与覆盖都会写入 logs/deploy.log，覆盖前会把旧文件备份到 data/updates/。
+          <p v-if="!updateError" class="doc-p">
+            当前最新版本是 <strong>v{{ updateInfo.latest }}</strong>，本机版本是 v{{ updateInfo.local }}
+            （{{ updateInfo.branch || '当前分支' }}，落后 {{ updateInfo.behind }} 个提交），是否确认更新到最新版本？
           </p>
+          <p v-if="!updateError" class="doc-p muted">
+            更新走 git 增量拉取（自带断点续传），不会覆盖本地未提交改动；代码更新后前端自动重建，重启应用生效，过程写入 logs/deploy.log。
+          </p>
+          <el-alert v-if="updateError" type="warning" :closable="false" show-icon :title="updateError" />
           <el-progress
-            v-if="updateBusy || updateStatus.phase === 'ready' || updateStatus.phase === 'error'"
-            :percentage="updatePercent"
-            :status="updateStatus.phase === 'error' ? 'exception' : updateStatus.phase === 'ready' ? 'success' : undefined"
+            v-if="updateBusy || updateStatus.phase === 'rebuilding'"
+            :percentage="100"
+            :indeterminate="true"
+            :duration="2"
+            :show-text="false"
           />
           <p v-if="updateStatus.message" class="doc-p muted">{{ updateStatus.message }}</p>
         </template>
         <template #footer>
-          <el-button :disabled="updateBusy" @click="updateDialog = false">{{ updateStatus.phase === 'ready' ? '关闭' : '取消' }}</el-button>
+          <el-button :disabled="updateBusy" @click="updateDialog = false">
+            {{ updateStatus.phase === 'ready' || updateError ? '关闭' : '取消' }}
+          </el-button>
           <el-button
-            v-if="updateStatus.phase !== 'ready'"
+            v-if="updateStatus.phase !== 'ready' && !updateError"
             type="primary"
             :loading="updateBusy"
             @click="startUpdate"
@@ -446,20 +454,13 @@ async function reopenTour(): Promise<void> {
   window.dispatchEvent(new CustomEvent('aitp:reopen-tour'))
 }
 
-// ---- 检查更新：探测 Gitee master → 后台断点续传下载 → 暂存，重启后生效 ----
+// ---- 检查更新：git 探测 origin/master → 快进合并 → 后台重建，重启生效 ----
 const updateChecking = ref(false)
 const updateDialog = ref(false)
 const updateInfo = ref<UpdateCheckResult | null>(null)
 const updateBusy = ref(false)
-const updateStatus = ref<UpdateStatusResult>({
-  phase: 'idle', message: '', version: '', downloaded: 0, total: 0,
-  resumable: false, updatedAt: '', pending: null,
-})
-const updatePercent = computed(() => {
-  const total = updateStatus.value.total
-  if (!total) return 0
-  return Math.min(100, Math.round((updateStatus.value.downloaded / total) * 100))
-})
+const updateError = ref('')
+const updateStatus = ref<UpdateStatusResult>({ phase: 'idle', message: '', version: '', updatedAt: '' })
 let updateTimer: number | undefined
 
 function stopUpdatePoll(): void {
@@ -471,6 +472,8 @@ function stopUpdatePoll(): void {
 
 async function checkUpdate(): Promise<void> {
   updateChecking.value = true
+  updateError.value = ''
+  updateStatus.value = { phase: 'idle', message: '', version: '', updatedAt: '' }
   try {
     const result = await updateApi.check()
     if (result.error) {
@@ -482,8 +485,11 @@ async function checkUpdate(): Promise<void> {
       return
     }
     updateInfo.value = result
-    updateStatus.value = { ...updateStatus.value, phase: 'idle', message: '', downloaded: 0, total: 0 }
     updateDialog.value = true
+    if (result.dirty.length) {
+      const head = result.dirty.slice(0, 3).join('、')
+      updateError.value = `本地有 ${result.dirty.length} 个未提交改动，无法一键更新；请先提交或暂存：${head}${result.dirty.length > 3 ? ' 等' : ''}`
+    }
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '检查更新失败')
   } finally {
@@ -492,16 +498,24 @@ async function checkUpdate(): Promise<void> {
 }
 
 async function startUpdate(): Promise<void> {
-  const info = updateInfo.value
-  if (!info?.latest || updateBusy.value) return
+  if (updateBusy.value) return
   updateBusy.value = true
+  updateError.value = ''
   try {
-    updateStatus.value = await updateApi.download(info.latest)
+    const result = await updateApi.apply()
+    if (!result.applied) {
+      updateError.value = result.error || '更新失败'
+      updateBusy.value = false
+      const files = (result.dirty ?? []).slice(0, 3).join('、')
+      if (files) updateError.value += `（${files}${(result.dirty ?? []).length > 3 ? ' 等' : ''}）`
+      return
+    }
+    updateStatus.value = { phase: 'rebuilding', message: '代码已更新，正在重建前端…', version: result.version || '', updatedAt: '' }
     stopUpdatePoll()
     updateTimer = window.setInterval(pollUpdate, 1200)
   } catch (err) {
     updateBusy.value = false
-    ElMessage.error(err instanceof Error ? err.message : '启动下载失败')
+    updateError.value = err instanceof Error ? err.message : '启动更新失败'
   }
 }
 
@@ -509,14 +523,11 @@ async function pollUpdate(): Promise<void> {
   try {
     const st = await updateApi.status()
     updateStatus.value = st
-    if (st.phase === 'ready') {
+    if (st.phase === 'ready' || st.phase === 'error') {
       stopUpdatePoll()
       updateBusy.value = false
-      ElMessage.success(`v${st.version} 已下载并暂存，重启应用后生效`)
-    } else if (st.phase === 'error') {
-      stopUpdatePoll()
-      updateBusy.value = false
-      ElMessage.error(st.message || '下载失败')
+      if (st.phase === 'ready') ElMessage.success(st.message || '已更新，重启应用后生效')
+      else ElMessage.error(st.message || '更新失败')
     }
   } catch {
     // 轮询偶发失败不打断，下一次继续

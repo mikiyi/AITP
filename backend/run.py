@@ -10,11 +10,6 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-# 待生效的更新必须在导入应用之前落地，替换后的新代码才能在同一次启动里生效
-from update_bootstrap import apply_pending_update  # noqa: E402
-
-apply_pending_update(pathlib.Path(__file__).resolve().parent.parent)
-
 from aitp.app import create_app  # noqa: E402
 from aitp.common.preflight import PreflightError  # noqa: E402
 from aitp.config import load_config  # noqa: E402
