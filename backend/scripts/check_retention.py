@@ -186,7 +186,7 @@ def main() -> int:
 
         # 1. 配置：默认读取 + 改短保留期
         settings = api.data("GET", f"{V1}/retention/settings")
-        check("配置含七类数据", len(settings["items"]) == 7, str(settings["items"])[:300])
+        check("配置含八类数据（含评测结果）", len(settings["items"]) == 8, str(settings["items"])[:300])
         items = {
             item["dataType"]: {"days": item["days"], "action": item["action"]}
             for item in settings["items"]
@@ -199,6 +199,7 @@ def main() -> int:
             {"dataType": "todo", "days": 30, "action": "archive"},
             {"dataType": "bug_screenshot", "days": 30, "action": "archive"},
             {"dataType": "exec_media", "days": 30, "action": "delete"},
+            {"dataType": "eval_result", "days": 30, "action": "archive"},
         ]
         saved = api.data("PUT", f"{V1}/retention/settings", {"items": new_items, "autoCleanup": False})
         check("保存后配置生效",
@@ -206,7 +207,7 @@ def main() -> int:
 
         # 2. 干跑：只统计不动库
         dry = api.data("POST", f"{V1}/retention/cleanup", {"dryRun": True})
-        check("干跑统计到到期数据", dry["dryRun"] is True and len(dry["types"]) == 7, str(dry)[:300])
+        check("干跑统计到到期数据", dry["dryRun"] is True and len(dry["types"]) == 8, str(dry)[:300])
         check("干跑不动库",
               conn.execute("SELECT COUNT(*) FROM biz_test_run WHERE is_deleted = 0").fetchone()[0] >= 1)
         check("干跑提示被引用证据", any(

@@ -20,6 +20,11 @@ ALLOWED_ASSERTIONS = {
     "max_chars",
     "json_keys",
     "grounded",
+    # Agent / 合规类断言（设计 §6.5 / §五 refusal）：不参与文本规则，由轨迹与指标消费
+    "end_state",
+    "max_steps",
+    "expected_min",
+    "should_refuse",
 }
 
 
@@ -83,6 +88,28 @@ def normalize_case(data: dict[str, Any]) -> dict[str, Any]:
         normalized["assertions"]["json_keys"] = _as_str_list(assertions["json_keys"], "json_keys")
     if "grounded" in assertions:
         normalized["assertions"]["grounded"] = bool(assertions["grounded"])
+    if "end_state" in assertions:
+        end_state = assertions["end_state"]
+        if not isinstance(end_state, dict):
+            raise AppError(ErrorCode.PARAM_ERROR, "end_state 必须是对象")
+        kind = str(end_state.get("kind") or "none")
+        if kind not in {"http", "sql", "file", "none"}:
+            raise AppError(ErrorCode.PARAM_ERROR, "end_state.kind 只能是 http / sql / file / none")
+        checks = end_state.get("checks") or []
+        if not isinstance(checks, list):
+            raise AppError(ErrorCode.PARAM_ERROR, "end_state.checks 必须是数组")
+        normalized["assertions"]["end_state"] = {"kind": kind, "checks": checks}
+    for key in ("max_steps", "expected_min"):
+        if key in assertions:
+            try:
+                number = int(assertions[key])
+            except (TypeError, ValueError):
+                raise AppError(ErrorCode.PARAM_ERROR, f"{key} 必须是整数") from None
+            if number < 0:
+                raise AppError(ErrorCode.PARAM_ERROR, f"{key} 不能为负")
+            normalized["assertions"][key] = number
+    if "should_refuse" in assertions:
+        normalized["assertions"]["should_refuse"] = bool(assertions["should_refuse"])
 
     if not normalized["assertions"]:
         raise AppError(ErrorCode.PARAM_ERROR, "用例至少要有一条断言（MVP 不支持空用例）")

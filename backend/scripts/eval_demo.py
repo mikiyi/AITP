@@ -8,12 +8,12 @@
 
 from __future__ import annotations
 
-import json
 import os
 import pathlib
 import sqlite3
 import sys
 import tempfile
+from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend"))
@@ -112,7 +112,7 @@ def _seed(conn: sqlite3.Connection) -> tuple[int, int]:
     return project_id, suite_id
 
 
-def _outputs(indexes: list[int], n: int = len(CASES)) -> list[dict]:
+def _outputs(indexes: list[int], n: int = len(CASES)) -> list[dict[str, Any]]:
     items = []
     for idx, (_category, _severity, _title, _assertions, good, bad) in enumerate(CASES):
         output = bad if idx in indexes else good
@@ -163,9 +163,11 @@ def main() -> int:
         from aitp.app import create_app
 
         client = create_app().test_client()
-        resp = client.get(f"/api/v1/evals?projectId={project_id}")
+        resp = client.get(f"/api/v1/evals/suites?projectId={project_id}")
         assert resp.status_code == 200 and resp.get_json()["code"] == 200000, resp.get_json()
-        print("# API 冒烟：GET /api/v1/evals 通过；报告接口见 /api/v1/evals/runs/<id>/report")
+        meta = client.get("/api/v1/evals/meta")
+        assert meta.status_code == 200 and len(meta.get_json()["data"]["metricKeys"]) == 18, meta.get_json()
+        print("# API 冒烟：GET /api/v1/evals/suites 与 /evals/meta 通过；导出见 /api/v1/evals/runs/<id>/export")
     except Exception as exc:  # noqa: BLE001 - 演示脚本不让 API 冒烟失败影响主流程
         print(f"# API 冒烟未通过：{type(exc).__name__}: {exc}")
 

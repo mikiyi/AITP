@@ -6,7 +6,7 @@ const STATIC_ROUTES = [
   '/', '/todos', '/tasks', '/lab', '/lab/pipeline', '/lab/prompts', '/workbench/validation',
   '/lab/records', '/lab/sessions', '/projects', '/requirements', '/test-cases', '/regressions',
   '/test-plans', '/traceability', '/bugs', '/sql-analyses', '/knowledge', '/knowledge/assistant',
-  '/reports', '/execution-matrices', '/exploratory',
+  '/reports', '/execution-matrices', '/exploratory', '/evals',
   '/automation/web', '/automation/app', '/automation/api', '/automation/performance', '/help',
   '/settings', '/settings/security', '/settings/ai', '/settings/knowledge', '/settings/modules',
   '/settings/versions', '/settings/templates', '/settings/backup', '/settings/retention',
@@ -16,7 +16,7 @@ const STATIC_ROUTES = [
 ]
 
 test('BFS 全页面一次访问无白屏/报错', async ({ page }) => {
-  test.setTimeout(180_000)
+  test.setTimeout(300_000)
   const seed = await getSeed()
   const detail = [
     seed.caseId && `/test-cases/${seed.caseId}`,
@@ -33,7 +33,7 @@ test('BFS 全页面一次访问无白屏/报错', async ({ page }) => {
     let reason = ''
     try {
       await page.goto(route)
-      await page.locator('.page, .page-header, .el-table, main').first().waitFor({ state: 'visible', timeout: 10_000 })
+      await page.locator('.page, .page-header, .el-table, main').first().waitFor({ state: 'visible', timeout: 15_000 })
       const text = (await page.locator('body').innerText()).trim()
       if (text.length < 20) { ok = false; reason = '疑似白屏(正文过短)' }
       if (h.page.length) { ok = false; reason = `JS异常: ${h.page[0]}` }

@@ -42,10 +42,12 @@ TYPE_TODO = "todo"
 TYPE_BUG_SCREENSHOT = "bug_screenshot"
 #: 四期专项 C：执行媒体（视频 / Trace），按目录最后访问时间到期清理
 TYPE_EXEC_MEDIA = "exec_media"
+#: 六期 v2.8.0：评测逐条结果（output_text 可能含客户信息，默认 90 天后归档）
+TYPE_EVAL_RESULT = "eval_result"
 
 DATA_TYPES: tuple[str, ...] = (
     TYPE_TEST_RUN, TYPE_AUTOMATION_RUN, TYPE_EVIDENCE, TYPE_BUG_SCREENSHOT,
-    TYPE_EXEC_MEDIA, TYPE_LOG, TYPE_TODO,
+    TYPE_EXEC_MEDIA, TYPE_LOG, TYPE_TODO, TYPE_EVAL_RESULT,
 )
 TYPE_LABELS = {
     TYPE_TEST_RUN: "测试轮次",
@@ -55,7 +57,10 @@ TYPE_LABELS = {
     TYPE_TODO: "已完成待办",
     TYPE_BUG_SCREENSHOT: "缺陷截图",
     TYPE_EXEC_MEDIA: "执行媒体",
+    TYPE_EVAL_RESULT: "评测逐条结果",
 }
+#: 未配置时各类型的默认保留天数（0 = 不清理）；评测结果按设计默认 90 天
+DEFAULT_DAYS: dict[str, int] = {TYPE_EVAL_RESULT: 90}
 ACTION_LABELS = {
     ACTION_ARCHIVE: "归档后清理",
     ACTION_DELETE: "直接清理",
@@ -70,6 +75,7 @@ TYPE_ACTIONS: dict[str, tuple[str, ...]] = {
     TYPE_TODO: (ACTION_ARCHIVE, ACTION_DELETE),
     TYPE_BUG_SCREENSHOT: (ACTION_ARCHIVE, ACTION_DELETE),
     TYPE_EXEC_MEDIA: (ACTION_DELETE,),
+    TYPE_EVAL_RESULT: (ACTION_ARCHIVE, ACTION_DELETE, ACTION_SUMMARY),
 }
 
 #: 缺陷截图是否纳入留存：与整包备份/项目资产包共用同一个开关，默认不纳入
@@ -104,7 +110,7 @@ def get_settings(conn: sqlite3.Connection) -> dict[str, Any]:
     repo = SysConfigRepository(conn)
     items: list[dict[str, Any]] = []
     for data_type in DATA_TYPES:
-        raw_days = repo.get_value(_days_key(data_type), "0")
+        raw_days = repo.get_value(_days_key(data_type), str(DEFAULT_DAYS.get(data_type, 0)))
         try:
             days = int(str(raw_days or "0"))
         except (TypeError, ValueError):
@@ -241,6 +247,23 @@ def _due_rows_with_protected(
             (cutoff, _MAX_DUE),
         ).fetchall()
         return [dict(row) for row in rows], []
+    if data_type == TYPE_EVAL_RESULT:
+        rows = conn.execute(
+            "SELECT r.* FROM biz_eval_result r JOIN biz_eval_run run ON run.id = r.run_id"
+            " WHERE r.created_at < ? AND COALESCE(run.is_pinned, 0) = 0"
+            " ORDER BY r.id LIMIT ?",
+            (cutoff, _MAX_DUE),
+        ).fetchall()
+        protected = conn.execute(
+            "SELECT r.id, r.case_no, run.id AS run_id FROM biz_eval_result r"
+            " JOIN biz_eval_run run ON run.id = r.run_id"
+            " WHERE r.created_at < ? AND COALESCE(run.is_pinned, 0) = 1 LIMIT 50",
+            (cutoff,),
+        ).fetchall()
+        return [dict(row) for row in rows], [
+            {"id": int(row["id"]), "title": str(row["case_no"] or ""),
+             "referencedBy": f"钉住跑批 #{row['run_id']}"} for row in protected
+        ]
     raise AppError(ErrorCode.PARAM_ERROR, f"未知数据类型：{data_type}")
 
 
@@ -281,6 +304,8 @@ def _item_title(data_type: str, row: dict[str, Any]) -> str:
         return str(row.get("title") or f"待办 #{row.get('id')}")
     if data_type == TYPE_BUG_SCREENSHOT:
         return f"{row.get('bug_no') or ''} {row.get('file_name') or ''}".strip()
+    if data_type == TYPE_EVAL_RESULT:
+        return f"{row.get('case_no') or ''} {row.get('verdict') or ''}".strip()
     return str(row.get("title") or "")
 
 
@@ -297,6 +322,8 @@ def _item_summary(data_type: str, row: dict[str, Any]) -> str:
         return f"状态 {row.get('status') or ''} 优先级 {row.get('priority') or ''}"
     if data_type == TYPE_BUG_SCREENSHOT:
         return f"{row.get('mime') or ''} {int(row.get('size_bytes') or 0)} 字节"
+    if data_type == TYPE_EVAL_RESULT:
+        return f"判定 {row.get('verdict') or ''} 分数 {row.get('score') if row.get('score') is not None else '-'}"
     return ""
 
 
@@ -457,7 +484,23 @@ def _apply_archive(conn: sqlite3.Connection, data_type: str, rows: list[dict[str
         conn.execute(f"UPDATE biz_todo SET is_deleted = 1 WHERE id IN ({marks})", ids)
     elif data_type == TYPE_BUG_SCREENSHOT:
         _delete_screenshot_files(conn, rows)
+    elif data_type == TYPE_EVAL_RESULT:
+        # 归档包已存原文（见 _write_bundle），库内只留判定与指标，清重字段
+        _clear_eval_result_payload(conn, rows)
     return len(rows)
+
+
+def _clear_eval_result_payload(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> None:
+    ids = [int(item["id"]) for item in rows]
+    if not ids:
+        return
+    marks = ",".join("?" for _ in ids)
+    conn.execute(
+        "UPDATE biz_eval_result SET output_text = '', tool_trace = '[]',"
+        " retrieved_json = '[]', end_state = '{}', judge_json = '{}'"
+        f" WHERE id IN ({marks})",
+        ids,
+    )
 
 
 def _delete_screenshot_files(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> None:
@@ -489,6 +532,11 @@ def _apply_delete(conn: sqlite3.Connection, data_type: str, rows: list[dict[str,
             f" WHERE id IN ({marks})", ids,
         )
         return len(rows)
+    if data_type == TYPE_EVAL_RESULT:
+        ids = [int(row["id"]) for row in rows]
+        marks = ",".join("?" for _ in ids)
+        conn.execute(f"DELETE FROM biz_eval_result WHERE id IN ({marks})", ids)
+        return len(rows)
     return _apply_archive(conn, data_type, rows)
 
 
@@ -515,6 +563,9 @@ def _apply_summary(conn: sqlite3.Connection, data_type: str, rows: list[dict[str
             f" log_summary = '', assertions_json = '[]', attachments_json = '[]',"
             f" purge_reason = '仅留摘要' WHERE id IN ({marks})", ids,
         )
+        return len(rows)
+    if data_type == TYPE_EVAL_RESULT:
+        _clear_eval_result_payload(conn, rows)
         return len(rows)
     # 其它类型没有可留的摘要，退回删除
     return _apply_delete(conn, data_type, rows)

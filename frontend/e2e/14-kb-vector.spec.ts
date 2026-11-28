@@ -51,6 +51,7 @@ async function publishArticle(projectId: number, title: string, content: string)
 }
 
 test('配置嵌入模型 → 重建索引 → 语义问句召回并带引用', async () => {
+  test.setTimeout(120_000) // 重建索引按库内全部文档分块嵌入，慢机型 60s 不够
   const seed = await getSeed()
   await configureEmbedding(true)
   const articleId = await publishArticle(

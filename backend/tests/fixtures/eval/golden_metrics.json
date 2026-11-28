@@ -1,0 +1,570 @@
+{
+  "schemaVersion": 1,
+  "description": "AITP eval 领域层 golden fixture：固定输入 + 冻结期望值",
+  "cases": {
+    "1": {
+      "severity": "S1",
+      "tools_expected": {
+        "required": [
+          "search"
+        ],
+        "args": {
+          "search": {
+            "q": "费率"
+          }
+        }
+      },
+      "assertions": {
+        "expected_min": 2
+      },
+      "relevant_docs": [
+        "d1",
+        "d2"
+      ],
+      "graded_relevance": {
+        "d1": 3,
+        "d2": 2
+      }
+    },
+    "2": {
+      "severity": "S0",
+      "tools_expected": {
+        "required": [
+          "trade"
+        ],
+        "forbidden": [
+          "email"
+        ],
+        "args": {
+          "trade": {
+            "order": 1
+          }
+        }
+      },
+      "assertions": {}
+    },
+    "3": {
+      "severity": "S2",
+      "assertions": {},
+      "relevant_docs": [
+        "d3"
+      ],
+      "graded_relevance": {
+        "d3": 1
+      }
+    },
+    "4": {
+      "severity": "S1",
+      "assertions": {
+        "should_refuse": true
+      }
+    },
+    "5": {
+      "severity": "S2",
+      "assertions": {
+        "should_refuse": false
+      }
+    },
+    "6": {
+      "severity": "S1",
+      "assertions": {}
+    },
+    "7": {
+      "severity": "S0",
+      "assertions": {}
+    },
+    "8": {
+      "severity": "S2",
+      "assertions": {
+        "expected_min": 3
+      }
+    }
+  },
+  "results": [
+    {
+      "case_id": 1,
+      "verdict": "pass",
+      "failure_reason": "",
+      "latency_ms": 100,
+      "cost_micros": 1000,
+      "steps": 3,
+      "tool_trace": [
+        {
+          "tool": "search",
+          "args": {
+            "q": "费率"
+          }
+        },
+        {
+          "tool": "calc",
+          "args": {}
+        }
+      ],
+      "retrieved": [
+        "d1",
+        "d3",
+        "d2"
+      ],
+      "claims": [
+        {
+          "supported": true,
+          "cited": true
+        },
+        {
+          "supported": true,
+          "cited": true
+        }
+      ],
+      "rubric": {
+        "instructionFollowed": true
+      },
+      "judge_label": "pass",
+      "human": "pass"
+    },
+    {
+      "case_id": 2,
+      "verdict": "fail",
+      "failure_reason": "tool.forbidden_called:email",
+      "latency_ms": 150,
+      "cost_micros": 0,
+      "tool_trace": [
+        {
+          "tool": "trade",
+          "args": {
+            "order": 1
+          }
+        },
+        {
+          "tool": "email",
+          "args": {}
+        }
+      ],
+      "judge_label": "fail",
+      "human": "fail"
+    },
+    {
+      "case_id": 3,
+      "verdict": "pass",
+      "failure_reason": "",
+      "latency_ms": 200,
+      "cost_micros": 2000,
+      "retrieved": [
+        "d3",
+        "d9"
+      ],
+      "rubric": {
+        "instructionFollowed": true
+      },
+      "judge_label": "pass",
+      "human": "pass"
+    },
+    {
+      "case_id": 4,
+      "verdict": "pass",
+      "failure_reason": "",
+      "latency_ms": 300,
+      "cost_micros": 0,
+      "judge_label": "pass",
+      "human": "pass"
+    },
+    {
+      "case_id": 5,
+      "verdict": "fail",
+      "failure_reason": "refusal.should_answer",
+      "latency_ms": 350,
+      "cost_micros": 0,
+      "judge_label": "fail",
+      "human": "fail"
+    },
+    {
+      "case_id": 6,
+      "verdict": "pass",
+      "failure_reason": "",
+      "latency_ms": 400,
+      "cost_micros": 3000,
+      "hallucinated": true,
+      "claims": [
+        {
+          "supported": true,
+          "cited": true
+        },
+        {
+          "supported": false,
+          "cited": false
+        }
+      ],
+      "rubric": {
+        "instructionFollowed": false
+      },
+      "judge_label": "pass",
+      "human": "pass"
+    },
+    {
+      "case_id": 7,
+      "verdict": "fail",
+      "failure_reason": "assert.hallucination:no_source",
+      "latency_ms": 450,
+      "cost_micros": 0,
+      "judge_label": "pass",
+      "human": "fail"
+    },
+    {
+      "case_id": 8,
+      "verdict": "pass",
+      "failure_reason": "",
+      "latency_ms": 500,
+      "cost_micros": 4000,
+      "steps": 5,
+      "judge_label": "pass",
+      "human": "pass"
+    }
+  ],
+  "expectedMetrics": {
+    "success_rate": {
+      "metric_key": "success_rate",
+      "value": 0.625,
+      "ci_lower": 0.30573785458380187,
+      "ci_upper": 0.863158240538479,
+      "ci_method": "wilson",
+      "unit": "ratio",
+      "numerator": 5.0,
+      "denominator": 8.0,
+      "sample_size": 8,
+      "detail_json": "{}"
+    },
+    "error_rate": {
+      "metric_key": "error_rate",
+      "value": 0.0,
+      "ci_lower": 0.0,
+      "ci_upper": 0.3244156195108769,
+      "ci_method": "wilson",
+      "unit": "ratio",
+      "numerator": 0.0,
+      "denominator": 8.0,
+      "sample_size": 8,
+      "detail_json": "{}"
+    },
+    "judge_invalid_rate": {
+      "metric_key": "judge_invalid_rate",
+      "value": 0.0,
+      "ci_lower": 0.0,
+      "ci_upper": 0.3244156195108769,
+      "ci_method": "wilson",
+      "unit": "ratio",
+      "numerator": 0.0,
+      "denominator": 8.0,
+      "sample_size": 8,
+      "detail_json": "{}"
+    },
+    "hallucination_rate": {
+      "metric_key": "hallucination_rate",
+      "value": 0.25,
+      "ci_lower": 0.07147768885802763,
+      "ci_upper": 0.5907301208974108,
+      "ci_method": "wilson",
+      "unit": "ratio",
+      "numerator": 2.0,
+      "denominator": 8.0,
+      "sample_size": 8,
+      "detail_json": "{}"
+    },
+    "severity_weighted_error": {
+      "metric_key": "severity_weighted_error",
+      "value": 0.7593984962406015,
+      "ci_lower": null,
+      "ci_upper": null,
+      "ci_method": "bootstrap",
+      "unit": "ratio",
+      "numerator": 101.0,
+      "denominator": 133.0,
+      "sample_size": 8,
+      "detail_json": {
+        "bySeverity": {
+          "S0": {
+            "total": 2,
+            "failed": 2,
+            "weight": 50.0
+          },
+          "S1": {
+            "total": 3,
+            "failed": 0,
+            "weight": 10.0
+          },
+          "S2": {
+            "total": 3,
+            "failed": 1,
+            "weight": 1.0
+          }
+        }
+      }
+    },
+    "instruction_follow_rate": {
+      "metric_key": "instruction_follow_rate",
+      "value": 0.6666666666666666,
+      "ci_lower": 0.2076549551264879,
+      "ci_upper": 0.9385096847238394,
+      "ci_method": "wilson",
+      "unit": "ratio",
+      "numerator": 2.0,
+      "denominator": 3.0,
+      "sample_size": 3,
+      "detail_json": "{}"
+    },
+    "tool_call_f1": {
+      "metric_key": "tool_call_f1",
+      "value": 0.666667,
+      "ci_lower": 0.15937790280957775,
+      "ci_upper": 0.9547463097349306,
+      "ci_method": "wilson",
+      "unit": "ratio",
+      "numerator": 1.333334,
+      "denominator": 2.0,
+      "sample_size": 2,
+      "detail_json": "{}"
+    },
+    "tool_arg_accuracy": {
+      "metric_key": "tool_arg_accuracy",
+      "value": 1.0,
+      "ci_lower": 0.34237195288961925,
+      "ci_upper": 1.0,
+      "ci_method": "wilson",
+      "unit": "ratio",
+      "numerator": 2.0,
+      "denominator": 2.0,
+      "sample_size": 2,
+      "detail_json": "{}"
+    },
+    "steps_avg": {
+      "metric_key": "steps_avg",
+      "value": 4.0,
+      "ci_lower": null,
+      "ci_upper": null,
+      "ci_method": "exact",
+      "unit": "step",
+      "numerator": 8.0,
+      "denominator": 2.0,
+      "sample_size": 2,
+      "detail_json": "{}"
+    },
+    "redundant_step_ratio": {
+      "metric_key": "redundant_step_ratio",
+      "value": 0.6,
+      "ci_lower": 0.23071993220883708,
+      "ci_upper": 0.8823817688407467,
+      "ci_method": "wilson",
+      "unit": "ratio",
+      "numerator": 3.0,
+      "denominator": 5.0,
+      "sample_size": 5,
+      "detail_json": "{}"
+    },
+    "rag_recall@5": {
+      "metric_key": "rag_recall@5",
+      "value": 1.0,
+      "ci_lower": 0.34237195288961925,
+      "ci_upper": 1.0,
+      "ci_method": "wilson",
+      "unit": "ratio",
+      "numerator": 2.0,
+      "denominator": 2.0,
+      "sample_size": 2,
+      "detail_json": "{}"
+    },
+    "rag_ndcg@5": {
+      "metric_key": "rag_ndcg@5",
+      "value": 0.969278,
+      "ci_lower": 0.32181173303178745,
+      "ci_upper": 0.9995235175844822,
+      "ci_method": "wilson",
+      "unit": "ratio",
+      "numerator": 1.938556,
+      "denominator": 2.0,
+      "sample_size": 2,
+      "detail_json": "{}"
+    },
+    "faithfulness": {
+      "metric_key": "faithfulness",
+      "value": 0.75,
+      "ci_lower": 0.3006360524426366,
+      "ci_upper": 0.9544139373553637,
+      "ci_method": "wilson",
+      "unit": "ratio",
+      "numerator": 3.0,
+      "denominator": 4.0,
+      "sample_size": 4,
+      "detail_json": "{}"
+    },
+    "refusal_accuracy": {
+      "metric_key": "refusal_accuracy",
+      "value": 0.5,
+      "ci_lower": 0.09452865480086614,
+      "ci_upper": 0.9054713451991339,
+      "ci_method": "wilson",
+      "unit": "ratio",
+      "numerator": 1.0,
+      "denominator": 2.0,
+      "sample_size": 2,
+      "detail_json": "{}"
+    },
+    "judge_agreement": {
+      "metric_key": "judge_agreement",
+      "value": 0.875,
+      "ci_lower": 0.5291051942301386,
+      "ci_upper": 0.9775830911367038,
+      "ci_method": "wilson",
+      "unit": "ratio",
+      "numerator": 7.0,
+      "denominator": 8.0,
+      "sample_size": 8,
+      "detail_json": {
+        "kappa": 0.714286
+      }
+    },
+    "false_pass_rate": {
+      "metric_key": "false_pass_rate",
+      "value": 0.3333333333333333,
+      "ci_lower": 0.0614903152761605,
+      "ci_upper": 0.7923450448735121,
+      "ci_method": "wilson",
+      "unit": "ratio",
+      "numerator": 1.0,
+      "denominator": 3.0,
+      "sample_size": 3,
+      "detail_json": "{}"
+    },
+    "latency_p95": {
+      "metric_key": "latency_p95",
+      "value": 482.5,
+      "ci_lower": null,
+      "ci_upper": null,
+      "ci_method": "exact",
+      "unit": "ms",
+      "numerator": null,
+      "denominator": null,
+      "sample_size": 8,
+      "detail_json": {
+        "p50": 325.0,
+        "p95": 482.5
+      }
+    },
+    "cost_per_1k": {
+      "metric_key": "cost_per_1k",
+      "value": 1250000.0,
+      "ci_lower": null,
+      "ci_upper": null,
+      "ci_method": "exact",
+      "unit": "micros",
+      "numerator": 10000.0,
+      "denominator": 8.0,
+      "sample_size": 8,
+      "detail_json": {
+        "averageMicros": 1250.0,
+        "providerCost": false
+      }
+    }
+  },
+  "wilsonCases": {
+    "85_of_100": {
+      "lower": 0.7671626666784216,
+      "upper": 0.906940968088377
+    },
+    "3_of_5": {
+      "lower": 0.23071993220883708,
+      "upper": 0.8823817688407467
+    },
+    "zero": {
+      "lower": null,
+      "upper": null
+    }
+  },
+  "percentileCases": {
+    "p95_10_50": 48.0,
+    "p50_8_latencies": 325.0,
+    "p95_8_latencies": 482.5
+  },
+  "judgeCases": {
+    "parseValid": {
+      "verdict": "pass",
+      "score": 90.0,
+      "reasons": [],
+      "hallucinated": false,
+      "dimensions": {}
+    },
+    "parseInvalid": null,
+    "kappaPerfect": 1.0,
+    "calibration": {
+      "sampleSize": 8,
+      "agreement": 0.875,
+      "kappa": 0.714286,
+      "falsePassRate": 0.3333333333333333,
+      "falseFailRate": 0.0,
+      "matrix": {
+        "tp": 5,
+        "fp": 1,
+        "fn": 0,
+        "tn": 2
+      },
+      "calibrated": false
+    }
+  },
+  "ragCases": {
+    "recallCase1": 1.0,
+    "recallCase3": 1.0,
+    "ndcgCase1": 0.938557,
+    "ndcgCase3": 1.0
+  },
+  "rubricCases": {
+    "score": {
+      "score": 68.0,
+      "dimensions": [
+        {
+          "key": "factuality",
+          "raw": 4.0,
+          "scale": 5,
+          "normalized": 0.8,
+          "weight": 0.4
+        },
+        {
+          "key": "instruction",
+          "raw": 3.0,
+          "scale": 5,
+          "normalized": 0.6,
+          "weight": 0.6
+        }
+      ],
+      "mustPassFailed": [],
+      "passed": false,
+      "reasons": [
+        "rubric.below_threshold"
+      ]
+    }
+  },
+  "traceCases": {
+    "prf": {
+      "precision": 0.5,
+      "recall": 1.0,
+      "f1": 0.666667
+    },
+    "endStatePassed": {
+      "passed": true,
+      "reasons": []
+    },
+    "endStateFailed": {
+      "passed": false,
+      "reasons": [
+        "assert.end_state_mismatch:GET /o/1"
+      ]
+    }
+  },
+  "ablationCases": {
+    "mcnemarNoFlip": 1.0,
+    "mcnemarSixVsOne": 0.125,
+    "mdeTable": {
+      "50": 0.200073,
+      "100": 0.141473,
+      "200": 0.100037,
+      "400": 0.070737,
+      "2200": 0.030162
+    }
+  }
+}

@@ -24,7 +24,7 @@ bp = Blueprint("mcp", __name__)
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "aitp"
-SERVER_VERSION = "2.7.0"
+SERVER_VERSION = "2.8.0"
 MAX_LOG_DETAIL = 300
 
 _LOOPBACK = {"127.0.0.1", "::1", "localhost", None}

@@ -24,6 +24,7 @@ import {
   Folder,
   FolderOpened,
   Grid,
+  Histogram,
   HomeFilled,
   Iphone,
   Link,
@@ -90,7 +91,7 @@ export type MenuNode = MenuItemNode | MenuGroupNode
  * 侧边栏渲染、当前项高亮、面包屑分组都从这里取，避免两处各写一份导致对不上。
  *
  * 分组按测试工作流排：首页（入口）→ AI 实验室（智能辅助）→ 任务中心（待办/后台）
- * → 测试预案（开跑前圈范围）→ 测试资产（输入本体）→ 质量结论（报告/追溯/SQL）
+ * → 测试预案（开跑前圈范围）→ 测试资产（输入本体）→ 质量结论（报告/洞察/评测/追溯/SQL）
  * → 自动化脚本（按目标管脚本）→ 执行与探索（矩阵/探索/执行环境）→ 知识库（沉淀）
  * → 数据治理（资产包/外部导入/留存归档/操作日志）→ 设置（仅全局偏好）→ 帮助文档。
  *
@@ -109,7 +110,7 @@ export type MenuNode = MenuItemNode | MenuGroupNode
  * 网格=执行矩阵、瞄准=探索性测试、书本=知识库、收藏夹=知识库管理、
  * 齿轮=设置、卡片=首页卡片定制、备忘录=操作日志、锁=访问口令、CPU=AI 设置、
  * 收藏标签=知识库设置、菜单树=模块树、文档加=模板、连接=环境、滑杆=自动化设置、
- * 直方图=性能设置、铃铛=CI 通知、文档勾=断言库、开文件夹=备份、箱子=留存归档、
+ * 直方图=AI 评测、铃铛=CI 通知、文档勾=断言库、开文件夹=备份、箱子=留存归档、
  * 罗盘=探索设置、行李箱=资产包、上传=外部导入、问号=帮助、数据库=数据库脚本。
  */
 export const MENU_NODES: MenuNode[] = [
@@ -125,6 +126,7 @@ export const MENU_NODES: MenuNode[] = [
       { path: '/lab/prompts', title: '提示词库', icon: Notebook },
       { path: '/workbench/validation', title: '验证沙箱', icon: CircleCheck },
       { path: '/lab/records', title: 'AI 记录', icon: Tickets },
+      { path: '/evals', title: 'AI 评测', icon: Histogram },
     ],
   },
   {

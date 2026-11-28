@@ -336,6 +336,14 @@
           </el-form>
         </div>
       </el-tab-pane>
+
+      <el-tab-pane label="AI 评测配置" name="eval-config">
+        <div class="toolbar" style="margin-bottom: 8px">
+          <el-button :icon="ArrowLeft" @click="backToEval">返回 AI 评测</el-button>
+          <span class="muted">评测配置与判定器的维护入口；改完回到 AI 评测页继续跑批。</span>
+        </div>
+        <EvalSettingsPanel />
+      </el-tab-pane>
     </el-tabs>
 
     <el-dialog v-model="dialogVisible" :title="editing ? '编辑 AI 档案' : '新增 AI 档案'" width="720px">
@@ -580,9 +588,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onActivated, onMounted, reactive, ref } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Connection, InfoFilled, Plus, Refresh } from '@element-plus/icons-vue'
+import { ArrowLeft, Connection, InfoFilled, Plus, Refresh } from '@element-plus/icons-vue'
+import { useRoute, useRouter } from 'vue-router'
+import EvalSettingsPanel from '@/views/eval/EvalSettingsPanel.vue'
 import { knowledgeApi, labApi, settingsApi } from '@/api'
 import type {
   AiBudgetStatus,
@@ -649,8 +659,32 @@ const aiMaskEnabled = ref(true)
 const savingConfig = ref(false)
 const savingMask = ref(false)
 
-/** AI 设置页签：llm=模型档案与调用参数，mask=外发脱敏策略 */
-const activeTab = ref<'llm' | 'mask'>('llm')
+const routeAi = useRoute()
+const routerAi = useRouter()
+
+/** AI 设置页签：llm=模型档案与调用参数，mask=外发脱敏策略，eval-config=评测配置与判定器 */
+type AiSettingsTab = 'llm' | 'mask' | 'eval-config'
+const TAB_NAMES: AiSettingsTab[] = ['llm', 'mask', 'eval-config']
+
+function tabFromQuery(): AiSettingsTab {
+  const tab = String(routeAi.query.tab || '')
+  return (TAB_NAMES as string[]).includes(tab) ? (tab as AiSettingsTab) : 'llm'
+}
+
+const activeTab = ref<AiSettingsTab>(tabFromQuery())
+
+watch(
+  () => routeAi.query.tab,
+  () => {
+    activeTab.value = tabFromQuery()
+  },
+)
+
+/** 从 AI 评测页带过来的来源地址，返回时回到点按钮那一刻的页面。 */
+function backToEval(): void {
+  const from = String(routeAi.query.from || '')
+  void routerAi.push(from.startsWith('/') ? from : '/evals')
+}
 
 // ---- 四期专项 B：嵌入模型（语义检索）----
 const embedding = ref<KnowledgeEmbeddingStatus>({

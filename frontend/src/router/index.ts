@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 
 /**
- * 28 条业务路由。
+ * 业务路由。
  * meta.title 用于面包屑与标签页，meta.icon 对应 Element Plus 图标名。
  */
 const routes: RouteRecordRaw[] = [
@@ -190,6 +190,12 @@ const routes: RouteRecordRaw[] = [
     name: 'insights',
     component: () => import('@/views/insights/InsightView.vue'),
     meta: { title: '质量洞察', icon: 'DataBoard' },
+  },
+  {
+    path: '/evals',
+    name: 'evals',
+    component: () => import('@/views/eval/EvalView.vue'),
+    meta: { title: 'AI 评测', icon: 'Histogram' },
   },
   {
     path: '/sql-scripts',
