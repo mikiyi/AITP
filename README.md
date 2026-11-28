@@ -4,7 +4,7 @@
 
 个人版的AI 测试工作台 —— **单用户、本地优先、离线可用**、**提示词工程，大模型调用数据脱敏**的质量管控工具。
 
-当前版本 **v2.7.0**：与后端 `aitp.__version__`、`db/migrator.py::APP_VERSION`、`GET /api/v1/health` 的
+当前版本 **v2.8.0**：与后端 `aitp.__version__`、`db/migrator.py::APP_VERSION`、`GET /api/v1/health` 的
 `appVersion` 以及迁移记录的 `app_version` 同源，一处升级四处一致。
 
 把 AI 实验室、测试用例、缺陷、日志分析、SQL 分析、回归、报告、知识库、任务清单、工作台配置利用AI的LLM辅助测试工作，收进同一条闭环：
@@ -27,31 +27,48 @@
 - AI 能力直接读取本地环境变量中的 AI 配置信息获取，同时支持工作台内配置与本地大模型（Ollama）。
 - 没有云端模型、模型不可用或断网时，自动降级到本地规则，不阻塞主流程。
 
-## Eval 子包预览（v0.1，2026-11）——「也能测 AI 软件」
+## AI 质量评测子包（v2.8.0）——「也能测 AI 软件」
 
-AITP 过去解决的是「用 AI 测软件」。这一版补上另一半：**测 AI 软件**。
+AITP 过去解决的是「用 AI 测软件」。v2.8.0 补上另一半：**测 AI 软件**。
 
-- **数据模型**：迁移 `089_eval_core.sql` 十张表——评测集 / 用例 / 配置 / 判定器 / 跑批 / 逐条结果 / 指标 / 校准 / 门禁 / 门禁结论
-- **纯领域层**：`backend/aitp/eval/`（指标、断言、门禁求值，零 IO、可单测）
+- **数据模型**：迁移 `089_eval_core.sql` 十张表（评测集 / 用例 / 配置 / 判定器 / 跑批 / 逐条结果 / 指标 / 校准 / 门禁 / 门禁结论）+ `090_eval_run_lifecycle.sql` 跑批生命周期补列（取消标记、失败原因）
+- **纯领域层**：`backend/aitp/eval/`（18 项指标、断言、工具轨迹、RAG、Rubric、judge 校准、门禁求值，零 IO、可单测）
   - 指标带 **95% Wilson 区间**；`min` 类门禁卡**下界**、`max` 类卡**上界**（对 max 用下界等于放宽）
   - 风险加权：S0/S1/S2 = 50/10/1，一条「把不能买说成能买」≈ 50 条格式错误
-  - 样本分级：n<30 只出逐条证据，n<200 只出 warn，n≥200 才判 pass/fail
-- **跑批**：`eval_service.execute_replay()` 回放评测（输出由调用方提供：真实调用、线上留痕、人工构造都行），落逐条结果 + 指标 + 门禁结论 + Markdown 报告
-- **接口**：`/api/v1/evals` 12 条路由（评测集/用例/跑批/执行/门禁/报告）
-- **门禁与演示**：`check_eval_metrics.py`（6 项断言全过）、`eval_demo.py`（12 条金融题，good → pass / bad → fail）
+  - 判定链：规则断言 → 端态 → 工具轨迹 → Rubric 软分 → judge 仲裁；judge 输出不可解析记 `invalid` 并从分母剔除
+- **跑批生命周期**：`run_key` 幂等（同一集/版本/配置/判定器重复提交复用同一跑批）、queued→running→finished、心跳 + 超时置 failed（`infra.stale_run`）、断点续跑只补缺失用例、取消幂等、用例数 / token / 成本预算拦截
+- **校准与回归**：judge 一致性 κ + false-pass 混淆矩阵（重点看「放行错误」）；同组跑批按配对 McNemar 判回归并给出 MDE，硬断言逐条翻转必报
+- **接口**：`/api/v1/evals` **34 条路由**（评测集/用例/配置/判定器/跑批/续跑/取消/指标/趋势/校准/门禁/报告/导入导出/质量概览）
+- **门禁与演示**：4 个 `check_eval_*.py`（12 + 11 + 11 + 6 项断言全过）、`eval_gate_cli.py`（fail=1，pass/warn=0）、golden fixture 手算对拍、`eval_demo.py`（12 条金融题，good → pass / bad → fail）
+- **防污染边界**：holdout 评测集禁止导出（160107）；被结果引用的用例冻结（160110）；有跑批的评测集禁止删除（160101）
+- **前端**：侧栏「AI 实验室 → AI 评测」工作区，评测集 / 用例 / 跑批 / 质量 / 门禁五个 tab 同页，页顶给出「AI 评测做什么」的说明、主操作随 tab 切换、列表直接展示最近跑批与门禁结论；评测配置与判定器收进「设置 → AI 设置 → AI 评测配置」，评测页「AI 评测配置」按钮一键跳转、页内「返回 AI 评测」回到原页面；端到端 spec 22 覆盖建集跑批、幂等复用、冻结与导出拒绝、配置管理与返回
 - **对拍工具**：`tools/eval_toolkit/` 用 Promptfoo 跑同一批用例，规则断言 **24/24 一致**；Ragas 最小 demo 演示 faithfulness 归因
 
 ```bash
-python backend/scripts/check_eval_metrics.py   # 指标与判定链门禁
+python backend/scripts/check_eval_core.py      # 评测集/用例/跑批生命周期
+python backend/scripts/check_eval_metrics.py   # 18 指标与判定链（golden fixture）
+python backend/scripts/check_eval_gate.py      # 阈值/结论/配对回归/导出限制
+python backend/scripts/check_eval_security.py  # 脱敏/越权/保留期/导出限制
 python backend/scripts/eval_demo.py            # 端到端演示（示例数据，非真实模型成绩）
 python tools/eval_toolkit/build_config.py      # 生成 Promptfoo 配置
 ```
 
 **数据边界**：引擎开源、评测集私有。仓库内只有公开规则构造的演示用例（T+1 交收、印花税、适当性等），不含任何真实业务样本与客户数据。
 
-- **口径核对**：迁移 86 份（至 089）、`/api/v1` 路由 524 条 / 蓝图 49 个、确定性门禁 84 项（83 个 `check_*.py` + `smoke_api.py`）
+- **口径核对**：迁移 87 份（至 090）、`/api/v1` 路由 545 条 / 蓝图 49 个、确定性门禁 87 个脚本（86 个 `check_*.py` + `smoke_api.py`，`check_ai_live` 不进 runner，实际执行 86 项）
 
 设计说明见 [EVAL.md](EVAL.md)。
+
+## v2.8.0 更新（AI 质量评测子包）
+
+- **评测集与用例**：评测集支持 private / holdout / public 三种可见性，holdout 只用于无污染评估、禁止导出；用例内置 golden / bad / adversarial / regression 四类与 S0/S1/S2 严重级，断言 DSL 覆盖 `must_contain` / `forbidden_contains` / `regex` / `max_chars` / `json_keys` / `grounded` / `end_state` / `max_steps` / `expected_min` / `should_refuse` 十类；导入支持干跑预览与幂等跳过，EC 编号按集自增不复用
+- **18 项指标（固定口径 + 区间）**：任务成功率、错误率、judge 不可解析率、幻觉率、风险加权错误率、指令遵循率、工具调用 F1、参数准确率、平均步数、冗余步占比、召回@5、NDCG@5、忠实度、拒答准确率、judge 一致率、false-pass 率、P95 延迟、每千次成本；比率指标带 95% Wilson 区间，样本 n<30 只出逐条证据、n<200 最多 warn、n≥200 才判 pass/fail
+- **判定链与可解释证据**：规则断言 → 端态断言 → 工具轨迹裁决 → Rubric 软分 → judge 仲裁；基础设施错误记 `error`、judge 输出不可解析记 `invalid`，都从有效分母剔除，不污染成功率；逐条结果保留输出、工具轨迹、召回文档、端态与 Rubric 分项
+- **跑批生命周期**：`run_key` 幂等提交、queued→running→finished 状态机、心跳 + stale 接管（`infra.stale_run`）、断点续跑只补未完成用例、取消幂等、单条异常不拖垮整批；用例数 / token / 成本三类预算超限直接拦截
+- **校准与回归**：判定器校准用 κ 与混淆矩阵，重点看 false-pass（放行错误）；同组跑批按配对 McNemar 判回归并提示 MDE，硬断言逐条翻转必报；跨组（评测集/判定器/用例版本不同）拒绝比较
+- **发布门禁**：阈值可配置，5 项预注册主指标才参与 pass/fail，其余指标只告警；结论分 insufficient / warn / pass / fail，附未达标项清单与 Markdown 报告导出；`eval_gate_cli.py` 供 CI 直接判断退出码
+- **防污染与安全边界**：外发前脱敏、PII 不落库不打日志；holdout 导出拒绝（160107）、被结果引用的用例冻结（160110）、有跑批的评测集禁删（160101）、全路由鉴权与跨项目越权拒绝
+- **前端与质量工程**：侧栏「AI 实验室 → AI 评测」工作区（评测集/用例/跑批/质量/门禁；配置与判定器在「设置 → AI 设置 → AI 评测配置」），端到端 spec 22 覆盖主链路与非快乐路径；4 个 `check_eval_*.py` 门禁 + golden fixture + `eval_gate_cli.py`；迁移 089–090，接口增至 545 个 / 49 蓝图，版本升到 v2.8.0
 
 ## v2.7.0 更新（执行路径收口 + 平台化外联）
 
@@ -176,7 +193,7 @@ stop.bat          :: Windows
 
 ## 功能地图
 
-前端 59 条路由 / 64 个页面组件，后端 48 个蓝图 / 511 个接口统一挂在 `/api/v1` 下。
+前端 60 条路由 / 65 个页面组件，后端 49 个蓝图 / 545 个接口统一挂在 `/api/v1` 下。
 
 ### 首启引导与示例项目
 
@@ -268,6 +285,7 @@ stop.bat          :: Windows
 | 回归清单 | 清单 CRUD、AI 生成回归条目、自动条目由服务端真跑并留证据、手工条目回写强制附证据 |
 | 执行矩阵（GAP-43） | 一批用例 × 多环境 × 多端（应用服务器）一次调度逐格真跑，逐用例跨环境对比归因（普遍通过 / 普遍失败 / 环境特有 / 端特有 / 混合），普遍失败一键转缺陷并挂证据；生产环境调度需显式确认 |
 | 质量洞察 | 跨轮次失败聚类：最近 N 轮失败按「标题 + 实际结果」归一化签名聚类，给出出现次数、涉及用例、来源轮次、首末出现时间与逐轮趋势；变更影响面：维护用例依赖（同项目、禁自依赖、禁成环），按「直接变更 + 需求关联 + 反向依赖 BFS」圈出受影响用例并附最近 20 次失败率 |
+| AI 评测（v2.8） | 入口在侧栏 AI 实验室 → AI 评测，配置与判定器在「设置 → AI 设置 → AI 评测配置」。评测集 / 用例 / 跑批 / 质量 / 门禁五个页签同页：可见性分私有 / holdout / 公开（holdout 禁导出），EC 编号按集自增不复用；18 项指标，比率带 95% Wilson 区间，样本不足 30 只出逐条证据、不足 200 最多 warn、200 以上才判 pass / fail；judge 校准看 κ 与 false-pass，同集同版本同配置按 run_key 幂等复用，断点续跑只补未完成用例，心跳超时由 reaper 置 failed；门禁四档结论（insufficient / warn / pass / fail），只有 5 项预注册主指标能判 fail，`eval_gate_cli` 把结论转成 CI 退出码 |
 | 场景自动化 | 无代码编排的多步骤串联场景，页内分 **Web 场景 / App 场景 / 接口场景** 三个页签（App 场景原生步骤已接入：启动 / 停止 / 点选 / 输入 / 滑动 / 返回 / Home / 等待 / 文本断言 / 截图十类动作，adb 驱动，文本断言基于 uiautomator dump 真读界面，截图落 `data/app-shots/`；adb 命令、设备序列号、命令超时在页内配置并可「测试连接」列出在线设备）；步骤可选接口 / 浏览器 / 数据库 / **自动化脚本** 四类（自动化脚本步骤按脚本编号引 Web/App/接口自动化脚本并随场景同步执行、执行记录进统一证据，复用自动化引擎不另造执行轮子），每步复用接口断言引擎（不另造 HTTP 与断言轮子）：JSONPath 提取变量后用 `{{var}}` 传给后续步骤的 URL / 头 / 参数 / 体（数据库步骤的查询结果同样可提取），失败可「即停」或「继续」，支持数据池逐条驱动整个场景，每次执行落历史。场景带 SCN 编号与启用/停用状态，列表支持名称/编号关键词与状态筛选，状态可在新建/编辑表单落库。命名口径：脚本 = 写 Python 代码（Web / App / 接口自动化脚本，编号前缀 AUTO-W/AUTO-A/AUTO-I，性能脚本 PERF，数据库脚本 SQL；AI 一键入库的数据库脚本走独立序列 **AI_SQL-xxx**，自动化脚本走 **AI_AUTO-W/AI_AUTO-A/AI_AUTO-I/AI_PERF-xxx**，一眼区分来源），场景 = 无代码编排；定时调度带 SCH 编号。脚本「已被引用」口径=被场景自动化的 automation 步骤引用（浮显引用方场景的 SCN 编号，定时调度与历史执行记录都不算引用），悬停按钮浮显引用方编号，顿号分隔最多 10 个，超出走「查看更多」弹框列全部引用；复制出来的场景同样计入引用库。数据库脚本与场景步骤表单内置变量用法提示（含 {{var}} 示例），新建自动化脚本默认带可用框架与起步正文，脚本目录统计按当前项目收敛，定时调度目标从场景/脚本下拉选择 |
 | AI 能力一键入库 | AI 实验室产出可直接转为资产：测试数据生成（SQL）的造数语句一键「添加为数据库脚本」，自动化脚本生成按产出代码类型一键「添加为 web/app/接口自动化脚本」，入库自动带 `AI_` 前缀编号并进对应菜单，角标实时更新 |
 | 独立数据池 | 跨用例与场景共享一份测试数据，项目内名称唯一、支持解析预览；用例扩展字段与场景数据源统一按 `pool:<名称>` 引用，解析复用用例测试数据口径，不另造取数逻辑 |
@@ -393,7 +411,7 @@ cd frontend && npm run build                                              # 前�
 - `check_ai_live` 被 runner 永久排除：它打真实商汤模型接口、烧额度且非确定性，需要时单独手工跑。
 - 新增门禁脚本只要放进 `backend/scripts` 且命名 `check_*.py`，runner 自动纳入，无需改 runner。
 
-门禁清单（83 个脚本 = 82 个 `check_*.py` + `smoke_api.py`，与 `backend/scripts` 下真实脚本一一对应；其中 `check_ai_live` 不进 runner，实际执行 82 项）：
+门禁清单（87 个脚本 = 86 个 `check_*.py` + `smoke_api.py`，与 `backend/scripts` 下真实脚本一一对应；其中 `check_ai_live` 不进 runner，实际执行 86 项）：
 
 | 脚本 | 含义 | 失败怎么查 |
 | --- | --- | --- |
@@ -422,6 +440,10 @@ cd frontend && npm run build                                              # 前�
 | `check_dedup.py` | 生成去重判定口径：归一化、阈值分档、mark/increment 行为、payload 下标对齐（GAP-29） | 看 `backend/aitp/services/dedup_service.py` |
 | `check_env_config.py` | 测试环境配置：CRUD、多台应用服务器、国产/非关系库类型与默认端口、口令加密掩码、健康探测、默认环境唯一 | 看环境配置接口与密钥库落盘 |
 | `check_error_boundary.py` | 异常治理与前端兜底：不吞异常、错误带 traceId、长执行出请求线程、空态与重试（GAP-26） | 看 `except Exception` 处置与 `validation_jobs` |
+| `check_eval_core.py` | 评测集/用例/跑批生命周期：集名唯一、EC 编号自增、导入干跑与幂等、状态机与断点续跑、reaper 接管、取消幂等、预算拦截、端态与工具轨迹断言 | 看 `services/eval_service.py` / `eval_runner.py` 与 `api/evals.py` |
+| `check_eval_metrics.py` | 18 项指标公式与口径：Wilson 区间、P95、风险加权、召回@k、NDCG、忠实度、κ、false-pass，golden fixture 手算对拍 | 看 `aitp/eval/metrics.py` 与 `tests/fixtures` 的 golden 输入 |
+| `check_eval_gate.py` | 发布门禁：阈值边界、区间下界判定、三档结论、配对 McNemar、可比性校验、配置快照、holdout 导出拒绝、CLI 退出码 | 看 `aitp/eval/gate.py` 与 `eval_gate_cli.py` |
+| `check_eval_security.py` | 评测安全边界：外发脱敏、PII 不落库、保留期、全路由前缀与鉴权、跨项目越权与导出越权拒绝 | 看 `services/eval_service.py` 的脱敏与可见性校验 |
 | `check_execution_evidence.py` | 统一执行证据协议：五条执行路径的必填字段矩阵、快照与缺失降级（GAP-32） | 看 `execution_protocol.py` 与 `biz_execution_evidence` |
 | `check_execution_matrix.py` | 执行矩阵：多环境 × 多端逐格真跑、跨格对比归因、普遍失败转缺陷、生产确认（GAP-43） | 看 `execution_matrix_service.py` 与 `biz_execution_matrix*` |
 | `check_exploratory_web.py` | Web 探索性测试：MCP 桩驱动、证据包字段、双锚点 ±5s 日志切片、产物进待审池非缺陷库、无模型降级、输入脱敏（GAP-45） | 看 `exploratory_service.py` 与 `biz_exploration_*` |
@@ -501,7 +523,7 @@ cd frontend && npm run build                                              # 前�
 ## 端到端测试（E2E）
 
 基于 Playwright 的全流程端到端测试，位于 `frontend/e2e/`，配置 `frontend/playwright.config.ts`。
-当前 **21 个 spec / 64 条用例**，串行执行；用例代码与前端共用 strict 类型检查（`tsconfig.e2e.json`）。
+当前 **22 个 spec / 66 条用例**，串行执行；用例代码与前端共用 strict 类型检查（`tsconfig.e2e.json`）。
 工装自动拉起**隔离环境**（独立后端 8762 + 临时库、mock 模型 18790/18791、vite 5399），
 绝不触碰正式 8760 与 `data/aitp.db`；teardown 树杀进程并删临时目录。
 
@@ -518,6 +540,7 @@ cd frontend && npx playwright test               # 串行 workers=1
 - **执行可信度专项**（`18`）：用例质量体检（体检 → 问题明细）、执行前置自检 + 并发接口执行与失败归因、追溯页发布就绪三档结论。
 - **统一附件专项**（`19`）：需求拆分仅图片、知识问答带图提问、AI 修订参考截图随请求提交、智能路由截图先转文本再匹配、AI 档案视觉开关保存与回读。
 - **V2.7 平台专项**（`21`）：App 场景创建与执行（`mock_adb.py` 桩，含成功与失败断言）、通知模板预览与邮件渠道保存、缺陷待审确认与忽略、MCP 设置与 JSON-RPC 调用（`tools/list` / `tools/call` / 写工具拦截）、令牌一次性展示与轮换后旧令牌失效、质量洞察失败聚类与变更影响面。
+- **V2.8 评测专项**（`22`）：UI 建评测集与用例 → 跑批回放 → 18 项指标 / 逐条结果 / 门禁结论；幂等重跑复用同一跑批；冻结用例改删被拒（160110）、有跑批的集禁删（160101）、holdout 导出拒绝（160107）、空集跑批拒绝（100100）、同名集与禁用页签空态。
 - 每步断言业务结果，不只断言「没报错」；页面变化后重新定位元素，不复用旧 ref。
 - 结果：`frontend/e2e/results.json` + 控制台 list；失败留 trace/截图。
 - 约定见 `AGENTS.md`：**每次改完代码必须跑一遍验证，并把真实通过/失败结果写进回复**。
@@ -531,10 +554,10 @@ cd frontend && npx playwright test               # 串行 workers=1
 ```
 backend/
   aitp/
-    api/          48 个蓝图 / 511 个接口
+    api/          49 个蓝图 / 545 个接口
     ai/           resolver、client、masking、adapters、cost、output_schema
     common/       常量、校验、分页、密钥库、安全工具
-    db/           连接与迁移（84 份）
+    db/           连接与迁移（87 份）
     repositories/ 参数化 SQL 仓储层
     services/     知识落盘、报告导出、备份恢复、执行矩阵、留存归档、探索性测试、外部导入等
     prompts/      提示词模板库
@@ -545,7 +568,7 @@ frontend/
   src/
     api/          统一请求层
     components/   通用组件
-    views/        64 个页面组件
+    views/        65 个页面组件
   e2e/            Playwright 端到端测试（隔离工装）
 data/             运行时数据（SQLite、日志、密钥、归档、缺陷截图 bug-screenshots/、探索性截图与日志切片、执行媒体 exec-media/、登录态档案 auth-sessions/）
 knowledge/        知识库 Markdown 落盘目录

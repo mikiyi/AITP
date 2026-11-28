@@ -4,7 +4,7 @@ English | [简体中文](README.md)
 
 A personal AI testing workstation — **single-user, local-first, offline-capable** — a quality-control tool built around **prompt engineering and data masking for LLM calls**.
 
-Current version **v2.7.0**: the same value served by `aitp.__version__`, `db/migrator.py::APP_VERSION`,
+Current version **v2.8.0**: the same value served by `aitp.__version__`, `db/migrator.py::APP_VERSION`,
 the `appVersion` field of `GET /api/v1/health` and the `app_version` recorded by each migration.
 
 It folds the AI lab, test cases, defects, log analysis, SQL analysis, regression, reports, knowledge base, task list and workspace configuration into one closed loop of LLM-assisted testing:
@@ -27,31 +27,48 @@ The library gets sharper with use, and every output fits your project better —
 - AI settings are read from local environment variables, from in-app configuration, and from local models (Ollama).
 - When there is no cloud model, the model is unavailable, or the network is down, AITP degrades to local rules automatically and never blocks the main workflow.
 
-## Eval subsystem preview (v0.1, Nov 2026) — now it can also test AI software
+## AI quality-evaluation subsystem (v2.8.0) — now it can also test AI software
 
-AITP used to answer "test software with AI". This release adds the other half: **evaluating AI software**.
+AITP used to answer "test software with AI". v2.8.0 adds the other half: **evaluating AI software**.
 
-- **Schema**: migration `089_eval_core.sql` with ten tables — suite / case / config / judge / run / result / metric / calibration / gate / gate result
-- **Pure domain layer**: `backend/aitp/eval/` (metrics, assertions, gate evaluation; no IO, unit-testable)
+- **Schema**: migration `089_eval_core.sql` with ten tables (suite / case / config / judge / run / result / metric / calibration / gate / gate result) plus `090_eval_run_lifecycle.sql` (cancel flag, last error)
+- **Pure domain layer**: `backend/aitp/eval/` (18 metrics, assertions, tool traces, RAG, Rubric, judge calibration, gate evaluation; no IO, unit-testable)
   - Metrics carry **95% Wilson intervals**; `min` gates use the **lower bound**, `max` gates use the **upper bound**
   - Severity weighting S0/S1/S2 = 50/10/1: one "you can buy it" when the client can't ≈ 50 formatting misses
-  - Sample tiers: n<30 evidence only, n<200 warn only, n>=200 may pass/fail
-- **Runs**: `eval_service.execute_replay()` scores supplied outputs, then persists results, metrics, gate conclusion and a Markdown report
-- **API**: 12 routes under `/api/v1/evals`
-- **Gates & demo**: `check_eval_metrics.py` (6/6), `eval_demo.py` (12 finance cases, good → pass, bad → fail)
+  - Verdict chain: rule assertions → end state → tool trace → Rubric score → judge arbitration; an unparseable judge marks the case `invalid` and drops it from the denominator
+- **Run lifecycle**: idempotent `run_key` (same suite/version/config/judge reuses the run), queued→running→finished, heartbeat + stale takeover (`infra.stale_run`), resume that only fills missing cases, idempotent cancel, and case/token/cost budget caps
+- **Calibration and regression**: judge agreement κ plus a false-pass confusion matrix (the "wrongly passed" rate matters most); paired McNemar across comparable runs with MDE, and any hard-assertion flip is always reported
+- **API**: **34 routes** under `/api/v1/evals` (suites, cases, configs, judges, runs, resume, cancel, metrics, trends, calibration, gates, reports, import/export, quality overview)
+- **Gates & demo**: four `check_eval_*.py` gates (12 + 11 + 11 + 6 assertions all green), `eval_gate_cli.py` (fail=1, pass/warn=0), golden fixtures checked against hand-computed values, `eval_demo.py` (12 finance cases, good → pass, bad → fail)
+- **Anti-contamination boundaries**: holdout suites cannot be exported (160107); cases referenced by results are frozen (160110); suites with runs cannot be deleted (160101)
+- **Frontend**: the "AI lab → AI evaluations" workspace with five tabs (suites / cases / runs / quality / gates); the page opens with a short "what AI evaluations do" note, the primary action follows the active tab, and the suite list shows the latest run and gate conclusion; configs and judges moved to "Settings → AI settings → AI evaluation config", reachable from the eval page with one click and returnable via "Back to AI evaluations"; E2E spec 22 covers suite+case creation, run replay, idempotent reuse, freeze and export denial, config management and the return path
 - **Cross-check toolkit**: `tools/eval_toolkit/` runs the same cases through Promptfoo with **24/24 agreement**; a minimal Ragas demo shows faithfulness attribution
 
 ```bash
-python backend/scripts/check_eval_metrics.py
-python backend/scripts/eval_demo.py
-python tools/eval_toolkit/build_config.py
+python backend/scripts/check_eval_core.py      # suites/cases/run lifecycle
+python backend/scripts/check_eval_metrics.py   # 18 metrics and verdict chain (golden fixtures)
+python backend/scripts/check_eval_gate.py      # thresholds/verdicts/paired regression/export limits
+python backend/scripts/check_eval_security.py  # masking/authorization/retention/export limits
+python backend/scripts/eval_demo.py            # end-to-end demo (sample data, not real model scores)
+python tools/eval_toolkit/build_config.py      # generate the Promptfoo config
 ```
 
 **Data boundary**: the engine is open source, the evaluation corpus is not. Only public-rule demo cases ship in this repository — no real business samples or customer data.
 
-- **Numbers**: 86 migrations (up to 089), 524 `/api/v1` routes across 49 blueprints, 84 deterministic gates (83 `check_*.py` + `smoke_api.py`)
+- **Numbers**: 87 migrations (up to 090), 545 `/api/v1` routes across 49 blueprints, 87 deterministic gate scripts (86 `check_*.py` + `smoke_api.py`; `check_ai_live` stays out of the runner, 86 items actually execute)
 
 Design notes: [EVAL.md](EVAL.md).
+
+## v2.8.0 changes (AI quality-evaluation subsystem)
+
+- **Suites and cases**: suites have private / holdout / public visibility; holdout is for uncontaminated evaluation and cannot be exported. Cases carry golden / bad / adversarial / regression categories with S0/S1/S2 severity, and the assertion DSL covers `must_contain` / `forbidden_contains` / `regex` / `max_chars` / `json_keys` / `grounded` / `end_state` / `max_steps` / `expected_min` / `should_refuse`. Import offers a dry-run preview and idempotent skipping; EC numbers auto-increment per suite and are never reused
+- **18 metrics (fixed order, with intervals)**: success rate, error rate, judge-invalid rate, hallucination rate, severity-weighted error, instruction-follow rate, tool-call F1, tool-arg accuracy, average steps, redundant-step ratio, recall@5, NDCG@5, faithfulness, refusal accuracy, judge agreement, false-pass rate, P95 latency, cost per 1k. Ratio metrics carry 95% Wilson intervals; n<30 gives per-case evidence only, n<200 can only warn, n>=200 may pass/fail
+- **Verdict chain with explainable evidence**: rule assertions → end-state assertions → tool-trace arbitration → Rubric soft score → judge arbitration. Infrastructure errors are `error`, unparseable judge output is `invalid`, and both leave the valid denominator so success rate stays clean; every result keeps output, tool trace, retrieved documents, end state and Rubric dimensions
+- **Run lifecycle**: idempotent `run_key`, queued→running→finished state machine, heartbeat + stale takeover (`infra.stale_run`), resume that only fills unfinished cases, idempotent cancel, one bad case never breaks the batch; case-count / token / cost budget overruns are rejected up front
+- **Calibration and regression**: judge calibration uses κ and a confusion matrix, focused on false passes; paired McNemar across comparable runs reports regressions with MDE, and hard-assertion flips are always reported; runs with different suites / judges / case versions refuse comparison
+- **Release gates**: configurable thresholds, only the five pre-registered primary metrics decide pass/fail while everything else warns; verdicts are insufficient / warn / pass / fail with a full failed-item list and a Markdown report export; `eval_gate_cli.py` gives CI a direct exit code
+- **Anti-contamination and security**: outbound masking with PII kept out of the database and logs; holdout export denied (160107), cases referenced by results frozen (160110), suites with runs undeletable (160101), and every route authenticated with cross-project access denied
+- **Frontend and quality engineering**: the "AI evaluations" workspace (suites/cases/runs/quality/gates; configs and judges live under "Settings → AI settings → AI evaluation config") and E2E spec 22 covering the golden path and non-happy paths; four `check_eval_*.py` gates with golden fixtures plus `eval_gate_cli.py`; migrations 089–090, endpoints grow to 545 / 49 blueprints and the version becomes v2.8.0
 
 ## v2.7.0 changes (closing the last execution path + platform outreach)
 
@@ -174,7 +191,7 @@ The launcher checks the port first: if AITP is already running it just opens the
 
 ## Feature map
 
-Frontend: 59 routes / 64 page components. Backend: 48 blueprints / 511 endpoints, all under `/api/v1`.
+Frontend: 60 routes / 65 page components. Backend: 49 blueprints / 545 endpoints, all under `/api/v1`.
 
 ### First-launch tour and demo project
 
@@ -266,6 +283,7 @@ Page: **Task list** (`/todos`)
 | Standalone data pool | One shared test-data set reused by cases and scenarios: unique name per project, parse preview, referenced as `pool:<name>` from case extension fields and scenario data sources, parsed by the same case test-data engine instead of a second fetch path |
 | Execution matrix (GAP-43) | Fan a batch of cases across multiple environments × endpoints (app servers), dispatch once and really run each cell; per-case cross-cell attribution (common pass / common failure / env-specific / endpoint-specific / mixed); one-click defect conversion for common failures with evidence attached; production environments require explicit confirmation to dispatch |
 | Quality insights | Cross-run failure clustering: failures from the recent N runs are clustered by a normalized title + actual-result signature with counts, involved cases, source runs, first/last seen and per-run trend; change impact: maintain case dependencies (same project, no self-dependency, no cycles) and compute the affected set from direct changes + requirement links + reverse-dependency BFS, annotated with the failure rate over the last 20 runs |
+| AI evaluations (v2.8) | Entry lives under AI lab → AI evaluations, with configs and judges under Settings → AI settings → AI evaluation config. Five tabs on one page (suites / cases / runs / quality / gates): visibility is private / holdout / public (holdout cannot be exported), and EC numbers auto-increment per suite; 18 metrics, with ratios carrying 95% Wilson intervals — fewer than 30 samples only produces per-case evidence, fewer than 200 caps the conclusion at warn, and 200+ can pass/fail; judge calibration reports κ and false-pass; reruns of the same suite/version/config reuse the run by run_key, resumed runs only fill unfinished cases, and a reaper fails stale heartbeats; four-state gate conclusion (insufficient / warn / pass / fail) where only the five pre-registered primary metrics can fail, and `eval_gate_cli` turns the verdict into a CI exit code |
 | Web exploratory testing (GAP-45) | An MCP-driven real browser (started by the `mcpCommand` you configure under "Exploratory testing settings"; `backend/scripts/browser_mcp_server.py`) explores in a read-snapshot → decide → act → observe loop, finding gaps that scripted cases miss; normal steps keep evidence at the configured per-step screenshot count, anomalous steps force 3 screenshots plus a dual-anchor ±N-second log slice, network snapshot, console errors and traceId as an evidence pack; password/token inputs are masked per PII rules; findings go to the pending pool for human review first and only become defects after approval |
 | AITP MCP server | `POST /api/v1/mcp` (JSON-RPC 2.0: initialize / tools/list / tools/call / ping), off by default, loopback only, optional Bearer token; read-only tools cover projects / cases / requirements / runs / defects / quality insights, the write tool `bugs.draft.create` requires explicit write access and only writes a pending draft; the plaintext token is shown once on generate/rotate, while history keeps the mask, status, last-used time and client with disable/re-enable/delete; every call is logged in `sys_mcp_call_log` |
 | Knowledge / report fragment reuse (GAP-42) | A fragment is maintained once in its source project; target reports register a reference and rendering / export reads the body live, avoiding drifting copies; referenced fragments cannot be deleted |
@@ -394,8 +412,8 @@ cd frontend && npm run build                                              # fron
 - Any new gate script dropped into `backend/scripts` named `check_*.py` is picked up
   automatically without touching the runner.
 
-Gate inventory (83 entries = 82 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
-scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 82 items actually
+Gate inventory (87 entries = 86 `check_*.py` scripts + `smoke_api.py`, one-to-one with the real
+scripts under `backend/scripts`; `check_ai_live` is not run by the runner, so 86 items actually
 execute):
 
 | Script | Covers | When it fails, look at |
@@ -425,6 +443,10 @@ execute):
 | `check_dedup.py` | Generation dedup rules: normalization, threshold bands, mark vs increment behaviour, payload index alignment (GAP-29) | `backend/aitp/services/dedup_service.py` |
 | `check_env_config.py` | Test environment config: CRUD, secret masking, health probe, unique default | env config endpoints and secret store |
 | `check_error_boundary.py` | Error governance and frontend fallback: exceptions never swallowed, errors carry a traceId, long work leaves the request thread, empty states and retry (GAP-26) | the `except Exception` handling and `validation_jobs` |
+| `check_eval_core.py` | Evaluation suites/cases/run lifecycle: unique suite names, per-suite EC numbering, import dry-run and idempotency, state machine and resume, reaper takeover, idempotent cancel, budget caps, end-state and tool-trace assertions | `services/eval_service.py` / `eval_runner.py` and `api/evals.py` |
+| `check_eval_metrics.py` | All 18 metric formulas and calibers: Wilson intervals, P95, severity weighting, recall@k, NDCG, faithfulness, κ, false-pass, checked against hand-computed golden fixtures | `aitp/eval/metrics.py` and the golden fixtures |
+| `check_eval_gate.py` | Release gates: threshold boundaries, interval lower-bound verdicts, sample tiers, paired McNemar, comparability checks, config snapshots, holdout export denial, CLI exit codes | `aitp/eval/gate.py` and `eval_gate_cli.py` |
+| `check_eval_security.py` | Evaluation security boundaries: outbound masking, PII never stored, retention, route prefix and auth, cross-project and export authorization denial | masking and visibility checks in `services/eval_service.py` |
 | `check_execution_evidence.py` | Unified execution-evidence protocol: required-field matrix across the four execution paths, snapshots and missing-data degradation (GAP-32) | `execution_protocol.py` and `biz_execution_evidence` |
 | `check_export_caps.py` | Export claims match implementation: Excel/Word allowlist from one source, Chinese degradation when unsupported (GAP-37) | the `capability_codes` allowlist and the help pages |
 | `check_fts.py` | FTS5 hybrid search: Chinese short-word fallback, injection guard, index sync | search service and index rebuild logic |
@@ -506,7 +528,7 @@ run as the source of truth. On CI `check_isolation_matrix` is excluded via `--sk
 ## End-to-end tests (E2E)
 
 Playwright-based full-flow E2E tests live in `frontend/e2e/`, configured by `frontend/playwright.config.ts`.
-Currently **21 specs / 64 cases**, run serially; spec code shares the strict type check with the frontend (`tsconfig.e2e.json`).
+Currently **22 specs / 66 cases**, run serially; spec code shares the strict type check with the frontend (`tsconfig.e2e.json`).
 The harness boots an **isolated environment** (separate backend on 8762 + temp DB, mock model on
 18790/18791, vite on 5399) and never touches the live 8760 service or `data/aitp.db`; teardown kills the
 process tree and removes the temp directory.
@@ -524,6 +546,7 @@ cd frontend && npx playwright test               # serial, workers=1
 - **Execution-trust spec** (`18`): case quality check (scan → issue detail), pre-execution self-check + concurrent interface run with attribution, and the release-readiness verdict rendered on the traceability page.
 - **Unified-attachments spec** (`19`): image-only requirement split, knowledge Q&A with an image, AI revision sending a reference screenshot, smart routing transcribing a screenshot before matching, and the AI-profile vision switch save/read-back.
 - **V2.7 platform spec** (`21`): App scenario creation and execution (via the `mock_adb.py` stub, covering both pass and fail assertions), notification template preview and email channel save, defect draft confirm and ignore, MCP settings plus JSON-RPC calls (`tools/list` / `tools/call` / write-tool guard), one-time token reveal and old-token invalidation after rotation, and quality-insight failure clustering with change impact.
+- **V2.8 evaluation spec** (`22`): create a suite and case in the UI → run replay → 18 metrics / per-case results / gate verdict; idempotent rerun reuses the same run; frozen-case edit/delete denied (160110), suite with runs undeletable (160101), holdout export denied (160107), empty-suite run rejected (100100), duplicate suite names and disabled tabs in the empty state.
 - Every step asserts a business result, not just "no error"; elements are re-located after page changes, never reusing stale refs.
 - Results: `frontend/e2e/results.json` + console list; failures keep trace/screenshots.
 - Convention in `AGENTS.md`: **after every code change, run the verification and report the real pass/fail results in the reply**.
@@ -537,10 +560,10 @@ cd frontend && npx playwright test               # serial, workers=1
 ```
 backend/
   aitp/
-    api/          48 blueprints / 511 endpoints
+    api/          49 blueprints / 545 endpoints
     ai/           resolver, client, masking, adapters, cost, output_schema
     common/       constants, validation, pagination, keystore, security utilities
-    db/           connections and migrations (84 files)
+    db/           connections and migrations (87 files)
     repositories/ parameterized SQL repository layer
     services/     knowledge persistence, report export, backup/restore, execution matrix, retention/archival, exploratory testing, external import
     prompts/      prompt template library
@@ -551,7 +574,7 @@ frontend/
   src/
     api/          unified request layer
     components/   shared components
-    views/        64 page components
+    views/        65 page components
   e2e/            Playwright end-to-end tests (isolated harness)
 data/             runtime data (SQLite, logs, keystore, archives, defect screenshots in bug-screenshots/, exploratory screenshots and log slices, execution media in exec-media/, auth sessions in auth-sessions/)
 knowledge/        Markdown knowledge base storage

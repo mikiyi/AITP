@@ -1,13 +1,13 @@
 > **本文件是代码的配套设计说明，随代码同步维护。**
-> 代码位置：`backend/aitp/db/migrations/089_eval_core.sql`、`backend/aitp/eval/`、
-> `backend/aitp/services/eval_service.py`、`backend/aitp/api/evals.py`、
-> `backend/scripts/check_eval_metrics.py`、`backend/scripts/eval_demo.py`。
+> 代码位置：`backend/aitp/db/migrations/089_eval_core.sql`、`090_eval_run_lifecycle.sql`、
+> `backend/aitp/eval/`、`backend/aitp/services/eval_service.py`、`backend/aitp/api/evals.py`、
+> `backend/scripts/check_eval_*.py`、`backend/scripts/eval_gate_cli.py`、`backend/scripts/eval_demo.py`。
 > 数据边界：**引擎开源、评测集私有**——仓库不含任何真实业务样本。
 
 # AITP Eval 子包设计（v2.8.0 目标版本）· v2 修订版
 
 > 目标：把 AITP 从「用 AI 测软件」补成「也能测 AI 软件」。
-> 交付物：迁移 089、`aitp/eval/` 纯领域层、`repositories/eval_*`、`services/eval_service.py` / `eval_runner.py`、`api/evals.py`、4 个 `check_eval_*.py` 门禁、前端一个「评测」工作区。
+> 交付物：迁移 089–090、`aitp/eval/` 纯领域层、`repositories/eval_*`、`services/eval_service.py` / `eval_runner.py`、`api/evals.py`、4 个 `check_eval_*.py` 门禁、前端一个「评测」工作区。
 > 依据：仓库 v2.7.0（`e731ad4`）的既有约定 —— Flask 蓝图 + 参数化 SQL 仓储、`sys_*/biz_*` 表、迁移按文件名顺序、`run_all_checks.py` 自动发现 `check_*.py`、响应统一 `{code,message,data,traceId}` 包封。
 
 > **v2 修订（2026-11-27，按三视角评审逐条修复）**
@@ -383,7 +383,7 @@ CREATE INDEX IF NOT EXISTS idx_biz_eval_gate_result_run ON biz_eval_gate_result(
 | 2 | POST | `/evals/suites` | 新建（name 唯一、visibility 必填） | P1 |
 | 3 | GET | `/evals/suites/{id}` | 详情（分层计数、最近 5 次趋势） | P1 |
 | 4 | PUT | `/evals/suites/{id}` | 改名/归档 | P1 |
-| 5 | DELETE | `/evals/suites/{id}` | 软删（有跑批 → 120101） | P1 |
+| 5 | DELETE | `/evals/suites/{id}` | 软删（有跑批 → 160101） | P1 |
 | 6 | POST | `/evals/suites/{id}/duplicate` | 复制为新版本 | P2 |
 | 7 | GET | `/evals/suites/{id}/cases` | 用例分页 | P1 |
 | 8 | POST | `/evals/suites/{id}/cases` | 新建（校验断言/Rubric/schema_version） | P1 |
@@ -394,7 +394,7 @@ CREATE INDEX IF NOT EXISTS idx_biz_eval_gate_result_run ON biz_eval_gate_result(
 | 13 | GET | `/evals/suites/{id}/quality` | **评测集质量**：区分度/冗余度/覆盖矩阵/标注一致性 | P2 |
 | 14 | GET | `/evals/configs` | 配置列表（标 baseline / immutable） | P1 |
 | 15 | POST | `/evals/configs` | 新建配置 | P1 |
-| 16 | PUT | `/evals/configs/{id}` | 改配置（已引用 → 120102） | P1 |
+| 16 | PUT | `/evals/configs/{id}` | 改配置（已引用 → 160102） | P1 |
 | 17 | POST | `/evals/runs` | 创建跑批（幂等 run_key，重复触发复用） | P1 |
 | 18 | POST | `/evals/runs/{id}/resume` | **断点续跑**（未完成用例继续） | P1 |
 | 19 | GET | `/evals/runs` | 跑批列表 | P1 |
@@ -412,9 +412,9 @@ CREATE INDEX IF NOT EXISTS idx_biz_eval_gate_result_run ON biz_eval_gate_result(
 | 31 | GET | `/evals/runs/{id}/export` | 导出 md/xlsx（holdout 集禁止导出） | P1 |
 | 32 | GET | `/evals/meta` | 字典（分类/原因/结论/指标 key） | P1 |
 
-错误码新增 `1201xx`：`120101` 有跑批禁止硬删｜`120102` 配置已被引用不可改｜`120103` 跑批未结束禁止对比｜`120104` 样本不足｜`120105` 判定器未校准｜`120106` 预算超限｜**`120107` holdout 集禁止导出**｜**`120108` run 已存在（幂等键命中，返回既有 run_id）**。
+错误码新增 `1601xx`（`1201xx` 已被 prompt 模块占用）：`160101` 有跑批禁止硬删｜`160102` 配置已被引用不可改｜`160103` 跑批未结束禁止对比｜`160104` 样本不足｜`160105` 判定器未校准｜`160106` 预算超限｜**`160107` holdout 集禁止导出**｜**`160108` run 已存在（幂等键命中，返回既有 run_id）**｜`160109` 跑批心跳超时被接管｜`160110` 用例已被结果引用冻结。
 
-> 路由数 511 → 约 545；`smoke_api.py` 的路由表校验自动覆盖，无需改脚本。
+> 路由数 511 → 545；`smoke_api.py` 的路由表校验自动覆盖，无需改脚本。
 
 ---
 
@@ -501,7 +501,7 @@ p̂ = k/n,  z = 1.96
 
 ### 5.5 防污染
 
-- `visibility=holdout` 的评测集：**禁止导出、禁止出现在公开报告、不注入任何 AI 上下文**（错误码 120107）。
+- `visibility=holdout` 的评测集：**禁止导出、禁止出现在公开报告、不注入任何 AI 上下文**（错误码 160107）。
 - 公开报告发布前，跑一遍「用例与公开语料重合度」检查；重合 > 30% 的用例剔除。
 - 评测集版本化（`suite_version`），公开报告只标版本号与条数，不贴原文。
 
@@ -640,9 +640,9 @@ python backend/scripts/eval_gate_cli.py --gate 1 --run latest --json logs/eval-g
 
 | 脚本 | 覆盖断言 |
 |---|---|
-| `check_eval_core.py` | ① 评测集名唯一/软删后同名/归档禁止新跑批；② EC 编号按集自增不复用；③ 导入干跑不改库、重复导入幂等；④ 状态机 queued→running→finished；⑤ 取消幂等；⑥ 单条异常不拖垮整批；⑦ 超时不重试；⑧ 预算拦截（120106）；⑨ **断点续跑只补未完成用例**；⑩ **reaper 把 heartbeat 超时的 running 置 failed**；⑪ 端态断言不符 → fail；⑫ 禁调工具 → fail |
+| `check_eval_core.py` | ① 评测集名唯一/软删后同名/归档禁止新跑批；② EC 编号按集自增不复用；③ 导入干跑不改库、重复导入幂等；④ 状态机 queued→running→finished；⑤ 取消幂等；⑥ 单条异常不拖垮整批；⑦ 超时不重试；⑧ 预算拦截（160106）；⑨ **断点续跑只补未完成用例**；⑩ **reaper 把 heartbeat 超时的 running 置 failed**；⑪ 端态断言不符 → fail；⑫ 禁调工具 → fail |
 | `check_eval_metrics.py` | ① 18 指标公式与分母口径；② valid=0 → null；③ judge_invalid 剔除分母；④ **Wilson 区间与手算值一致（含 n=5 极小样本）**；⑤ **P95 分位与手算一致**；⑥ **风险加权：1 条 S0 = 50 条 S2**；⑦ 召回@k 的 macro 平均；⑧ nDCG 与手算一致；⑨ 忠实度按断言计数；⑩ κ 边界（全一致=1、随机≈0）；⑪ **false_pass 混淆矩阵计算**；⑫ 指标可由明细重算（run 冗余列一致性） |
-| `check_eval_gate.py` | ① 阈值边界含等号；② **区间下界判定（点估计达标但下界不达标 → warn）**；③ 三档结论；④ **配对 McNemar：硬断言翻转必报**；⑤ 未达标项清单完整；⑥ 同组可比性（suite/judge/用例版本一致）；⑦ 配置快照不可变；⑧ 跨组拒绝对比；⑨ 导出字段与指标表一致；⑩ **holdout 集导出被拒（120107）**；⑪ CLI 退出码 0/1 |
+| `check_eval_gate.py` | ① 阈值边界含等号；② **区间下界判定（点估计达标但下界不达标 → warn）**；③ 三档结论；④ **配对 McNemar：硬断言翻转必报**；⑤ 未达标项清单完整；⑥ 同组可比性（suite/judge/用例版本一致）；⑦ 配置快照不可变；⑧ 跨组拒绝对比；⑨ 导出字段与指标表一致；⑩ **holdout 集导出被拒（160107）**；⑪ CLI 退出码 0/1 |
 | `check_eval_security.py` | ① 评测输入外发走脱敏；② 样本中的密钥/PII 不落库、不打日志；③ 结果保留期策略生效；④ `/evals` 全路由在 v1 前缀且鉴权一致；⑤ 越权访问他项目 suite 被拒；⑥ 导出无越权 |
 
 > 门禁总数 83 → **87 项**（82 + 4 个 check + smoke）。`check_observability` 自动覆盖新路由的日志/耗时口径。
@@ -655,9 +655,9 @@ python backend/scripts/eval_gate_cli.py --gate 1 --run latest --json logs/eval-g
 1. **后台执行器独立连接**：不能用请求级 `get_db()`；线程/进程内自建连接，每批（如每 20 条）提交一次，事务边界明确。
 2. **心跳与 reaper（带 fencing）**：每完成一条按 10s 节流更新 `heartbeat_at`（不是每条都写，避免写热点）；reaper 把 `running` 且 `heartbeat_at` 超时（默认 5 分钟）的 run 置 `failed`，原因 `infra.stale_run`（并补进 failure_reason 枚举）；**被杀的执行者靠 `worker_token` 做条件更新**（`WHERE id=? AND worker_token=? AND status='running'`），令牌失效的写入直接丢弃，避免 failed run 继续长结果。
 3. **断点续跑**：`POST /runs/{id}/resume` 只补 `status != finished` 且无 result 的用例；已写入的 result 不重跑（靠 `(run_id, case_id)` 唯一索引保证）。
-4. **幂等**：`run_key = hash(suite_id, suite_version, config_snapshot, judge_snapshot, seed)`；重复创建返回既有 run（120108），不重复烧钱。
+4. **幂等**：`run_key = hash(suite_id, suite_version, config_snapshot, judge_snapshot, seed)`；重复创建返回既有 run（160108），不重复烧钱。
 5. **取消**：置 `cancelled` 标记 + 每完成一条检查标记；不做 kill，已产生的结果保留、状态可解释。
-6. **预算**：`maxCases` / `maxTokens` / `maxCostMicros` 前置校验，超限直接拒（120106），不跑一半。
+6. **预算**：`maxCases` / `maxTokens` / `maxCostMicros` 前置校验，超限直接拒（160106），不跑一半。
 7. **限流与重试**：429/超时走退避（最多 3 次），单 provider 连续失败 5 次熔断本 run 的该 provider，转下一个或标 error。
 8. **judge 可复现**：`temperature=0`、记录 `seed` 与模型版本；`judge_snapshot` 冻结。温度非 0 的 judge 禁止进 CI 门禁。
 9. **成本可审计**：优先用 provider 返回的 usage；缺失时标 `cost_source=estimated`，报告里显示「估算」，门禁拒收估算成本。
