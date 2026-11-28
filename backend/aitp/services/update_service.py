@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import threading
 from datetime import datetime, timezone
@@ -36,12 +37,32 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+NO_GIT_HINT = (
+    "本机未安装 git，无法在线更新；可安装 git 后重试，"
+    "或从 Gitee/GitHub 手动下载新版本覆盖（更新后执行 start.bat --build）。其余功能不受影响。"
+)
+
+
+def git_executable() -> str:
+    """git 可执行文件路径；AITP_GIT_BIN 用于指定路径或测试时模拟缺失。"""
+    override = os.environ.get("AITP_GIT_BIN")
+    if override:
+        return override if Path(override).exists() else ""
+    return shutil.which("git") or ""
+
+
 def _git(root: Path, *args: str, timeout: float = 60.0) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", "-C", str(root), *args],
-        capture_output=True, text=True, timeout=timeout,
-        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-    )
+    exe = git_executable()
+    if not exe:
+        return subprocess.CompletedProcess(["git"], 127, "", NO_GIT_HINT)
+    try:
+        return subprocess.run(
+            [exe, "-C", str(root), *args],
+            capture_output=True, text=True, timeout=timeout,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return subprocess.CompletedProcess([exe], 127, "", f"git 执行失败：{type(exc).__name__}: {exc}")
 
 
 def _version_of(text: str) -> str:
@@ -82,8 +103,18 @@ def check(root: Path | None = None) -> dict[str, Any]:
     local = local_version(repo)
     info: dict[str, Any] = {
         "local": local, "latest": "", "hasUpdate": False,
-        "branch": _branch(repo), "dirty": [], "behind": 0, "checkedAt": _now(),
+        "branch": "", "dirty": [], "behind": 0, "gitAvailable": bool(git_executable()),
+        "checkedAt": _now(),
     }
+    if not info["gitAvailable"]:
+        info["error"] = NO_GIT_HINT
+        return info
+    inside = _git(repo, "rev-parse", "--is-inside-work-tree")
+    if inside.returncode != 0 or inside.stdout.strip() != "true":
+        info["error"] = ((inside.stderr or "").strip() or NO_GIT_HINT) if inside.returncode == 127 else (
+            "当前目录不是 git 仓库，无法在线更新；请用 git clone 重新获取，或手动下载新版本覆盖。")
+        return info
+    info["branch"] = _branch(repo)
     fetch = _git(repo, "fetch", "origin", BRANCH, "--quiet", timeout=30)
     if fetch.returncode != 0:
         info["error"] = f"拉取远程失败：{(fetch.stderr or fetch.stdout).strip()[:300]}"
@@ -128,6 +159,13 @@ def _log(event: str, message: str, **fields: Any) -> None:
 def apply(root: Path | None = None) -> dict[str, Any]:
     """快进合并到 origin/master。工作区脏时拒绝，返回需要用户处理的文件清单。"""
     repo = root or repo_root()
+    if not git_executable():
+        return {"applied": False, "needsRestart": False, "dirty": [], "error": NO_GIT_HINT}
+    inside = _git(repo, "rev-parse", "--is-inside-work-tree")
+    if inside.returncode != 0 or inside.stdout.strip() != "true":
+        return {"applied": False, "needsRestart": False, "dirty": [],
+                "error": ((inside.stderr or "").strip() or NO_GIT_HINT) if inside.returncode == 127 else (
+                    "当前目录不是 git 仓库，无法在线更新；请用 git clone 重新获取，或手动下载新版本覆盖。")}
     dirty = _dirty_files(repo)
     if dirty:
         return {"applied": False, "needsRestart": False, "dirty": dirty,

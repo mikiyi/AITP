@@ -117,8 +117,24 @@ def main() -> int:
         broken = update_service.check(work)
         check(bool(broken.get("error")) and broken.get("hasUpdate") is False,
               "origin 不可达 → error 不抛异常", str(broken))
+        os.environ["AITP_GIT_BIN"] = str(tmp / "no-such-git")
+        missing = update_service.check(work)
+        check(missing.get("gitAvailable") is False and "未安装 git" in str(missing.get("error"))
+              and missing.get("hasUpdate") is False,
+              "未安装 git → 明确提示且不抛异常", str(missing))
+        missing_apply = update_service.apply(work)
+        check(missing_apply.get("applied") is False and "未安装 git" in str(missing_apply.get("error")),
+              "未安装 git → apply 拒绝并给手动方案", str(missing_apply))
+        os.environ.pop("AITP_GIT_BIN", None)
+
+        plain = tmp / "plain"
+        plain.mkdir()
+        not_repo = update_service.check(plain)
+        check("不是 git 仓库" in str(not_repo.get("error")), "非 git 仓库 → 明确提示", str(not_repo))
+
     finally:
         os.environ.pop("AITP_UPDATE_SKIP_BUILD", None)
+        os.environ.pop("AITP_GIT_BIN", None)
         shutil.rmtree(tmp, ignore_errors=True)
 
     fails = [label for ok, label in RESULTS if not ok]
