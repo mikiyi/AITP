@@ -125,8 +125,8 @@ export const MENU_NODES: MenuNode[] = [
       { path: '/lab/pipeline', title: 'AI 流水线', icon: Sort },
       { path: '/lab/prompts', title: '提示词库', icon: Notebook },
       { path: '/workbench/validation', title: '验证沙箱', icon: CircleCheck },
-      { path: '/lab/records', title: 'AI 记录', icon: Tickets },
       { path: '/evals', title: 'AI 评测', icon: Histogram },
+      { path: '/lab/records', title: 'AI 记录', icon: Tickets },
     ],
   },
   {

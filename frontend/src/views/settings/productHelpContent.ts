@@ -171,6 +171,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
       '发布门禁：阈值可配置，5 项预注册主指标才参与 pass / fail，其余只告警；结论分 insufficient / warn / pass / fail，附未达标项清单与 Markdown 报告；eval_gate_cli 供 CI 直接用退出码判断',
       '防污染与安全边界：外发前脱敏、PII 不落库不打日志；holdout 导出拒绝（160107）、被结果引用的用例冻结（160110）、有跑批的评测集禁删（160101）、全路由鉴权与跨项目越权拒绝',
       '新增迁移 089–090（090 为跑批生命周期补列）、4 个 check_eval 门禁 + golden fixture + eval_gate_cli、端到端 spec 22；接口增至 545 个 / 49 蓝图，版本升到 v2.8.0',
+      '在线检查更新：帮助文档 → 版本迭代信息新增「检查更新」按钮；探测 Gitee master 版本，与本机一致提示已是最新，不一致弹确认框，确认后断点续传下载、校验并暂存，重启应用生效；覆盖前备份旧文件，全过程写 logs/deploy.log',
     ],
   },
   {

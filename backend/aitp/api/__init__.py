@@ -51,6 +51,7 @@ def register_blueprints(app: Flask) -> None:
     from .test_plans import bp as test_plans_bp
     from .test_runs import bp as test_runs_bp
     from .todos import bp as todos_bp
+    from .update import bp as update_bp
     from .traceability import bp as traceability_bp
     from .validation import bp as validation_bp
     from .workbench import bp as workbench_bp
@@ -93,6 +94,7 @@ def register_blueprints(app: Flask) -> None:
         (evals_bp, "/api/v1/evals"),
         (relations_bp, "/api/v1/relations"),
         (todos_bp, "/api/v1/todos"),
+        (update_bp, "/api/v1/system"),
         (test_data_bp, "/api/v1/test-data"),
         (test_envs_bp, "/api/v1/test-envs"),
         (tasks_bp, "/api/v1/tasks"),
